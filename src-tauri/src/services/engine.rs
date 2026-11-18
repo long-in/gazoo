@@ -1,0 +1,154 @@
+//! エンジン接続の管理・監視(docs/04-ipc-api.md「接続状態の監視」)。
+
+use std::sync::{Arc, Mutex, RwLock};
+use std::time::Duration;
+
+use tauri::{AppHandle, Emitter, Manager};
+
+use crate::engine::comfyui::ComfyUiClient;
+use crate::engine::{EngineFailure, EngineModels, EngineStatus, GenerationEngine};
+use crate::error::{AppError, AppResult};
+
+pub const STATUS_EVENT: &str = "engine://status";
+const POLL_INTERVAL: Duration = Duration::from_secs(5);
+
+pub struct EngineService {
+    engine: RwLock<Arc<dyn GenerationEngine>>,
+    last_emitted: Mutex<Option<EngineStatus>>,
+}
+
+impl EngineService {
+    pub fn new(url: &str) -> AppResult<Self> {
+        Ok(Self {
+            engine: RwLock::new(Arc::new(ComfyUiClient::new(url)?)),
+            last_emitted: Mutex::new(None),
+        })
+    }
+
+    /// 既存のエンジン実装から作る(テスト用)。
+    #[cfg(test)]
+    pub fn from_engine(engine: Arc<dyn GenerationEngine>) -> Self {
+        Self {
+            engine: RwLock::new(engine),
+            last_emitted: Mutex::new(None),
+        }
+    }
+
+    /// 現在のエンジン。
+    pub fn engine(&self) -> AppResult<Arc<dyn GenerationEngine>> {
+        self.engine
+            .read()
+            .map(|e| Arc::clone(&e))
+            .map_err(|_| AppError::internal("engine lock poisoned"))
+    }
+
+    /// 接続先 URL を差し替える。変更があれば `true`。
+    pub fn set_url(&self, url: &str) -> AppResult<bool> {
+        let url = url.trim_end_matches('/');
+        if self.engine()?.url() == url {
+            return Ok(false);
+        }
+        let new = Arc::new(ComfyUiClient::new(url)?);
+        *self
+            .engine
+            .write()
+            .map_err(|_| AppError::internal("engine lock poisoned"))? = new;
+        Ok(true)
+    }
+
+    /// ヘルスチェック。接続できなくてもエラーにせず、切断状態として返す。
+    pub async fn check(&self) -> AppResult<EngineStatus> {
+        let engine = self.engine()?;
+        Ok(match engine.health().await {
+            Ok(status) => status,
+            Err(AppError::EngineBadResponse(_)) => {
+                EngineStatus::disconnected(engine.url(), EngineFailure::BadResponse)
+            }
+            Err(_) => EngineStatus::disconnected(engine.url(), EngineFailure::Unreachable),
+        })
+    }
+
+    pub async fn list_models(&self) -> AppResult<EngineModels> {
+        self.engine()?.list_models().await
+    }
+
+    /// 状態を確認し、前回通知から変化があった場合(または `force`)に通知する。
+    pub async fn refresh(&self, app: &AppHandle, force: bool) -> AppResult<EngineStatus> {
+        let status = self.check().await?;
+        let changed = {
+            let mut last = self
+                .last_emitted
+                .lock()
+                .map_err(|_| AppError::internal("engine state lock poisoned"))?;
+            let changed = !last.as_ref().is_some_and(|prev| same_state(prev, &status));
+            if changed {
+                *last = Some(status.clone());
+            }
+            changed
+        };
+        if changed || force {
+            let _ = app.emit(STATUS_EVENT, &status);
+            tracing::info!(connected = status.connected, url = %status.url, "engine status");
+        }
+        Ok(status)
+    }
+}
+
+/// 通知が必要な変化がないか。空きメモリ(`vram_free`)は生成のたびに揺れるため、比較から除く。
+fn same_state(a: &EngineStatus, b: &EngineStatus) -> bool {
+    let strip = |s: &EngineStatus| EngineStatus {
+        vram_free: None,
+        ..s.clone()
+    };
+    strip(a) == strip(b)
+}
+
+/// 一定間隔でエンジンの状態を監視するバックグラウンドタスク。
+pub async fn monitor(app: AppHandle) {
+    loop {
+        if let Some(svc) = app.try_state::<Arc<EngineService>>() {
+            let _ = svc.refresh(&app, false).await;
+        }
+        tokio::time::sleep(POLL_INTERVAL).await;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::engine::EngineFeatures;
+
+    fn connected() -> EngineStatus {
+        EngineStatus {
+            connected: true,
+            url: "http://127.0.0.1:8188".into(),
+            version: Some("0.45.6".into()),
+            device: Some("mps".into()),
+            vram_free: Some(100),
+            features: EngineFeatures { gguf_node: true },
+            error: None,
+        }
+    }
+
+    #[test]
+    fn vram_fluctuation_is_not_a_change() {
+        let a = connected();
+        let b = EngineStatus {
+            vram_free: Some(999),
+            ..connected()
+        };
+        assert!(same_state(&a, &b));
+    }
+
+    #[test]
+    fn meaningful_differences_are_changes() {
+        let a = connected();
+        let disconnected = EngineStatus::disconnected(a.url.clone(), EngineFailure::Unreachable);
+        assert!(!same_state(&a, &disconnected));
+        let no_gguf = EngineStatus {
+            features: EngineFeatures { gguf_node: false },
+            ..connected()
+        };
+        assert!(!same_state(&a, &no_gguf));
+    }
+}

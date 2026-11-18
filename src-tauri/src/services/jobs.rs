@@ -1,0 +1,1085 @@
+//! ジョブキューと実行ワーカー(docs/02-architecture.md §3.5)。
+//!
+//! - ジョブは DB に永続化し、ワーカー(1 タスク)が待機中の先頭から 1 件ずつ実行する。
+//! - 状態遷移: queued → running → completed | failed | cancelled。
+//! - 起動時、前回 running のまま残っていたジョブは failed(`INTERRUPTED`)にする。
+
+use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
+
+use tokio::sync::Notify;
+
+use crate::AppPaths;
+use crate::db::Db;
+use crate::db::jobs::{self as repo, ImageRow, JobRow};
+use crate::domain::job::{ImageItem, Job, JobError, JobStatus, Page, ProgressEvent};
+use crate::domain::params::{GenerationParams, MAX_SEED};
+use crate::engine::{ImageData, Progress};
+use crate::error::{AppError, AppResult};
+use crate::services::engine::EngineService;
+use crate::services::events::EventSink;
+use crate::services::settings;
+use crate::services::thumbs::{make_thumbnail, thumb_rel_path};
+use crate::util::{now_ms, year_month};
+
+/// 一度に投入できるジョブ数の上限。
+pub const MAX_ENQUEUE_COUNT: u32 = 20;
+/// 進捗イベントの最小間隔(最大 10 回/秒)。
+const PROGRESS_INTERVAL: Duration = Duration::from_millis(100);
+
+struct Active {
+    job_id: String,
+    cancel: Arc<Notify>,
+}
+
+enum RunError {
+    Cancelled,
+    Failed(AppError),
+}
+
+impl From<AppError> for RunError {
+    fn from(e: AppError) -> Self {
+        Self::Failed(e)
+    }
+}
+
+pub struct JobService {
+    db: Db,
+    engine: Arc<EngineService>,
+    sink: Arc<dyn EventSink>,
+    paths: AppPaths,
+    wake: Notify,
+    active: Mutex<Option<Active>>,
+}
+
+impl JobService {
+    pub fn new(
+        db: Db,
+        engine: Arc<EngineService>,
+        sink: Arc<dyn EventSink>,
+        paths: AppPaths,
+    ) -> Arc<Self> {
+        Arc::new(Self {
+            db,
+            engine,
+            sink,
+            paths,
+            wake: Notify::new(),
+            active: Mutex::new(None),
+        })
+    }
+
+    /// 起動時の復旧。前回の実行中ジョブを失敗扱いにし、待機中ジョブがあればワーカーを起こす。
+    pub async fn recover(&self) -> AppResult<()> {
+        let n = self
+            .db
+            .call(|c| repo::fail_interrupted(c, now_ms()))
+            .await?;
+        if n > 0 {
+            tracing::warn!(count = n, "interrupted jobs marked as failed");
+        }
+        self.wake.notify_one();
+        Ok(())
+    }
+
+    // ---- 公開 API(コマンドから呼ぶ) -------------------------------------------------
+
+    pub async fn enqueue(&self, params: GenerationParams, count: u32) -> AppResult<Vec<Job>> {
+        params.validate()?;
+        if !(1..=MAX_ENQUEUE_COUNT).contains(&count) {
+            return Err(AppError::validation(
+                "count",
+                format!("投入数は 1〜{MAX_ENQUEUE_COUNT} で指定してください"),
+            ));
+        }
+        let mut jobs = Vec::with_capacity(count as usize);
+        for i in 0..count {
+            let mut p = params.clone();
+            p.seed = if params.seed_randomize {
+                random_seed()
+            } else {
+                (params.seed + u64::from(i)) % (MAX_SEED + 1)
+            };
+            jobs.push(self.insert_job(&p).await?);
+        }
+        self.wake.notify_one();
+        Ok(jobs)
+    }
+
+    pub async fn list(
+        &self,
+        statuses: Vec<JobStatus>,
+        cursor: Option<String>,
+        limit: Option<u32>,
+    ) -> AppResult<Page<Job>> {
+        let limit = i64::from(limit.unwrap_or(50).clamp(1, 200));
+        let offset: i64 = cursor
+            .as_deref()
+            .map(|c| c.parse::<i64>())
+            .transpose()
+            .map_err(|_| AppError::validation("cursor", "cursor が不正です"))?
+            .unwrap_or(0)
+            .max(0);
+        self.db
+            .call(move |c| {
+                let mut rows = repo::list(c, &statuses, limit + 1, offset)?;
+                let next_cursor = (rows.len() as i64 > limit).then(|| (offset + limit).to_string());
+                rows.truncate(limit as usize);
+                let items = rows
+                    .iter()
+                    .map(|r| build_job(c, r))
+                    .collect::<AppResult<Vec<_>>>()?;
+                Ok(Page { items, next_cursor })
+            })
+            .await
+    }
+
+    pub async fn cancel(&self, id: &str) -> AppResult<()> {
+        let id_owned = id.to_owned();
+        let row = self.require(id).await?;
+        match row.status {
+            JobStatus::Queued => {
+                let cancelled = self
+                    .db
+                    .call({
+                        let id = id_owned.clone();
+                        move |c| repo::cancel_queued(c, &id, now_ms())
+                    })
+                    .await?;
+                if cancelled {
+                    self.emit_updated(id).await;
+                    return Ok(());
+                }
+                // ワーカーが先に実行を開始していた場合は、実行中の取消として扱う
+                self.cancel_running(id)
+            }
+            JobStatus::Running => self.cancel_running(id),
+            _ => Err(AppError::JobInvalidState(
+                "終了済みのジョブは取り消せません".into(),
+            )),
+        }
+    }
+
+    fn cancel_running(&self, id: &str) -> AppResult<()> {
+        let active = self
+            .active
+            .lock()
+            .map_err(|_| AppError::internal("job state lock poisoned"))?;
+        match active.as_ref() {
+            Some(a) if a.job_id == id => {
+                a.cancel.notify_one();
+                Ok(())
+            }
+            _ => Err(AppError::JobInvalidState(
+                "このジョブは実行中ではありません".into(),
+            )),
+        }
+    }
+
+    pub async fn reorder(&self, id: &str, new_position: usize) -> AppResult<()> {
+        let id = id.to_owned();
+        self.db
+            .call(move |c| repo::reorder(c, &id, new_position))
+            .await?;
+        // 並び順が変わった待機中ジョブをまとめて通知する
+        let queued = self.list(vec![JobStatus::Queued], None, Some(200)).await?;
+        for job in &queued.items {
+            self.sink.job_updated(job);
+        }
+        Ok(())
+    }
+
+    pub async fn retry(&self, id: &str) -> AppResult<Job> {
+        let row = self.require(id).await?;
+        if !matches!(row.status, JobStatus::Failed | JobStatus::Cancelled) {
+            return Err(AppError::JobInvalidState(
+                "失敗またはキャンセルされたジョブのみ再試行できます".into(),
+            ));
+        }
+        let params: GenerationParams = serde_json::from_str(&row.params_json)?;
+        let job = self.insert_job(&params).await?;
+        self.wake.notify_one();
+        Ok(job)
+    }
+
+    pub async fn clear_finished(&self) -> AppResult<usize> {
+        self.db.call(repo::clear_finished).await
+    }
+
+    // ---- ワーカー --------------------------------------------------------------------
+
+    /// 待機中ジョブを順に実行し続ける(アプリの寿命と同じ)。
+    pub async fn run_worker(self: Arc<Self>) {
+        loop {
+            match self.db.call(|c| repo::next_queued(c)).await {
+                Ok(Some(row)) => self.execute(row).await,
+                Ok(None) => self.wake.notified().await,
+                Err(e) => {
+                    tracing::error!(error = %e, "job worker: failed to fetch next job");
+                    tokio::time::sleep(Duration::from_secs(1)).await;
+                }
+            }
+        }
+    }
+
+    async fn execute(&self, row: JobRow) {
+        let id = row.id.clone();
+        let started = self
+            .db
+            .call({
+                let id = id.clone();
+                move |c| repo::mark_running(c, &id, now_ms())
+            })
+            .await;
+        match started {
+            Ok(true) => {}
+            Ok(false) => return, // 直前に取り消された
+            Err(e) => {
+                tracing::error!(job = %id, error = %e, "failed to mark job running");
+                return;
+            }
+        }
+        self.emit_updated(&id).await;
+
+        let cancel = Arc::new(Notify::new());
+        if let Ok(mut a) = self.active.lock() {
+            *a = Some(Active {
+                job_id: id.clone(),
+                cancel: Arc::clone(&cancel),
+            });
+        }
+        let outcome = self.run(&row, &cancel).await;
+        if let Ok(mut a) = self.active.lock() {
+            *a = None;
+        }
+
+        let (status, error) = match outcome {
+            Ok(()) => (JobStatus::Completed, None),
+            Err(RunError::Cancelled) => (JobStatus::Cancelled, None),
+            Err(RunError::Failed(e)) => {
+                tracing::warn!(job = %id, code = e.code(), "job failed");
+                (
+                    JobStatus::Failed,
+                    Some((e.code().to_owned(), e.to_string())),
+                )
+            }
+        };
+        let finished = self
+            .db
+            .call({
+                let id = id.clone();
+                move |c| {
+                    repo::finish(
+                        c,
+                        &id,
+                        status,
+                        error
+                            .as_ref()
+                            .map(|(code, msg)| (code.as_str(), msg.as_str())),
+                        now_ms(),
+                    )
+                }
+            })
+            .await;
+        if let Err(e) = finished {
+            tracing::error!(job = %id, error = %e, "failed to finalize job");
+        }
+        self.emit_updated(&id).await;
+    }
+
+    async fn run(&self, row: &JobRow, cancel: &Notify) -> Result<(), RunError> {
+        let params: GenerationParams = serde_json::from_str(&row.params_json).map_err(|e| {
+            RunError::Failed(AppError::internal(format!(
+                "保存済みパラメータが不正です: {e}"
+            )))
+        })?;
+        let engine = self.engine.engine()?;
+        let remote = engine.submit(&params).await?;
+        self.db
+            .call({
+                let (id, remote) = (row.id.clone(), remote.clone());
+                move |c| repo::set_remote_id(c, &id, &remote)
+            })
+            .await?;
+
+        let last_emit: Mutex<Option<Instant>> = Mutex::new(None);
+        let job_id = row.id.clone();
+        let on_progress = |p: Progress| {
+            let done = p.total > 0 && p.step >= p.total;
+            if let Ok(mut last) = last_emit.lock() {
+                let due = last.is_none_or(|t| t.elapsed() >= PROGRESS_INTERVAL);
+                if !(due || done) {
+                    return;
+                }
+                *last = Some(Instant::now());
+            }
+            self.sink.job_progress(&ProgressEvent {
+                job_id: job_id.clone(),
+                step: p.step,
+                total_steps: p.total,
+                node: p.node,
+            });
+        };
+
+        // 取消の通知(待機中に押された分も含め、Notify の許可証として保持される)と競合させる
+        let images = tokio::select! {
+            result = engine.wait(&remote, &on_progress) => result?,
+            _ = cancel.notified() => {
+                if let Err(e) = engine.cancel(&remote).await {
+                    tracing::warn!(error = %e, "failed to cancel remote job");
+                }
+                return Err(RunError::Cancelled);
+            }
+        };
+        self.save_images(row, &params, images).await?;
+        Ok(())
+    }
+
+    // ---- 内部 ------------------------------------------------------------------------
+
+    async fn require(&self, id: &str) -> AppResult<JobRow> {
+        let id_owned = id.to_owned();
+        self.db
+            .call(move |c| repo::get(c, &id_owned))
+            .await?
+            .ok_or_else(|| AppError::JobNotFound(id.to_owned()))
+    }
+
+    async fn insert_job(&self, params: &GenerationParams) -> AppResult<Job> {
+        let id = uuid::Uuid::now_v7().to_string();
+        let json = serde_json::to_string(params)?;
+        let (prompt, model) = (params.prompt.clone(), params.model.name.clone());
+        let job = self
+            .db
+            .call({
+                let id = id.clone();
+                move |c| {
+                    repo::insert(c, &id, &json, &prompt, &model, now_ms())?;
+                    let row =
+                        repo::get(c, &id)?.ok_or_else(|| AppError::internal("job vanished"))?;
+                    build_job(c, &row)
+                }
+            })
+            .await?;
+        self.sink.job_updated(&job);
+        Ok(job)
+    }
+
+    async fn emit_updated(&self, id: &str) {
+        let id = id.to_owned();
+        let job = self
+            .db
+            .call(move |c| match repo::get(c, &id)? {
+                Some(row) => build_job(c, &row).map(Some),
+                None => Ok(None),
+            })
+            .await;
+        if let Ok(Some(job)) = job {
+            self.sink.job_updated(&job);
+        }
+    }
+
+    async fn images_root(&self) -> AppResult<PathBuf> {
+        let s = self.db.call(|c| settings::load(c)).await?;
+        Ok(self.paths.resolve_images_dir(&s))
+    }
+
+    /// 生成画像をファイルに保存し、DB に記録して通知する。
+    async fn save_images(
+        &self,
+        row: &JobRow,
+        params: &GenerationParams,
+        images: Vec<ImageData>,
+    ) -> AppResult<()> {
+        let root = self.images_root().await?;
+        for img in images {
+            let now = now_ms();
+            let (year, month) = year_month(now);
+            let id = uuid::Uuid::now_v7().to_string();
+            let rel = format!(
+                "{year:04}/{month:02}/{id}.{}",
+                safe_extension(&img.filename)
+            );
+            let abs = join_rel(&root, &rel);
+
+            let file_size = img.bytes.len() as u64;
+            let target = abs.clone();
+            let thumb_rel = thumb_rel_path(&id);
+            let thumb_target = join_rel(&root, &thumb_rel);
+            // 原寸の保存とサムネイル生成(サムネイルが作れなくても原寸の保存は成功扱い)
+            let thumb_ok = tokio::task::spawn_blocking(move || -> std::io::Result<bool> {
+                if let Some(parent) = target.parent() {
+                    std::fs::create_dir_all(parent)?;
+                }
+                std::fs::write(&target, &img.bytes)?;
+                let Some(thumb) = make_thumbnail(&img.bytes) else {
+                    return Ok(false);
+                };
+                if let Some(parent) = thumb_target.parent() {
+                    std::fs::create_dir_all(parent)?;
+                }
+                Ok(std::fs::write(&thumb_target, thumb).is_ok())
+            })
+            .await
+            .map_err(|e| AppError::internal(e.to_string()))??;
+
+            let image_row = ImageRow {
+                id,
+                job_id: row.id.clone(),
+                // サムネイルを作れなかった場合は原寸を指す(起動時のバックフィルで再試行される)
+                thumb_path: if thumb_ok { thumb_rel } else { rel.clone() },
+                file_path: rel,
+                width: params.width,
+                height: params.height,
+                seed: params.seed,
+                file_size,
+                is_favorite: false,
+                created_at: now,
+            };
+            let inserted = self
+                .db
+                .call({
+                    let r = image_row.clone();
+                    move |c| repo::insert_image(c, &r)
+                })
+                .await;
+            if let Err(e) = inserted {
+                let _ = std::fs::remove_file(&abs); // 記録できなかった孤立ファイルを残さない
+                return Err(e);
+            }
+            self.sink.image_created(&image_item(&root, &image_row));
+        }
+        Ok(())
+    }
+}
+
+pub(crate) fn build_job(conn: &rusqlite::Connection, row: &JobRow) -> AppResult<Job> {
+    Ok(Job {
+        id: row.id.clone(),
+        status: row.status,
+        position: row.position,
+        params: serde_json::from_str(&row.params_json).unwrap_or(serde_json::Value::Null),
+        error: match (&row.error_code, &row.error_message) {
+            (Some(code), Some(message)) => Some(JobError {
+                code: code.clone(),
+                message: message.clone(),
+            }),
+            _ => None,
+        },
+        image_ids: repo::image_ids(conn, &row.id)?,
+        created_at: row.created_at,
+        started_at: row.started_at,
+        finished_at: row.finished_at,
+    })
+}
+
+pub fn image_item(root: &Path, r: &ImageRow) -> ImageItem {
+    ImageItem {
+        id: r.id.clone(),
+        job_id: r.job_id.clone(),
+        width: r.width,
+        height: r.height,
+        seed: r.seed,
+        is_favorite: r.is_favorite,
+        created_at: r.created_at,
+        file_path: join_rel(root, &r.file_path).to_string_lossy().into_owned(),
+        thumb_path: join_rel(root, &r.thumb_path).to_string_lossy().into_owned(),
+    }
+}
+
+/// `/` 区切りの相対パスを OS のパスに結合する(Windows でも `\` を直書きしない)。
+pub(crate) fn join_rel(root: &Path, rel: &str) -> PathBuf {
+    rel.split('/')
+        .fold(root.to_path_buf(), |p, part| p.join(part))
+}
+
+/// 拡張子を安全な英数字に限定する(ファイル名はエンジン由来なので信用しない)。
+fn safe_extension(filename: &str) -> String {
+    Path::new(filename)
+        .extension()
+        .and_then(|e| e.to_str())
+        .filter(|e| !e.is_empty() && e.len() <= 5 && e.chars().all(|c| c.is_ascii_alphanumeric()))
+        .map(str::to_ascii_lowercase)
+        .unwrap_or_else(|| "png".to_owned())
+}
+
+fn random_seed() -> u64 {
+    (uuid::Uuid::new_v4().as_u128() as u64) & MAX_SEED
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::domain::params::{ModelKind, sample};
+    use crate::engine::{EngineModels, EngineStatus, GenerationEngine};
+    use async_trait::async_trait;
+    use std::collections::HashMap;
+
+    // ---- 模擬エンジン: プロンプトで挙動を切り替える("hang" / "fail" / それ以外は成功) -------
+
+    #[derive(Default)]
+    struct FakeEngine {
+        prompts: Mutex<HashMap<String, String>>, // remote_id -> prompt
+        submitted: Mutex<Vec<String>>,           // 投入されたプロンプトの順序
+        cancelled: Mutex<Vec<String>>,
+        counter: Mutex<u32>,
+    }
+
+    #[async_trait]
+    impl GenerationEngine for FakeEngine {
+        fn url(&self) -> String {
+            "http://fake".into()
+        }
+        async fn health(&self) -> AppResult<EngineStatus> {
+            unreachable!()
+        }
+        async fn list_models(&self) -> AppResult<EngineModels> {
+            unreachable!()
+        }
+        async fn submit(&self, params: &GenerationParams) -> AppResult<String> {
+            if params.prompt == "submit-error" {
+                return Err(AppError::EngineModelMissing("ckpt_name: 'x'".into()));
+            }
+            let mut n = self.counter.lock().unwrap();
+            *n += 1;
+            let id = format!("remote-{n}");
+            self.prompts
+                .lock()
+                .unwrap()
+                .insert(id.clone(), params.prompt.clone());
+            self.submitted.lock().unwrap().push(params.prompt.clone());
+            Ok(id)
+        }
+        async fn wait(
+            &self,
+            remote_id: &str,
+            on_progress: &(dyn Fn(Progress) + Send + Sync),
+        ) -> AppResult<Vec<ImageData>> {
+            let prompt = self.prompts.lock().unwrap()[remote_id].clone();
+            match prompt.as_str() {
+                "hang" => std::future::pending().await,
+                "fail" => Err(AppError::EngineExecutionFailed(
+                    "KSampler: out of memory".into(),
+                )),
+                "png" => Ok(vec![ImageData {
+                    filename: "real.png".into(),
+                    bytes: crate::services::thumbs::png_bytes(1000, 600),
+                }]),
+                _ => {
+                    on_progress(Progress {
+                        step: 1,
+                        total: 2,
+                        node: Some("5".into()),
+                    });
+                    on_progress(Progress {
+                        step: 2,
+                        total: 2,
+                        node: Some("5".into()),
+                    });
+                    Ok(vec![
+                        ImageData {
+                            filename: "gazoo_00001_.png".into(),
+                            bytes: b"PNG-1".to_vec(),
+                        },
+                        ImageData {
+                            filename: "weird name.PNG!".into(),
+                            bytes: b"PNG-2".to_vec(),
+                        },
+                    ])
+                }
+            }
+        }
+        async fn cancel(&self, remote_id: &str) -> AppResult<()> {
+            self.cancelled.lock().unwrap().push(remote_id.to_owned());
+            Ok(())
+        }
+    }
+
+    // ---- 記録用のイベント受け口 ----------------------------------------------------------
+
+    #[derive(Default)]
+    struct Recorder {
+        updated: Mutex<Vec<(String, JobStatus)>>,
+        progress: Mutex<Vec<ProgressEvent>>,
+        images: Mutex<Vec<ImageItem>>,
+    }
+
+    impl EventSink for Recorder {
+        fn job_updated(&self, job: &Job) {
+            self.updated
+                .lock()
+                .unwrap()
+                .push((job.id.clone(), job.status));
+        }
+        fn job_progress(&self, p: &ProgressEvent) {
+            self.progress.lock().unwrap().push(p.clone());
+        }
+        fn image_created(&self, i: &ImageItem) {
+            self.images.lock().unwrap().push(i.clone());
+        }
+        fn image_deleted(&self, _: &[String]) {}
+    }
+
+    struct Harness {
+        svc: Arc<JobService>,
+        engine: Arc<FakeEngine>,
+        events: Arc<Recorder>,
+        dir: PathBuf,
+    }
+
+    impl Drop for Harness {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.dir);
+        }
+    }
+
+    fn harness() -> Harness {
+        let dir = std::env::temp_dir().join(format!("gazoo-jobs-{}", uuid::Uuid::now_v7()));
+        let engine = Arc::new(FakeEngine::default());
+        let events = Arc::new(Recorder::default());
+        let svc = JobService::new(
+            Db::open_in_memory().unwrap(),
+            Arc::new(EngineService::from_engine(engine.clone())),
+            events.clone(),
+            AppPaths {
+                data_dir: dir.clone(),
+            },
+        );
+        Harness {
+            svc,
+            engine,
+            events,
+            dir,
+        }
+    }
+
+    fn params(prompt: &str) -> GenerationParams {
+        let mut p = sample(ModelKind::Sd15);
+        p.prompt = prompt.into();
+        p
+    }
+
+    async fn status_of(h: &Harness, id: &str) -> JobStatus {
+        let page = h.svc.list(vec![], None, Some(200)).await.unwrap();
+        page.items.iter().find(|j| j.id == id).unwrap().status
+    }
+
+    async fn wait_for_status(h: &Harness, id: &str, want: JobStatus) {
+        for _ in 0..200 {
+            if status_of(h, id).await == want {
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        panic!(
+            "job {id} did not reach {want:?}, is {:?}",
+            status_of(h, id).await
+        );
+    }
+
+    // ---- テスト ---------------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn runs_job_saves_images_and_emits_events() {
+        let h = harness();
+        tokio::spawn(h.svc.clone().run_worker());
+        let jobs = h.svc.enqueue(params("hello"), 1).await.unwrap();
+        let id = jobs[0].id.clone();
+        wait_for_status(&h, &id, JobStatus::Completed).await;
+
+        // 画像 2 枚が保存され、DB と通知に反映される
+        let images = h.events.images.lock().unwrap().clone();
+        assert_eq!(images.len(), 2);
+        for img in &images {
+            assert!(Path::new(&img.file_path).is_file(), "{}", img.file_path);
+            assert_eq!((img.width, img.height, img.seed), (512, 512, 42));
+        }
+        assert_eq!(std::fs::read(&images[0].file_path).unwrap(), b"PNG-1");
+        // 想定外のファイル名でも拡張子は安全な値になる
+        assert!(images[1].file_path.ends_with(".png"));
+        let job = &h.svc.list(vec![], None, None).await.unwrap().items[0];
+        assert_eq!(job.image_ids.len(), 2);
+
+        // running → completed の順に通知され、進捗も届く
+        let statuses: Vec<_> = h
+            .events
+            .updated
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|e| e.1)
+            .collect();
+        assert_eq!(
+            statuses,
+            [JobStatus::Queued, JobStatus::Running, JobStatus::Completed]
+        );
+        let progress = h.events.progress.lock().unwrap();
+        assert_eq!(
+            progress.last().unwrap().step,
+            2,
+            "完了時の進捗は必ず通知される"
+        );
+        assert_eq!(progress[0].job_id, id);
+    }
+
+    #[tokio::test]
+    async fn real_images_get_thumbnails_and_undecodable_ones_fall_back() {
+        let h = harness();
+        tokio::spawn(h.svc.clone().run_worker());
+        let id = h.svc.enqueue(params("png"), 1).await.unwrap()[0].id.clone();
+        wait_for_status(&h, &id, JobStatus::Completed).await;
+        let img = h.events.images.lock().unwrap()[0].clone();
+        assert_ne!(img.thumb_path, img.file_path);
+        assert!(img.thumb_path.contains("thumbs"));
+        let thumb = std::fs::read(&img.thumb_path).unwrap();
+        assert_eq!(&thumb[..2], &[0xFF, 0xD8]);
+
+        // デコードできないデータ(模擬の "PNG-1")は原寸を指す
+        let id = h.svc.enqueue(params("hello"), 1).await.unwrap()[0]
+            .id
+            .clone();
+        wait_for_status(&h, &id, JobStatus::Completed).await;
+        let fallback = h.events.images.lock().unwrap()[1].clone();
+        assert_eq!(fallback.thumb_path, fallback.file_path);
+    }
+
+    #[tokio::test]
+    async fn engine_failure_marks_job_failed_with_code() {
+        let h = harness();
+        tokio::spawn(h.svc.clone().run_worker());
+        for (prompt, code) in [
+            ("fail", "ENGINE_EXECUTION_FAILED"),
+            ("submit-error", "ENGINE_MODEL_MISSING"),
+        ] {
+            let id = h.svc.enqueue(params(prompt), 1).await.unwrap()[0]
+                .id
+                .clone();
+            wait_for_status(&h, &id, JobStatus::Failed).await;
+            let page = h
+                .svc
+                .list(vec![JobStatus::Failed], None, None)
+                .await
+                .unwrap();
+            let job = page.items.iter().find(|j| j.id == id).unwrap();
+            assert_eq!(job.error.as_ref().unwrap().code, code);
+            assert!(job.image_ids.is_empty());
+        }
+    }
+
+    #[tokio::test]
+    async fn cancel_running_job_interrupts_engine() {
+        let h = harness();
+        tokio::spawn(h.svc.clone().run_worker());
+        let id = h.svc.enqueue(params("hang"), 1).await.unwrap()[0]
+            .id
+            .clone();
+        wait_for_status(&h, &id, JobStatus::Running).await;
+        // submit 完了(= 取消が効く状態)まで待つ
+        while h.engine.submitted.lock().unwrap().is_empty() {
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+        h.svc.cancel(&id).await.unwrap();
+        wait_for_status(&h, &id, JobStatus::Cancelled).await;
+        assert_eq!(*h.engine.cancelled.lock().unwrap(), ["remote-1"]);
+
+        // ワーカーは次のジョブに進める
+        let next = h.svc.enqueue(params("ok"), 1).await.unwrap()[0].id.clone();
+        wait_for_status(&h, &next, JobStatus::Completed).await;
+    }
+
+    #[tokio::test]
+    async fn cancel_queued_job_never_reaches_engine() {
+        let h = harness(); // ワーカーを起動しない = 待機中のまま
+        let id = h.svc.enqueue(params("later"), 1).await.unwrap()[0]
+            .id
+            .clone();
+        h.svc.cancel(&id).await.unwrap();
+        assert_eq!(status_of(&h, &id).await, JobStatus::Cancelled);
+
+        tokio::spawn(h.svc.clone().run_worker());
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        assert!(h.engine.submitted.lock().unwrap().is_empty());
+        // 終了済みは再度取り消せない
+        assert_eq!(
+            h.svc.cancel(&id).await.unwrap_err().code(),
+            "JOB_INVALID_STATE"
+        );
+        assert_eq!(
+            h.svc.cancel("nope").await.unwrap_err().code(),
+            "JOB_NOT_FOUND"
+        );
+    }
+
+    #[tokio::test]
+    async fn reorder_changes_execution_order() {
+        let h = harness();
+        let a = h.svc.enqueue(params("a"), 1).await.unwrap()[0].id.clone();
+        let _b = h.svc.enqueue(params("b"), 1).await.unwrap();
+        let c = h.svc.enqueue(params("c"), 1).await.unwrap()[0].id.clone();
+        h.svc.reorder(&c, 0).await.unwrap(); // c, a, b
+        h.svc.reorder(&a, 99).await.unwrap(); // c, b, a
+
+        tokio::spawn(h.svc.clone().run_worker());
+        wait_for_status(&h, &a, JobStatus::Completed).await;
+        assert_eq!(*h.engine.submitted.lock().unwrap(), ["c", "b", "a"]);
+    }
+
+    #[tokio::test]
+    async fn enqueue_validates_and_assigns_seeds() {
+        let h = harness();
+        let mut bad = params("x");
+        bad.width = 100;
+        assert_eq!(
+            h.svc.enqueue(bad, 1).await.unwrap_err().code(),
+            "VALIDATION"
+        );
+        assert_eq!(
+            h.svc.enqueue(params("x"), 0).await.unwrap_err().code(),
+            "VALIDATION"
+        );
+        assert_eq!(
+            h.svc.enqueue(params("x"), 21).await.unwrap_err().code(),
+            "VALIDATION"
+        );
+
+        // 固定シード: seed, seed+1, ...
+        let seeds = |jobs: &[Job]| -> Vec<u64> {
+            jobs.iter()
+                .map(|j| j.params["seed"].as_u64().unwrap())
+                .collect()
+        };
+        let jobs = h.svc.enqueue(params("x"), 3).await.unwrap();
+        assert_eq!(seeds(&jobs), [42, 43, 44]);
+        // ランダムシード: 範囲内で、ジョブごとに異なる
+        let mut p = params("x");
+        p.seed_randomize = true;
+        let jobs = h.svc.enqueue(p, 5).await.unwrap();
+        let s = seeds(&jobs);
+        assert!(s.iter().all(|v| *v <= MAX_SEED));
+        let mut uniq = s.clone();
+        uniq.sort_unstable();
+        uniq.dedup();
+        assert_eq!(uniq.len(), 5, "{s:?}");
+    }
+
+    #[tokio::test]
+    async fn retry_clones_failed_and_rejects_others() {
+        let h = harness();
+        tokio::spawn(h.svc.clone().run_worker());
+        let id = h.svc.enqueue(params("fail"), 1).await.unwrap()[0]
+            .id
+            .clone();
+        wait_for_status(&h, &id, JobStatus::Failed).await;
+
+        let retried = h.svc.retry(&id).await.unwrap();
+        assert_ne!(retried.id, id);
+        assert_eq!(retried.params["prompt"], "fail");
+        assert_eq!(retried.params["seed"], 42);
+
+        let ok = h.svc.enqueue(params("ok"), 1).await.unwrap()[0].id.clone();
+        wait_for_status(&h, &ok, JobStatus::Completed).await;
+        assert_eq!(
+            h.svc.retry(&ok).await.unwrap_err().code(),
+            "JOB_INVALID_STATE"
+        );
+    }
+
+    #[tokio::test]
+    async fn recover_fails_interrupted_jobs_and_resumes_queue() {
+        let h = harness();
+        // 前回のセッションで running のまま残ったジョブ + 待機中のジョブ
+        let stuck = h.svc.enqueue(params("stuck"), 1).await.unwrap()[0]
+            .id
+            .clone();
+        h.svc
+            .db
+            .call({
+                let id = stuck.clone();
+                move |c| repo::mark_running(c, &id, 1).map(|_| ())
+            })
+            .await
+            .unwrap();
+        let waiting = h.svc.enqueue(params("waiting"), 1).await.unwrap()[0]
+            .id
+            .clone();
+
+        h.svc.recover().await.unwrap();
+        assert_eq!(status_of(&h, &stuck).await, JobStatus::Failed);
+        let page = h
+            .svc
+            .list(vec![JobStatus::Failed], None, None)
+            .await
+            .unwrap();
+        assert_eq!(page.items[0].error.as_ref().unwrap().code, "INTERRUPTED");
+
+        tokio::spawn(h.svc.clone().run_worker());
+        wait_for_status(&h, &waiting, JobStatus::Completed).await;
+    }
+
+    #[tokio::test]
+    async fn list_paginates_with_cursor() {
+        let h = harness();
+        h.svc.enqueue(params("x"), 5).await.unwrap();
+        let first = h.svc.list(vec![], None, Some(2)).await.unwrap();
+        assert_eq!(first.items.len(), 2);
+        let second = h
+            .svc
+            .list(vec![], first.next_cursor.clone(), Some(2))
+            .await
+            .unwrap();
+        let third = h
+            .svc
+            .list(vec![], second.next_cursor.clone(), Some(2))
+            .await
+            .unwrap();
+        assert_eq!((second.items.len(), third.items.len()), (2, 1));
+        assert!(third.next_cursor.is_none());
+        assert_eq!(
+            h.svc
+                .list(vec![], Some("abc".into()), None)
+                .await
+                .unwrap_err()
+                .code(),
+            "VALIDATION"
+        );
+    }
+
+    #[test]
+    fn extension_and_paths_are_safe() {
+        assert_eq!(safe_extension("a.PNG"), "png");
+        assert_eq!(safe_extension("a.webp"), "webp");
+        assert_eq!(safe_extension("noext"), "png");
+        assert_eq!(safe_extension("evil.p/ng"), "png");
+        assert_eq!(safe_extension("x.toolongext"), "png");
+        let p = join_rel(Path::new("/root"), "2026/11/a.png");
+        assert!(p.ends_with(Path::new("2026").join("11").join("a.png")));
+    }
+
+    // ---- 実機(ComfyUI + SD 1.5)での通し検証 ------------------------------------------------
+
+    struct RealHarness {
+        svc: Arc<JobService>,
+        events: Arc<Recorder>,
+        dir: PathBuf,
+    }
+    impl Drop for RealHarness {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.dir);
+        }
+    }
+
+    fn real_harness() -> RealHarness {
+        let url = std::env::var("COMFYUI_URL").unwrap_or_else(|_| "http://127.0.0.1:8188".into());
+        let dir = std::env::temp_dir().join(format!("gazoo-real-{}", uuid::Uuid::now_v7()));
+        let events = Arc::new(Recorder::default());
+        let svc = JobService::new(
+            Db::open_in_memory().unwrap(),
+            Arc::new(EngineService::new(&url).unwrap()),
+            events.clone(),
+            AppPaths {
+                data_dir: dir.clone(),
+            },
+        );
+        tokio::spawn(svc.clone().run_worker());
+        RealHarness { svc, events, dir }
+    }
+
+    fn real_params(steps: u32, size: u32) -> GenerationParams {
+        let mut p = sample(ModelKind::Sd15);
+        p.model.name = std::env::var("COMFYUI_SD15_MODEL")
+            .unwrap_or_else(|_| "v1-5-pruned-emaonly.safetensors".into());
+        p.prompt = "a red apple on a wooden table".into();
+        p.width = size;
+        p.height = size;
+        p.steps = steps;
+        p
+    }
+
+    async fn real_wait(svc: &JobService, id: &str, want: JobStatus, secs: u64) {
+        for _ in 0..secs * 10 {
+            let page = svc.list(vec![], None, Some(200)).await.unwrap();
+            let job = page.items.iter().find(|j| j.id == id).unwrap();
+            if job.status == want {
+                return;
+            }
+            assert!(
+                !matches!(job.status, JobStatus::Failed) || want == JobStatus::Failed,
+                "job failed unexpectedly: {:?}",
+                job.error
+            );
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+        panic!("job {id} did not reach {want:?} in {secs}s");
+    }
+
+    /// 実機: キューに投入 → 実際に生成 → 画像とサムネイルが保存され、通知される。
+    #[tokio::test]
+    #[ignore = "requires a running ComfyUI with an SD 1.5 checkpoint"]
+    async fn real_comfyui_job_end_to_end_saves_image_and_thumbnail() {
+        let h = real_harness();
+        let id = h.svc.enqueue(real_params(8, 512), 1).await.unwrap()[0]
+            .id
+            .clone();
+        real_wait(&h.svc, &id, JobStatus::Completed, 180).await;
+
+        let images = h.events.images.lock().unwrap().clone();
+        assert_eq!(images.len(), 1);
+        let img = &images[0];
+        assert_eq!(
+            &std::fs::read(&img.file_path).unwrap()[..4],
+            &[0x89, b'P', b'N', b'G']
+        );
+        assert_ne!(img.thumb_path, img.file_path, "サムネイルが作られている");
+        let thumb = image::load_from_memory(&std::fs::read(&img.thumb_path).unwrap()).unwrap();
+        assert_eq!(
+            (thumb.width(), thumb.height()),
+            (384, 384),
+            "512px の画像が 384px に縮小される"
+        );
+        assert!(
+            !h.events.progress.lock().unwrap().is_empty(),
+            "進捗イベントが届く"
+        );
+
+        let job = &h.svc.list(vec![], None, None).await.unwrap().items[0];
+        assert_eq!(job.image_ids, std::slice::from_ref(&img.id));
+    }
+
+    /// 実機: 実行中のキャンセルで ComfyUI が実際に中断され、次のジョブが正常に実行できる。
+    #[tokio::test]
+    #[ignore = "requires a running ComfyUI with an SD 1.5 checkpoint"]
+    async fn real_comfyui_cancel_interrupts_generation_and_queue_continues() {
+        let h = real_harness();
+        // 十分に長い生成(多ステップ・大きめのサイズ)を投入し、進捗が出てから取り消す
+        let long = h.svc.enqueue(real_params(150, 768), 1).await.unwrap()[0]
+            .id
+            .clone();
+        for _ in 0..1800 {
+            if !h.events.progress.lock().unwrap().is_empty() {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+        assert!(
+            !h.events.progress.lock().unwrap().is_empty(),
+            "生成が始まっていない"
+        );
+
+        let cancelled_at = Instant::now();
+        h.svc.cancel(&long).await.unwrap();
+        real_wait(&h.svc, &long, JobStatus::Cancelled, 30).await;
+        println!("cancelled in {:?}", cancelled_at.elapsed());
+        assert!(
+            h.events.images.lock().unwrap().is_empty(),
+            "取り消したジョブの画像は保存されない"
+        );
+
+        // 中断後も ComfyUI とワーカーが正常で、次のジョブが完了する
+        let next = h.svc.enqueue(real_params(4, 512), 1).await.unwrap()[0]
+            .id
+            .clone();
+        real_wait(&h.svc, &next, JobStatus::Completed, 180).await;
+        assert_eq!(h.events.images.lock().unwrap().len(), 1);
+    }
+}
