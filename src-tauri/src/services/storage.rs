@@ -13,6 +13,7 @@ use crate::AppPaths;
 use crate::db::Db;
 use crate::db::images as image_repo;
 use crate::db::jobs::ImageRow;
+use crate::domain::params::is_valid_input_path;
 use crate::error::{AppError, AppResult};
 use crate::services::images::Trasher;
 use crate::services::jobs::join_rel;
@@ -21,7 +22,7 @@ use crate::services::settings::{self, SettingsPatch};
 #[derive(Debug, Default, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct MoveReport {
-    /// コピーしたファイル数(原寸 + サムネイル)。
+    /// コピーしたファイル数(原寸 + サムネイル + ControlNet の参照画像)。
     pub moved: usize,
     /// 元ファイルが無くスキップした数。
     pub missing: usize,
@@ -57,7 +58,32 @@ fn copy_verified(src: &Path, dst: &Path) -> AppResult<()> {
     Ok(())
 }
 
-fn copy_all(rows: &[ImageRow], old_root: &Path, new_root: &Path) -> AppResult<CopyResult> {
+/// 移動の対象になる相対パスの一覧: 各画像の原寸・サムネイルと、ControlNet の参照画像(`inputs/`)。
+fn rels_to_move(rows: &[ImageRow], old_root: &Path) -> Vec<String> {
+    let mut rels = Vec::new();
+    for row in rows {
+        rels.push(row.file_path.clone());
+        if row.thumb_path != row.file_path {
+            rels.push(row.thumb_path.clone());
+        }
+    }
+    // 参照画像は DB に記録が無い(パラメータの中にだけある)ため、フォルダを走査する。
+    // ファイル名は取り込み時に安全な形に限っているが、念のため検証を通ったものだけを移す
+    if let Ok(entries) = std::fs::read_dir(old_root.join("inputs")) {
+        let mut names: Vec<String> = entries
+            .flatten()
+            .filter(|e| e.path().is_file())
+            .filter_map(|e| e.file_name().into_string().ok())
+            .map(|name| format!("inputs/{name}"))
+            .filter(|rel| is_valid_input_path(rel))
+            .collect();
+        names.sort();
+        rels.extend(names);
+    }
+    rels
+}
+
+fn copy_all(rels: &[String], old_root: &Path, new_root: &Path) -> AppResult<CopyResult> {
     let mut out = CopyResult {
         report: MoveReport::default(),
         created: Vec::new(),
@@ -69,34 +95,28 @@ fn copy_all(rows: &[ImageRow], old_root: &Path, new_root: &Path) -> AppResult<Co
         }
     };
 
-    for row in rows {
-        let mut rels = vec![row.file_path.as_str()];
-        if row.thumb_path != row.file_path {
-            rels.push(row.thumb_path.as_str());
+    for rel in rels {
+        let src = join_rel(old_root, rel);
+        if !src.is_file() {
+            out.report.missing += 1;
+            continue;
         }
-        for rel in rels {
-            let src = join_rel(old_root, rel);
-            if !src.is_file() {
-                out.report.missing += 1;
-                continue;
-            }
-            let dst = join_rel(new_root, rel);
-            let existed = dst.exists();
-            let result = match dst.parent() {
-                Some(parent) => std::fs::create_dir_all(parent).map_err(|e| storage_err(parent, e)),
-                None => Ok(()),
-            }
-            .and_then(|()| copy_verified(&src, &dst));
-            if let Err(e) = result {
-                rollback(&out.created);
-                return Err(e);
-            }
-            if !existed {
-                out.created.push(dst);
-            }
-            out.report.moved += 1;
-            out.sources.push(src);
+        let dst = join_rel(new_root, rel);
+        let existed = dst.exists();
+        let result = match dst.parent() {
+            Some(parent) => std::fs::create_dir_all(parent).map_err(|e| storage_err(parent, e)),
+            None => Ok(()),
         }
+        .and_then(|()| copy_verified(&src, &dst));
+        if let Err(e) = result {
+            rollback(&out.created);
+            return Err(e);
+        }
+        if !existed {
+            out.created.push(dst);
+        }
+        out.report.moved += 1;
+        out.sources.push(src);
     }
     Ok(out)
 }
@@ -189,9 +209,12 @@ impl StorageService {
 
         let rows = self.db.call(|c| image_repo::all(c)).await?;
         let (old, new) = (old_root.clone(), new_root.clone());
-        let copied = tokio::task::spawn_blocking(move || copy_all(&rows, &old, &new))
-            .await
-            .map_err(|e| AppError::internal(e.to_string()))??;
+        let copied = tokio::task::spawn_blocking(move || {
+            let rels = rels_to_move(&rows, &old);
+            copy_all(&rels, &old, &new)
+        })
+        .await
+        .map_err(|e| AppError::internal(e.to_string()))??;
 
         if let Err(e) = apply_setting(new_setting).await {
             for f in &copied.created {
@@ -354,6 +377,35 @@ mod tests {
             "旧ファイルは削除ではなくゴミ箱へ"
         );
         assert_eq!(images_dir_setting(&h).await, Some(target));
+    }
+
+    #[tokio::test]
+    async fn move_includes_controlnet_reference_images() {
+        let h = harness();
+        add_image(&h, "a", true).await;
+        let inputs = h.old_root.join("inputs");
+        std::fs::create_dir_all(&inputs).unwrap();
+        std::fs::write(inputs.join("ref.png"), "REF").unwrap();
+        // 不正な名前のファイルは移さない(取り込みでは作られない形)
+        std::fs::write(inputs.join(".hidden"), "x").unwrap();
+        std::fs::write(inputs.join("bad name.png"), "x").unwrap();
+        let target = new_dir(&h, "with-inputs");
+
+        let (root, report) = h.svc.change_images_dir(Some(target), true).await.unwrap();
+        assert_eq!(
+            report,
+            MoveReport {
+                moved: 3,
+                missing: 0
+            }
+        ); // a: 原寸+サムネ、参照画像 1 枚
+        assert_eq!(
+            std::fs::read_to_string(join_rel(&root, "inputs/ref.png")).unwrap(),
+            "REF"
+        );
+        assert!(!join_rel(&root, "inputs/.hidden").exists());
+        assert!(!join_rel(&root, "inputs/bad name.png").exists());
+        assert!(!inputs.join("ref.png").exists(), "旧ファイルはゴミ箱へ");
     }
 
     #[tokio::test]

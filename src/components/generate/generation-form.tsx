@@ -16,17 +16,21 @@ import {
   modelsFor,
   randomSeed,
   sizePresets,
+  supportsControlnet,
 } from "@/lib/generation/defaults";
 import type { MessageKey } from "@/lib/i18n";
 import { useErrorMessage, useT } from "@/lib/i18n/use-t";
 import { type AppError, toAppError } from "@/lib/tauri/errors";
 import { MAX_ENQUEUE_COUNT, type ModelKind } from "@/lib/tauri/jobs";
 import { cn } from "@/lib/utils";
+import { useAssistantStore } from "@/stores/assistant-store";
 import { useEngineStore } from "@/stores/engine-store";
 import { useFormStore } from "@/stores/form-store";
 import { useJobStore } from "@/stores/job-store";
 import { useSettingsStore } from "@/stores/settings-store";
 
+import { ControlnetSection } from "./controlnet-section";
+import { FaceDetailerSection } from "./face-detailer-section";
 import { Field, NumberInput, SliderNumber } from "./fields";
 
 const BUILTIN_VAE = "__builtin__";
@@ -123,8 +127,14 @@ export function GenerationForm() {
     return flux ? list : [{ value: BUILTIN_VAE, label: t("generate.vae.builtin") }, ...list];
   }, [models, flux, t]);
 
+  // ControlNet を有効にしている間は参照画像が必要
+  const cnParams = params.controlnet;
+  const needsReference =
+    cnParams?.enabled === true && supportsControlnet(kind) && !cnParams.units[0]?.image;
+
   const ready =
     status?.connected === true &&
+    !needsReference &&
     params.prompt.trim() !== "" &&
     params.model.name !== "" &&
     (!flux || (params.model.clip.length === 2 && params.model.clip.every(Boolean) && !!params.model.vae));
@@ -162,6 +172,12 @@ export function GenerationForm() {
       }}
     >
       <PresetBar />
+
+      <div className="-mb-2 flex justify-end">
+        <Button type="button" size="xs" variant="outline" onClick={() => useAssistantStore.getState().setPanelOpen(true)}>
+          {t("assistant.open")}
+        </Button>
+      </div>
 
       <Field label={t("generate.prompt")} htmlFor="prompt" error={err("prompt")}>
         <Textarea
@@ -342,6 +358,10 @@ export function GenerationForm() {
           {t("generate.seed.random")}
         </label>
       </Field>
+
+      <ControlnetSection error={err} />
+
+      <FaceDetailerSection error={err} />
 
       <details className="rounded-lg border p-3">
         <summary className="cursor-pointer text-sm font-medium">{t("generate.advanced")}</summary>

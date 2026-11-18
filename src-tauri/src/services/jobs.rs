@@ -19,6 +19,7 @@ use crate::engine::{ImageData, Progress};
 use crate::error::{AppError, AppResult};
 use crate::services::engine::EngineService;
 use crate::services::events::EventSink;
+use crate::services::inputs::{input_abs, read_input};
 use crate::services::settings;
 use crate::services::thumbs::{make_thumbnail, thumb_rel_path};
 use crate::util::{now_ms, year_month};
@@ -92,6 +93,19 @@ impl JobService {
                 "count",
                 format!("投入数は 1〜{MAX_ENQUEUE_COUNT} で指定してください"),
             ));
+        }
+        // 参照画像(ControlNet)が保存先に残っているかを先に確認する(無ければ投入せずに知らせる)
+        let units = params.active_controlnet_units();
+        if !units.is_empty() {
+            let root = self.images_root().await?;
+            for u in units {
+                if !input_abs(&root, &u.image)?.is_file() {
+                    return Err(AppError::ImageNotFound(format!(
+                        "参照画像がありません: {}",
+                        u.image
+                    )));
+                }
+            }
         }
         let mut jobs = Vec::with_capacity(count as usize);
         for i in 0..count {
@@ -295,7 +309,14 @@ impl JobService {
             )))
         })?;
         let engine = self.engine.engine()?;
-        let remote = engine.submit(&params).await?;
+        // 参照画像(ControlNet)をエンジンへ送る。順序は有効なユニットの順
+        let mut uploaded = Vec::new();
+        for u in params.active_controlnet_units() {
+            let root = self.images_root().await?;
+            let bytes = read_input(root, u.image.clone()).await?;
+            uploaded.push(engine.upload_input(bytes).await?);
+        }
+        let remote = engine.submit(&params, &uploaded).await?;
         self.db
             .call({
                 let (id, remote) = (row.id.clone(), remote.clone());
@@ -319,6 +340,7 @@ impl JobService {
                 step: p.step,
                 total_steps: p.total,
                 node: p.node,
+                phase: p.phase,
             });
         };
 
@@ -524,6 +546,8 @@ mod tests {
         submitted: Mutex<Vec<String>>,           // 投入されたプロンプトの順序
         cancelled: Mutex<Vec<String>>,
         counter: Mutex<u32>,
+        uploads: Mutex<Vec<usize>>, // アップロードされた参照画像のバイト数
+        submit_inputs: Mutex<Vec<Vec<String>>>, // submit に渡された参照画像名
     }
 
     #[async_trait]
@@ -537,7 +561,12 @@ mod tests {
         async fn list_models(&self) -> AppResult<EngineModels> {
             unreachable!()
         }
-        async fn submit(&self, params: &GenerationParams) -> AppResult<String> {
+        async fn upload_input(&self, png: Vec<u8>) -> AppResult<String> {
+            self.uploads.lock().unwrap().push(png.len());
+            Ok("uploaded.png".into())
+        }
+        async fn submit(&self, params: &GenerationParams, inputs: &[String]) -> AppResult<String> {
+            self.submit_inputs.lock().unwrap().push(inputs.to_vec());
             if params.prompt == "submit-error" {
                 return Err(AppError::EngineModelMissing("ckpt_name: 'x'".into()));
             }
@@ -571,11 +600,13 @@ mod tests {
                         step: 1,
                         total: 2,
                         node: Some("5".into()),
+                        phase: None,
                     });
                     on_progress(Progress {
                         step: 2,
                         total: 2,
                         node: Some("5".into()),
+                        phase: None,
                     });
                     Ok(vec![
                         ImageData {
@@ -765,6 +796,110 @@ mod tests {
             assert_eq!(job.error.as_ref().unwrap().code, code);
             assert!(job.image_ids.is_empty());
         }
+    }
+
+    fn controlnet_params(prompt: &str, image: &str) -> GenerationParams {
+        use crate::domain::params::{ControlnetParams, ControlnetUnit, Preprocessor};
+        let mut p = params(prompt);
+        p.controlnet = Some(ControlnetParams {
+            enabled: true,
+            units: vec![ControlnetUnit {
+                image: image.into(),
+                model: "canny.safetensors".into(),
+                preprocessor: Preprocessor::Canny,
+                strength: 1.0,
+                start_percent: 0.0,
+                end_percent: 1.0,
+            }],
+        });
+        p
+    }
+
+    #[tokio::test]
+    async fn controlnet_requires_the_reference_image_to_exist() {
+        let h = harness();
+        let err = h
+            .svc
+            .enqueue(controlnet_params("x", "inputs/missing.png"), 1)
+            .await
+            .unwrap_err();
+        assert_eq!(err.code(), "IMAGE_NOT_FOUND");
+        // 不正なパスは存在確認の前に検証で断る
+        let err = h
+            .svc
+            .enqueue(controlnet_params("x", "inputs/../escape.png"), 1)
+            .await
+            .unwrap_err();
+        assert_eq!(err.code(), "VALIDATION");
+        assert!(
+            h.svc
+                .list(vec![], None, None)
+                .await
+                .unwrap()
+                .items
+                .is_empty()
+        );
+    }
+
+    #[tokio::test]
+    async fn controlnet_job_uploads_reference_before_submit() {
+        let h = harness();
+        let inputs = h.dir.join("images").join("inputs");
+        std::fs::create_dir_all(&inputs).unwrap();
+        std::fs::write(inputs.join("ref.png"), b"PNGBYTES").unwrap();
+
+        tokio::spawn(h.svc.clone().run_worker());
+        let id = h
+            .svc
+            .enqueue(controlnet_params("with-cn", "inputs/ref.png"), 1)
+            .await
+            .unwrap()[0]
+            .id
+            .clone();
+        wait_for_status(&h, &id, JobStatus::Completed).await;
+        assert_eq!(*h.engine.uploads.lock().unwrap(), [8]);
+        assert_eq!(
+            *h.engine.submit_inputs.lock().unwrap(),
+            [vec!["uploaded.png".to_string()]]
+        );
+
+        // ControlNet を使わないジョブはアップロードしない
+        let id = h.svc.enqueue(params("plain"), 1).await.unwrap()[0]
+            .id
+            .clone();
+        wait_for_status(&h, &id, JobStatus::Completed).await;
+        assert_eq!(h.engine.uploads.lock().unwrap().len(), 1);
+        assert_eq!(
+            h.engine.submit_inputs.lock().unwrap()[1],
+            Vec::<String>::new()
+        );
+    }
+
+    #[tokio::test]
+    async fn controlnet_job_fails_when_reference_vanished_after_enqueue() {
+        let h = harness();
+        let inputs = h.dir.join("images").join("inputs");
+        std::fs::create_dir_all(&inputs).unwrap();
+        std::fs::write(inputs.join("gone.png"), b"x").unwrap();
+        let id = h
+            .svc
+            .enqueue(controlnet_params("x", "inputs/gone.png"), 1)
+            .await
+            .unwrap()[0]
+            .id
+            .clone();
+        std::fs::remove_file(inputs.join("gone.png")).unwrap(); // 待機中に消えた
+        tokio::spawn(h.svc.clone().run_worker());
+        wait_for_status(&h, &id, JobStatus::Failed).await;
+        let page = h
+            .svc
+            .list(vec![JobStatus::Failed], None, None)
+            .await
+            .unwrap();
+        assert_eq!(
+            page.items[0].error.as_ref().unwrap().code,
+            "IMAGE_NOT_FOUND"
+        );
     }
 
     #[tokio::test]

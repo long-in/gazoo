@@ -11,6 +11,40 @@ export interface ModelSpec {
   vae: string | null;
 }
 
+/** 顔補正(docs/10-assist-features.md §4)。SD 1.5 / SDXL のみ。 */
+export interface FaceDetailerParams {
+  enabled: boolean;
+  /** 検出モデル("bbox/face_yolov8m.pt" など)。 */
+  detector: string;
+  /** 補正の強さ(0.05〜1.0)。 */
+  denoise: number;
+  /** 補正用プロンプト。空なら本体のプロンプトを使う。 */
+  prompt: string;
+  /** 検出しきい値(0.1〜1.0)。 */
+  confidence: number;
+}
+
+export type Preprocessor = "canny" | "depth" | "openpose" | "none";
+
+/** ControlNet の 1 ユニット(docs/10-assist-features.md §5)。 */
+export interface ControlnetUnit {
+  /** 参照画像。画像保存先からの相対パス("inputs/<uuid>.png")。 */
+  image: string;
+  model: string;
+  preprocessor: Preprocessor;
+  /** 0〜2 */
+  strength: number;
+  /** 0〜1(終了より小さい) */
+  startPercent: number;
+  endPercent: number;
+}
+
+/** SD 1.5 / SDXL のみ。v0.2 は 1 ユニットまで。 */
+export interface ControlnetParams {
+  enabled: boolean;
+  units: ControlnetUnit[];
+}
+
 /** docs/03-data-model.md の params_json と同一。 */
 export interface GenerationParams {
   schemaVersion: number;
@@ -27,6 +61,10 @@ export interface GenerationParams {
   seed: number;
   seedRandomize: boolean;
   batchSize: number;
+  /** 無ければ顔補正は無効。 */
+  faceDetailer?: FaceDetailerParams;
+  /** 無ければ ControlNet は無効。 */
+  controlnet?: ControlnetParams;
 }
 
 export type JobStatus = "queued" | "running" | "completed" | "failed" | "cancelled";
@@ -61,6 +99,8 @@ export interface JobProgress {
   step: number;
   totalSteps: number;
   node?: string;
+  /** 顔補正を使うジョブで、どの段階の進捗か。 */
+  phase?: "generate" | "face_detail";
 }
 
 export interface Page<T> {

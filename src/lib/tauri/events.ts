@@ -1,6 +1,7 @@
 import { isTauri } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 
+import type { SuggestedChanges } from "./assistant";
 import type { EngineStatus } from "./engine";
 import type { ImageItem, Job, JobProgress } from "./jobs";
 
@@ -27,3 +28,23 @@ export const onImageCreated = (handler: (image: ImageItem) => void) =>
 
 export const onImageDeleted = (handler: (payload: { ids: string[] }) => void) =>
   subscribe<{ ids: string[] }>("image://deleted", handler);
+
+export const onAssistantDelta = (handler: (p: { requestId: string; text: string }) => void) =>
+  subscribe<{ requestId: string; text: string }>("assistant://delta", handler);
+
+export interface AssistantSuggestionEvent {
+  requestId: string;
+  index: number;
+  summary: string;
+  changes: SuggestedChanges;
+}
+
+export const onAssistantSuggestion = (handler: (p: AssistantSuggestionEvent) => void) =>
+  subscribe<AssistantSuggestionEvent>("assistant://suggestion", handler);
+
+export const onAssistantDone = (handler: (p: { requestId: string; cancelled: boolean }) => void) =>
+  subscribe<{ requestId: string; cancelled: boolean }>("assistant://done", handler);
+
+export const onAssistantError = (
+  handler: (p: { requestId: string; code: string; message: string }) => void,
+) => subscribe<{ requestId: string; code: string; message: string }>("assistant://error", handler);

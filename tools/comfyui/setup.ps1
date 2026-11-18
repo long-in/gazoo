@@ -16,6 +16,9 @@ $App     = Join-Path $Dest 'ComfyUI'
 $Venv    = Join-Path $Dest 'venv'
 $Data    = Join-Path $Dest 'data'
 $GgufDir = Join-Path $Data 'custom_nodes\ComfyUI-GGUF'
+$ImpactDir  = Join-Path $Data 'custom_nodes\ComfyUI-Impact-Pack'
+$SubpackDir = Join-Path $Data 'custom_nodes\ComfyUI-Impact-Subpack'
+$AuxDir     = Join-Path $Data 'custom_nodes\comfyui_controlnet_aux'
 $VenvPy  = Join-Path $Venv 'Scripts\python.exe'
 
 function Fail($msg) { Write-Error "ERROR: $msg"; exit 1 }
@@ -62,6 +65,18 @@ Checkout-Pinned $GgufDir $V.GGUF_NODE_REPO $V.GGUF_NODE_COMMIT
 $head = (& git -C $GgufDir rev-parse HEAD).Trim()
 if ($head -ne $V.GGUF_NODE_COMMIT) { Fail 'GGUF ノードのコミットが固定値と一致しません' }
 
+Write-Host "==> ComfyUI-Impact-Pack $($V.IMPACT_PACK_COMMIT)"
+Checkout-Pinned $ImpactDir $V.IMPACT_PACK_REPO $V.IMPACT_PACK_COMMIT
+if ((& git -C $ImpactDir rev-parse HEAD).Trim() -ne $V.IMPACT_PACK_COMMIT) { Fail 'Impact Pack のコミットが固定値と一致しません' }
+
+Write-Host "==> ComfyUI-Impact-Subpack $($V.IMPACT_SUBPACK_COMMIT)"
+Checkout-Pinned $SubpackDir $V.IMPACT_SUBPACK_REPO $V.IMPACT_SUBPACK_COMMIT
+if ((& git -C $SubpackDir rev-parse HEAD).Trim() -ne $V.IMPACT_SUBPACK_COMMIT) { Fail 'Impact Subpack のコミットが固定値と一致しません' }
+
+Write-Host "==> comfyui_controlnet_aux $($V.CONTROLNET_AUX_COMMIT)"
+Checkout-Pinned $AuxDir $V.CONTROLNET_AUX_REPO $V.CONTROLNET_AUX_COMMIT
+if ((& git -C $AuxDir rev-parse HEAD).Trim() -ne $V.CONTROLNET_AUX_COMMIT) { Fail 'controlnet_aux のコミットが固定値と一致しません' }
+
 Write-Host "==> Python venv ($PyVer)"
 if (Test-Path $VenvPy) {
   $have = & $VenvPy -c "import sys; print('%d.%d' % sys.version_info[:2])"
@@ -84,6 +99,13 @@ Invoke-Checked $VenvPy ($Pip + @('-r', (Join-Path $App 'requirements.txt')))
 
 Write-Host '==> ComfyUI-GGUF requirements'
 Invoke-Checked $VenvPy ($Pip + @('-r', (Join-Path $GgufDir 'requirements.txt')))
+
+Write-Host '==> Impact Pack / Subpack requirements'
+Invoke-Checked $VenvPy ($Pip + @('-r', (Join-Path $ImpactDir 'requirements.txt')))
+Invoke-Checked $VenvPy ($Pip + @('-r', (Join-Path $SubpackDir 'requirements.txt')))
+
+Write-Host '==> controlnet_aux requirements'
+Invoke-Checked $VenvPy ($Pip + @('-r', (Join-Path $AuxDir 'requirements.txt')))
 
 Invoke-Checked $VenvPy @('-c', "import torch; print('torch', torch.__version__, '/ CUDA available:', torch.cuda.is_available())")
 

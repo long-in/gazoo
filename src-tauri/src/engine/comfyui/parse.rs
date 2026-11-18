@@ -70,6 +70,15 @@ pub fn has_node(node_info: &Value, node: &str) -> bool {
     node_info.get(node).is_some()
 }
 
+/// `POST /upload/image` の応答から、`LoadImage` に渡す名前(サブフォルダがあれば `sub/name`)を取り出す。
+pub fn parse_upload_name(v: &Value) -> Option<String> {
+    let name = v.get("name")?.as_str().filter(|n| !n.is_empty())?;
+    match v.get("subfolder").and_then(Value::as_str) {
+        Some(sub) if !sub.is_empty() => Some(format!("{sub}/{name}")),
+        _ => Some(name.to_owned()),
+    }
+}
+
 /// 結果画像の参照(`/view` のクエリ)。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ImageRef {
@@ -387,6 +396,20 @@ mod tests {
             parse_prompt_error(&json!({})).code(),
             "ENGINE_EXECUTION_FAILED"
         );
+    }
+
+    #[test]
+    fn upload_name_with_and_without_subfolder() {
+        assert_eq!(
+            parse_upload_name(&json!({"name": "a.png", "subfolder": "", "type": "input"})),
+            Some("a.png".into())
+        );
+        assert_eq!(
+            parse_upload_name(&json!({"name": "a.png", "subfolder": "gazoo"})),
+            Some("gazoo/a.png".into())
+        );
+        assert_eq!(parse_upload_name(&json!({"name": ""})), None);
+        assert_eq!(parse_upload_name(&json!({"error": "x"})), None);
     }
 
     #[test]

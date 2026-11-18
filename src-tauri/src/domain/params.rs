@@ -35,6 +35,96 @@ pub struct ModelSpec {
     pub vae: Option<String>,
 }
 
+/// 顔補正(ADetailer 相当。docs/10-assist-features.md §4)。SD 1.5 / SDXL のみ。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FaceDetailerParams {
+    #[serde(default)]
+    pub enabled: bool,
+    /// 検出モデル(`UltralyticsDetectorProvider` の `bbox/…`)。
+    #[serde(default)]
+    pub detector: String,
+    /// 補正の強さ(再サンプリングの denoise)。
+    #[serde(default = "default_face_denoise")]
+    pub denoise: f64,
+    /// 補正用プロンプト。空なら本体のプロンプトを使う。
+    #[serde(default)]
+    pub prompt: String,
+    /// 検出しきい値。
+    #[serde(default = "default_face_confidence")]
+    pub confidence: f64,
+}
+
+/// ControlNet の前処理(docs/10-assist-features.md §5)。参照画像を条件画像に変換する方法。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Preprocessor {
+    Canny,
+    Depth,
+    Openpose,
+    /// 前処理なし(線画・深度マップ・ポーズ画像として用意した画像をそのまま使う)。
+    None,
+}
+
+/// ControlNet の 1 ユニット。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ControlnetUnit {
+    /// 参照画像。画像保存先からの相対パス(`inputs/<uuid>.png`、`/` 区切り)。
+    pub image: String,
+    /// ControlNet モデル(`ControlNetLoader` の候補)。
+    pub model: String,
+    #[serde(default = "default_preprocessor")]
+    pub preprocessor: Preprocessor,
+    #[serde(default = "default_strength")]
+    pub strength: f64,
+    #[serde(default)]
+    pub start_percent: f64,
+    #[serde(default = "default_end_percent")]
+    pub end_percent: f64,
+}
+
+/// ControlNet(docs/10 §5)。SD 1.5 / SDXL のみ。v0.2 は 1 ユニットまで。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ControlnetParams {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default)]
+    pub units: Vec<ControlnetUnit>,
+}
+
+fn default_preprocessor() -> Preprocessor {
+    Preprocessor::Canny
+}
+fn default_strength() -> f64 {
+    1.0
+}
+fn default_end_percent() -> f64 {
+    1.0
+}
+
+/// 参照画像の相対パスとして妥当か(`inputs/` 直下の安全なファイル名だけを許す)。
+/// ここを通ったパスだけを、保存先に結合してファイルを読む。
+pub fn is_valid_input_path(rel: &str) -> bool {
+    let Some(name) = rel.strip_prefix("inputs/") else {
+        return false;
+    };
+    !name.is_empty()
+        && name.len() <= 100
+        && !name.starts_with('.')
+        && name
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'))
+}
+
+fn default_face_denoise() -> f64 {
+    0.4
+}
+fn default_face_confidence() -> f64 {
+    0.5
+}
+
 fn default_schema_version() -> u32 {
     1
 }
@@ -72,9 +162,28 @@ pub struct GenerationParams {
     pub seed_randomize: bool,
     #[serde(default = "default_batch")]
     pub batch_size: u32,
+    /// 顔補正。無ければ無効(docs/03「生成補助機能のフィールド」)。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub face_detailer: Option<FaceDetailerParams>,
+    /// ControlNet。無ければ無効。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub controlnet: Option<ControlnetParams>,
 }
 
 impl GenerationParams {
+    /// 有効な ControlNet のユニット(無効・未指定・ユニットなしなら空)。
+    pub fn active_controlnet_units(&self) -> &[ControlnetUnit] {
+        match &self.controlnet {
+            Some(c) if c.enabled => &c.units,
+            _ => &[],
+        }
+    }
+
+    /// 有効な顔補正の設定(無効・未指定なら `None`)。
+    pub fn active_face_detailer(&self) -> Option<&FaceDetailerParams> {
+        self.face_detailer.as_ref().filter(|f| f.enabled)
+    }
+
     pub fn validate(&self) -> AppResult<()> {
         let bad = |field: &str, msg: &str| Err(AppError::validation(field, msg));
 
@@ -123,6 +232,72 @@ impl GenerationParams {
                 return bad("vae", "VAE を選択してください");
             }
         }
+        if let Some(fd) = self.active_face_detailer() {
+            if self.model.kind.is_flux() {
+                return bad("faceDetailer", "顔補正は SD 1.5 / SDXL のみ対応です");
+            }
+            if fd.detector.trim().is_empty() {
+                return bad("faceDetailer.detector", "検出モデルを選択してください");
+            }
+            if !(0.05..=1.0).contains(&fd.denoise) || !fd.denoise.is_finite() {
+                return bad(
+                    "faceDetailer.denoise",
+                    "強さは 0.05〜1.0 で指定してください",
+                );
+            }
+            if !(0.1..=1.0).contains(&fd.confidence) || !fd.confidence.is_finite() {
+                return bad(
+                    "faceDetailer.confidence",
+                    "検出しきい値は 0.1〜1.0 で指定してください",
+                );
+            }
+        }
+        if self.controlnet.as_ref().is_some_and(|c| c.enabled) {
+            self.validate_controlnet()?;
+        }
+        Ok(())
+    }
+
+    fn validate_controlnet(&self) -> AppResult<()> {
+        let bad = |field: &str, msg: &str| Err(AppError::validation(field, msg));
+        if self.model.kind.is_flux() {
+            return bad("controlnet", "ControlNet は SD 1.5 / SDXL のみ対応です");
+        }
+        let units = self.active_controlnet_units();
+        if units.is_empty() {
+            return bad("controlnet.units", "参照画像を選択してください");
+        }
+        if units.len() > 1 {
+            return bad("controlnet.units", "ControlNet は 1 つまで指定できます");
+        }
+        let u = &units[0];
+        if u.image.trim().is_empty() {
+            return bad("controlnet.units[0].image", "参照画像を選択してください");
+        }
+        if !is_valid_input_path(&u.image) {
+            return bad("controlnet.units[0].image", "参照画像のパスが不正です");
+        }
+        if u.model.trim().is_empty() {
+            return bad(
+                "controlnet.units[0].model",
+                "ControlNet モデルを選択してください",
+            );
+        }
+        if !(0.0..=2.0).contains(&u.strength) || !u.strength.is_finite() {
+            return bad(
+                "controlnet.units[0].strength",
+                "強さは 0〜2 で指定してください",
+            );
+        }
+        let range_ok = (0.0..=1.0).contains(&u.start_percent)
+            && (0.0..=1.0).contains(&u.end_percent)
+            && u.start_percent < u.end_percent;
+        if !range_ok {
+            return bad(
+                "controlnet.units[0].endPercent",
+                "適用範囲は 0〜1 で、開始より終了を大きくしてください",
+            );
+        }
         Ok(())
     }
 }
@@ -158,6 +333,8 @@ pub fn sample(kind: ModelKind) -> GenerationParams {
         seed: 42,
         seed_randomize: false,
         batch_size: 1,
+        face_detailer: None,
+        controlnet: None,
     }
 }
 
@@ -224,6 +401,190 @@ mod tests {
         let mut p = sample(ModelKind::FluxGguf);
         p.model.vae = None;
         assert_eq!(field_of(p.validate()), "vae");
+    }
+
+    fn with_face(kind: ModelKind) -> GenerationParams {
+        let mut p = sample(kind);
+        p.face_detailer = Some(FaceDetailerParams {
+            enabled: true,
+            detector: "bbox/face_yolov8m.pt".into(),
+            denoise: 0.4,
+            prompt: String::new(),
+            confidence: 0.5,
+        });
+        p
+    }
+
+    #[test]
+    fn face_detailer_is_valid_for_sd_only() {
+        with_face(ModelKind::Sd15).validate().unwrap();
+        with_face(ModelKind::Sdxl).validate().unwrap();
+        for k in [ModelKind::Flux, ModelKind::FluxGguf] {
+            assert_eq!(field_of(with_face(k).validate()), "faceDetailer");
+        }
+        // 無効のままなら Flux でも通る(モデル切替で残った設定を弾かない)
+        let mut p = with_face(ModelKind::Flux);
+        p.face_detailer.as_mut().unwrap().enabled = false;
+        p.validate().unwrap();
+        assert!(p.active_face_detailer().is_none());
+    }
+
+    #[test]
+    fn face_detailer_rejects_bad_values() {
+        let mut p = with_face(ModelKind::Sd15);
+        p.face_detailer.as_mut().unwrap().detector = " ".into();
+        assert_eq!(field_of(p.validate()), "faceDetailer.detector");
+
+        for bad in [0.0, 1.5, f64::NAN] {
+            let mut p = with_face(ModelKind::Sd15);
+            p.face_detailer.as_mut().unwrap().denoise = bad;
+            assert_eq!(field_of(p.validate()), "faceDetailer.denoise");
+        }
+        for bad in [0.0, 1.1] {
+            let mut p = with_face(ModelKind::Sd15);
+            p.face_detailer.as_mut().unwrap().confidence = bad;
+            assert_eq!(field_of(p.validate()), "faceDetailer.confidence");
+        }
+    }
+
+    #[test]
+    fn face_detailer_is_optional_and_round_trips() {
+        // 古いデータ(フィールド無し)は無効として読める。保存時にも出力しない
+        let p = sample(ModelKind::Sd15);
+        let v = serde_json::to_value(&p).unwrap();
+        assert!(v.get("faceDetailer").is_none());
+
+        let p: GenerationParams = serde_json::from_str(
+            r#"{"model":{"kind":"sd15","name":"m"},"prompt":"x","width":512,"height":512,
+                "steps":20,"sampler":"euler","scheduler":"normal","seed":1,
+                "faceDetailer":{"enabled":true,"detector":"bbox/face_yolov8m.pt"}}"#,
+        )
+        .unwrap();
+        let fd = p.active_face_detailer().unwrap();
+        assert_eq!((fd.denoise, fd.confidence), (0.4, 0.5));
+        let again: GenerationParams =
+            serde_json::from_value(serde_json::to_value(&p).unwrap()).unwrap();
+        assert_eq!(again, p);
+    }
+
+    fn with_cn(kind: ModelKind) -> GenerationParams {
+        let mut p = sample(kind);
+        p.controlnet = Some(ControlnetParams {
+            enabled: true,
+            units: vec![ControlnetUnit {
+                image: "inputs/0190-abc.png".into(),
+                model: "control_canny.safetensors".into(),
+                preprocessor: Preprocessor::Canny,
+                strength: 1.0,
+                start_percent: 0.0,
+                end_percent: 1.0,
+            }],
+        });
+        p
+    }
+
+    fn unit(p: &mut GenerationParams) -> &mut ControlnetUnit {
+        &mut p.controlnet.as_mut().unwrap().units[0]
+    }
+
+    #[test]
+    fn controlnet_is_valid_for_sd_only() {
+        with_cn(ModelKind::Sd15).validate().unwrap();
+        with_cn(ModelKind::Sdxl).validate().unwrap();
+        for k in [ModelKind::Flux, ModelKind::FluxGguf] {
+            assert_eq!(field_of(with_cn(k).validate()), "controlnet");
+        }
+        // 無効のままなら Flux でも通り、ユニットも作られない
+        let mut p = with_cn(ModelKind::Flux);
+        p.controlnet.as_mut().unwrap().enabled = false;
+        p.validate().unwrap();
+        assert!(p.active_controlnet_units().is_empty());
+    }
+
+    #[test]
+    fn controlnet_rejects_bad_values() {
+        let mut p = with_cn(ModelKind::Sd15);
+        p.controlnet.as_mut().unwrap().units.clear();
+        assert_eq!(field_of(p.validate()), "controlnet.units");
+
+        let mut p = with_cn(ModelKind::Sd15);
+        let extra = unit(&mut p).clone();
+        p.controlnet.as_mut().unwrap().units.push(extra);
+        assert_eq!(field_of(p.validate()), "controlnet.units");
+
+        let mut p = with_cn(ModelKind::Sd15);
+        unit(&mut p).image = String::new();
+        assert_eq!(field_of(p.validate()), "controlnet.units[0].image");
+
+        let mut p = with_cn(ModelKind::Sd15);
+        unit(&mut p).model = " ".into();
+        assert_eq!(field_of(p.validate()), "controlnet.units[0].model");
+
+        for bad in [-0.1, 2.1, f64::NAN] {
+            let mut p = with_cn(ModelKind::Sd15);
+            unit(&mut p).strength = bad;
+            assert_eq!(field_of(p.validate()), "controlnet.units[0].strength");
+        }
+        for (s, e) in [(0.5, 0.5), (0.8, 0.2), (-0.1, 1.0), (0.0, 1.1)] {
+            let mut p = with_cn(ModelKind::Sd15);
+            unit(&mut p).start_percent = s;
+            unit(&mut p).end_percent = e;
+            assert_eq!(field_of(p.validate()), "controlnet.units[0].endPercent");
+        }
+    }
+
+    #[test]
+    fn input_paths_must_stay_inside_inputs_dir() {
+        for ok in ["inputs/a.png", "inputs/0190-ab_c.PNG"] {
+            assert!(is_valid_input_path(ok), "{ok}");
+        }
+        for bad in [
+            "",
+            "inputs/",
+            "a.png",
+            "../inputs/a.png",
+            "inputs/../a.png",
+            "inputs/..",
+            "inputs/.hidden",
+            "inputs/sub/a.png",
+            "inputs\\a.png",
+            "/etc/passwd",
+            "inputs/C:evil.png",
+            "2026/11/a.png",
+            "thumbs/a.jpg",
+        ] {
+            assert!(!is_valid_input_path(bad), "{bad}");
+        }
+        let mut p = with_cn(ModelKind::Sd15);
+        unit(&mut p).image = "inputs/../secret.png".into();
+        assert_eq!(field_of(p.validate()), "controlnet.units[0].image");
+    }
+
+    #[test]
+    fn controlnet_is_optional_and_round_trips() {
+        let v = serde_json::to_value(sample(ModelKind::Sd15)).unwrap();
+        assert!(v.get("controlnet").is_none());
+
+        let p: GenerationParams = serde_json::from_str(
+            r#"{"model":{"kind":"sd15","name":"m"},"prompt":"x","width":512,"height":512,
+                "steps":20,"sampler":"euler","scheduler":"normal","seed":1,
+                "controlnet":{"enabled":true,"units":[{"image":"inputs/a.png","model":"c.safetensors",
+                  "preprocessor":"openpose"}]}}"#,
+        )
+        .unwrap();
+        let u = &p.active_controlnet_units()[0];
+        assert_eq!(u.preprocessor, Preprocessor::Openpose);
+        assert_eq!(
+            (u.strength, u.start_percent, u.end_percent),
+            (1.0, 0.0, 1.0)
+        );
+        let again: GenerationParams =
+            serde_json::from_value(serde_json::to_value(&p).unwrap()).unwrap();
+        assert_eq!(again, p);
+        assert_eq!(
+            serde_json::to_value(Preprocessor::None).unwrap(),
+            serde_json::json!("none")
+        );
     }
 
     #[test]

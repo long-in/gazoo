@@ -7,12 +7,18 @@ import { Toaster } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { useLanguage } from "@/lib/i18n/use-t";
 import {
+  onAssistantDelta,
+  onAssistantDone,
+  onAssistantError,
+  onAssistantSuggestion,
   onEngineStatus,
   onImageCreated,
   onImageDeleted,
   onJobProgress,
   onJobUpdated,
 } from "@/lib/tauri/events";
+import { toAppError } from "@/lib/tauri/errors";
+import { useAssistantStore } from "@/stores/assistant-store";
 import { useEngineStore } from "@/stores/engine-store";
 import { useGalleryStore } from "@/stores/gallery-store";
 import { usePresetStore } from "@/stores/preset-store";
@@ -106,6 +112,30 @@ function JobBootstrap() {
   return null;
 }
 
+/** AI サポートの応答イベントの購読(画面を移動しても取りこぼさないよう、アプリ全体で 1 回だけ)。 */
+function AssistantBootstrap() {
+  useEffect(() => {
+    let cancelled = false;
+    const unlisteners: (() => void)[] = [];
+    const st = () => useAssistantStore.getState();
+    void Promise.all([
+      onAssistantDelta((p) => st().onDelta(p.requestId, p.text)),
+      onAssistantSuggestion((p) => st().onSuggestion(p.requestId, p.index, p.summary, p.changes)),
+      onAssistantDone((p) => st().onDone(p.requestId)),
+      onAssistantError((p) => st().onError(p.requestId, toAppError({ code: p.code, message: p.message }))),
+    ]).then((fns) => {
+      if (cancelled) fns.forEach((fn) => fn());
+      else unlisteners.push(...fns);
+    });
+    void st().loadStatus();
+    return () => {
+      cancelled = true;
+      unlisteners.forEach((fn) => fn());
+    };
+  }, []);
+  return null;
+}
+
 export function Providers({ children }: { children: ReactNode }) {
   return (
     <ThemeProvider attribute="class" defaultTheme="system" enableSystem>
@@ -114,6 +144,7 @@ export function Providers({ children }: { children: ReactNode }) {
         <EngineBootstrap />
         <JobBootstrap />
         <PresetBootstrap />
+        <AssistantBootstrap />
         {children}
         <Toaster richColors />
       </TooltipProvider>

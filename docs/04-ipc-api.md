@@ -44,7 +44,11 @@ interface EngineStatus {
   version?: string;        // ComfyUI のバージョン
   device?: string;         // 先頭デバイス名(例: "mps", "NVIDIA GeForce RTX ...")
   vramFree?: number;       // bytes
-  features: { ggufNode: boolean };   // ComfyUI-GGUF(UnetLoaderGGUF)の有無
+  features: {
+    ggufNode: boolean;               // ComfyUI-GGUF(UnetLoaderGGUF)の有無
+    faceDetailer: boolean;           // Impact Pack(FaceDetailer)と Subpack(UltralyticsDetectorProvider)の有無(v0.2)
+    controlnetPreprocessors: ("canny" | "depth" | "openpose")[];  // 利用できる前処理。canny はコアの Canny ノード(v0.2)
+  };
   error?: "unreachable" | "bad_response";  // connected=false のときの理由
 }
 
@@ -55,6 +59,8 @@ interface EngineModels {
   clips: string[];         // CLIPLoader.clip_name
   vaes: string[];          // VAELoader.vae_name
   loras: string[];         // LoraLoader.lora_name
+  controlnets: string[];   // ControlNetLoader.control_net_name(v0.2)
+  faceDetectors: string[]; // UltralyticsDetectorProvider.model_name のうち "bbox/" で始まるもの(v0.2。ノード未導入なら空)
   samplers: string[];      // KSampler.sampler_name
   schedulers: string[];    // KSampler.scheduler
 }
@@ -85,6 +91,26 @@ ComfyUI のバージョンにより選択肢の形式が異なる(`[[...], {}]` 
 | `image_delete` | `{ ids: string[]; deleteFiles: boolean }` | `void` | DB の記録を削除する。`deleteFiles` が true なら原寸とサムネイルを **OS のゴミ箱へ移動**(Q-10)。ファイルが既に無くてもエラーにしない。完了後に `image://deleted` を発火 |
 | `image_export` | `{ id; destPath }` | `void` | 原寸をコピーする。`destPath` は保存ダイアログで選んだ絶対パス |
 | `image_reveal` | `{ id }` | `void` | エクスプローラー / Finder で表示 |
+
+### 入力画像(v0.2、ControlNet の参照画像。設計: 10 §6)
+
+| コマンド | 引数 | 戻り値 | 説明 |
+|---|---|---|---|
+| `input_image_pick` | – | `InputImage \| null` | **Rust 側でファイル選択ダイアログを開き**、選ばれた PNG / JPEG を取り込む。キャンセル時は `null` |
+| `input_image_from_gallery` | `{ imageId: string }` | `InputImage` | ギャラリーの画像を参照画像として取り込む(`IMAGE_NOT_FOUND` あり) |
+| `input_image_get` | `{ path: string }` | `InputImage` | 既存の参照画像の情報を取得する(プリセット・再現の復元時に存在確認も兼ねる。無ければ `IMAGE_NOT_FOUND`) |
+
+```ts
+interface InputImage {
+  path: string;      // 画像保存先からの相対パス("inputs/<uuid>.png")。GenerationParams.controlnet.units[].image に入れる
+  filePath: string;  // 絶対パス。フロントが convertFileSrc で表示する
+  width: number; height: number;
+}
+```
+
+- 取り込みは PNG へ再エンコードして `inputs/` に保存する。形式・サイズが不正なら `VALIDATION`(20MB、長辺 8192px まで)。
+- ファイルのパスをフロントから受け取らない設計(任意ファイル読み取りの防止)。
+- `job_enqueue` は、有効な ControlNet の参照画像が保存先に無ければ `IMAGE_NOT_FOUND` で断る。待機中に消えた場合は、ジョブが `failed`(`IMAGE_NOT_FOUND`)になる。
 
 ### プリセット
 
@@ -125,6 +151,22 @@ type SettingsPatch = Partial<Settings>;
 `generationDefaults`(生成フォームの下書き。03 の `generation.default_params`)は `GenerationParams | null` で、フォームの入力内容を自動保存・復元するために使う(null = 組み込みの既定値)。Rust 側は JSON としてそのまま保存し、`job_enqueue` の時点で検証する。
 **`settings_update` は `imagesDir` を受け付けない**(渡すと `VALIDATION`)。保存先の変更は、既存画像の扱いを伴うため専用コマンドで行う(下記)。
 
+### AI サポート(v0.3、設計: 11 §8)
+
+| コマンド | 引数 | 戻り値 |
+|---|---|---|
+| `assistant_status` | – | `{ hasKey; verified; model; consent }` |
+| `assistant_set_key` | `{ key }` | `{ verified }`(401 は保存せず `ASSISTANT_AUTH`) |
+| `assistant_clear_key` | – | – |
+| `assistant_update` | `{ model?; consent?; autoDelete? }` | `status` |
+| `assistant_ask` | `{ conversationId: string \| null; text; params: GenerationParams }` | `{ requestId; conversationId; assistantMessageId }` |
+| `assistant_conversation_list` / `_get` / `_delete` | – / `{ id }` / `{ ids \| null }`(null = すべて) | 会話の一覧 / 取得 / 削除(最大 30 会話、11 §4.1) |
+| `assistant_suggestion_applied` | `{ messageId; index }` | 提案を適用済みとして記録 |
+| `assistant_cancel` | `{ requestId }` | – |
+
+- キーは戻り値・イベントに含めない。同意なし `ASSISTANT_NO_CONSENT`、キーなし `ASSISTANT_NO_KEY`、実行中の再送 `ASSISTANT_BUSY`。
+- 応答はイベント `assistant://delta` / `assistant://suggestion` / `assistant://done` / `assistant://error`(下記)。
+
 ### 保存先の変更(Q-11)
 
 | コマンド | 引数 | 戻り値 | 説明 |
@@ -143,10 +185,14 @@ type SettingsPatch = Partial<Settings>;
 |---|---|---|
 | `engine://status` | `engine_status` の戻り値 | 接続状態の変化 |
 | `job://updated` | `Job` | ステータス変更・追加・並び替え |
-| `job://progress` | `{ jobId; step; totalSteps; node?: string }` | 生成中(最大 10 回/秒) |
+| `job://progress` | `{ jobId; step; totalSteps; node?: string; phase?: "generate" \| "face_detail" }` | 生成中(最大 10 回/秒)。`phase` はどの段階の進捗かを示す(v0.2。進捗を出したノードが顔補正なら `face_detail`、それ以外は `generate`。UI は顔補正のときだけ「顔補正中」と表示) |
 | `job://preview` | `{ jobId; dataUrl: string }` | (M2 では未実装。将来) |
 | `image://created` | `ImageItem` | 画像が保存された時 |
 | `image://deleted` | `{ ids: string[] }` | 削除時 |
+| `assistant://delta` | `{ requestId; text }` | AI の回答の断片(v0.3) |
+| `assistant://suggestion` | `{ requestId; index; summary; changes }` | 検証済みの設定変更の提案(v0.3) |
+| `assistant://done` | `{ requestId; cancelled }` | 回答完了 |
+| `assistant://error` | `{ requestId; code; message }` | 失敗 |
 
 ## エラーコード(初期)
 
@@ -155,7 +201,7 @@ type SettingsPatch = Partial<Settings>;
 | `ENGINE_UNREACHABLE` | ComfyUI に接続できない | 設定へのリンクと再接続ボタン |
 | `ENGINE_BAD_RESPONSE` | 接続先が ComfyUI として期待する応答を返さない(別サービス / 非互換バージョン) | 設定の URL 確認を促す |
 | `ENGINE_MODEL_MISSING` | 指定モデルが存在しない(`/prompt` が `value_not_in_list` を返した) | モデル再選択を促す |
-| `ENGINE_NODE_MISSING` | 必要なカスタムノードが無い(例: GGUF) | 導入手順を表示 |
+| `ENGINE_NODE_MISSING` | 必要なカスタムノードが無い(例: GGUF、顔補正の Impact Pack、ControlNet の前処理)。`details.node` にノード名 | 導入手順を表示 |
 | `ENGINE_EXECUTION_FAILED` | 生成失敗(OOM 等)。`details` に原文 | 解像度縮小などを提案 |
 | `PRESET_NOT_FOUND` | 存在しないプリセット | トースト |
 | `JOB_NOT_FOUND` / `JOB_INVALID_STATE` | 不正なジョブ操作(存在しない ID、状態が合わない操作) | トースト |
@@ -163,4 +209,11 @@ type SettingsPatch = Partial<Settings>;
 | `VALIDATION` | 入力不正。`details.field` | フォームにインライン表示 |
 | `STORAGE_ERROR` | ファイル I/O 失敗 | トースト |
 | `DB_ERROR` | DB 失敗 | 再起動案内 |
+| `ASSISTANT_NO_KEY` / `ASSISTANT_NO_CONSENT` | API キー未登録 / 同意未取得(v0.3) | 設定への案内 / 同意ダイアログ |
+| `ASSISTANT_AUTH` | API キーが無効(401/403) | キーの再登録を促す |
+| `ASSISTANT_RATE_LIMIT` | 制限・過負荷(429/529) | 待って再送を促す |
+| `ASSISTANT_UNREACHABLE` | api.anthropic.com に接続できない | ネットワーク確認を促す |
+| `ASSISTANT_API_ERROR` | その他の API エラー。`details` はステータスとリクエスト ID のみ | トースト |
+| `ASSISTANT_BUSY` | 別の相談が実行中 | 完了または停止を待つ |
+| `ASSISTANT_CONVERSATION_NOT_FOUND` | 会話が存在しない | 一覧を更新 |
 | `INTERNAL` | 想定外 | 詳細ログ参照案内 |

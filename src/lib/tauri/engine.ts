@@ -7,7 +7,13 @@ export interface EngineStatus {
   device?: string;
   /** bytes */
   vramFree?: number;
-  features: { ggufNode: boolean };
+  features: {
+    ggufNode: boolean;
+    /** 顔補正に必要なノード(Impact Pack の FaceDetailer と Subpack の検出モデルローダー)。 */
+    faceDetailer: boolean;
+    /** 利用できる ControlNet の前処理。Canny はコア、Depth / OpenPose は comfyui_controlnet_aux が必要。 */
+    controlnetPreprocessors: ("canny" | "depth" | "openpose")[];
+  };
   error?: "unreachable" | "bad_response";
 }
 
@@ -18,6 +24,10 @@ export interface EngineModels {
   clips: string[];
   vaes: string[];
   loras: string[];
+  /** 顔補正の検出モデル("bbox/…")。ノード未導入なら空。 */
+  faceDetectors: string[];
+  /** ControlNet モデル(`ControlNetLoader`)。 */
+  controlnets: string[];
   samplers: string[];
   schedulers: string[];
 }

@@ -26,6 +26,9 @@ pub enum AppError {
     ImageNotFound(String),
     #[error("プリセットが見つかりません: {0}")]
     PresetNotFound(String),
+    /// AI サポート(docs/11)。`code` は `ASSISTANT_*`。
+    #[error("{message}")]
+    Assistant { code: &'static str, message: String },
     #[error("database error: {0}")]
     Db(String),
     #[error("storage error: {0}")]
@@ -38,6 +41,13 @@ impl AppError {
     pub fn validation(field: impl Into<String>, message: impl Into<String>) -> Self {
         Self::Validation {
             field: field.into(),
+            message: message.into(),
+        }
+    }
+
+    pub fn assistant(code: &'static str, message: impl Into<String>) -> Self {
+        Self::Assistant {
+            code,
             message: message.into(),
         }
     }
@@ -59,6 +69,7 @@ impl AppError {
             Self::JobInvalidState(_) => "JOB_INVALID_STATE",
             Self::ImageNotFound(_) => "IMAGE_NOT_FOUND",
             Self::PresetNotFound(_) => "PRESET_NOT_FOUND",
+            Self::Assistant { code, .. } => code,
             Self::Db(_) => "DB_ERROR",
             Self::Storage(_) => "STORAGE_ERROR",
             Self::Internal(_) => "INTERNAL",

@@ -11,6 +11,7 @@ use tokio_tungstenite::{MaybeTlsStream, WebSocketStream};
 use super::ComfyUiClient;
 use super::parse::{self, HistoryState, ImageRef};
 use super::workflow;
+use crate::domain::job::ProgressPhase;
 use crate::domain::params::GenerationParams;
 use crate::engine::{ImageData, Progress};
 use crate::error::{AppError, AppResult};
@@ -25,9 +26,53 @@ fn unreachable(e: reqwest::Error) -> AppError {
 }
 
 impl ComfyUiClient {
-    pub(super) async fn submit_prompt(&self, params: &GenerationParams) -> AppResult<String> {
+    /// 参照画像を `POST /upload/image`(multipart、`type=input`)で送り、`LoadImage` に渡す名前を返す。
+    /// ファイル名は UUID を含めて衝突・上書きを避ける(ComfyUI 側の input に残るファイルは削除しない)。
+    pub(super) async fn upload_image(&self, png: Vec<u8>) -> AppResult<String> {
+        let filename = format!("gazoo-{}.png", uuid::Uuid::now_v7());
+        let part = reqwest::multipart::Part::bytes(png)
+            .file_name(filename)
+            .mime_str("image/png")
+            .map_err(|e| AppError::internal(e.to_string()))?;
+        let form = reqwest::multipart::Form::new()
+            .part("image", part)
+            .text("type", "input")
+            .text("overwrite", "false");
+        let resp = self
+            .http
+            .post(format!("{}/upload/image", self.base))
+            .multipart(form)
+            .send()
+            .await
+            .map_err(unreachable)?;
+        if !resp.status().is_success() {
+            return Err(AppError::EngineBadResponse(format!(
+                "/upload/image: HTTP {}",
+                resp.status()
+            )));
+        }
+        let v: Value = resp
+            .json()
+            .await
+            .map_err(|e| AppError::EngineBadResponse(e.without_url().to_string()))?;
+        parse::parse_upload_name(&v)
+            .ok_or_else(|| AppError::EngineBadResponse("/upload/image: name がありません".into()))
+    }
+
+    pub(super) async fn submit_prompt(
+        &self,
+        params: &GenerationParams,
+        inputs: &[String],
+    ) -> AppResult<String> {
+        let needed = params.active_controlnet_units().len();
+        if inputs.len() != needed {
+            return Err(AppError::internal(format!(
+                "参照画像の数が一致しません(必要 {needed}、指定 {})",
+                inputs.len()
+            )));
+        }
         let body = json!({
-            "prompt": workflow::build(params, "gazoo"),
+            "prompt": workflow::build(params, "gazoo", inputs),
             "client_id": self.client_id,
         });
         let resp = self
@@ -75,7 +120,17 @@ impl ComfyUiClient {
                 msg = next_ws_message(&mut ws) => match msg {
                     Some(Ok(Message::Text(text))) => {
                         if let Some((step, total, node)) = parse::parse_ws_progress(text.as_str(), id) {
-                            on_progress(Progress { step, total, node });
+                            let phase = if node.as_deref() == Some(workflow::FACE_DETAILER_NODE) {
+                                ProgressPhase::FaceDetail
+                            } else {
+                                ProgressPhase::Generate
+                            };
+                            on_progress(Progress {
+                                step,
+                                total,
+                                node,
+                                phase: Some(phase),
+                            });
                         }
                     }
                     Some(Ok(_)) => {}
@@ -212,7 +267,7 @@ mod tests {
         )])
         .await;
         let c = client(&m.url);
-        let id = c.submit(&sample(ModelKind::Sdxl)).await.unwrap();
+        let id = c.submit(&sample(ModelKind::Sdxl), &[]).await.unwrap();
         assert_eq!(id, "abc");
 
         let reqs = m.requests.lock().unwrap();
@@ -225,20 +280,88 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn upload_sends_multipart_and_returns_name() {
+        let m = spawn(vec![Route::post(
+            "/upload/image",
+            200,
+            r#"{"name":"gazoo-x.png","subfolder":"","type":"input"}"#,
+        )])
+        .await;
+        let name = client(&m.url)
+            .upload_input(b"PNGDATA".to_vec())
+            .await
+            .unwrap();
+        assert_eq!(name, "gazoo-x.png");
+
+        let reqs = m.requests.lock().unwrap();
+        let req = reqs
+            .iter()
+            .find(|r| r.starts_with("POST /upload/image"))
+            .unwrap();
+        assert!(req.contains("name=\"image\""), "{req}");
+        assert!(req.contains("PNGDATA"));
+        assert!(req.contains("name=\"type\"") && req.contains("input"));
+        assert!(req.contains("filename=\"gazoo-"), "ファイル名は UUID 入り");
+    }
+
+    #[tokio::test]
+    async fn upload_failures_are_classified() {
+        let m = spawn(vec![Route::post("/upload/image", 500, "oops")]).await;
+        let err = client(&m.url).upload_input(vec![1]).await.unwrap_err();
+        assert_eq!(err.code(), "ENGINE_BAD_RESPONSE");
+        let m = spawn(vec![Route::post("/upload/image", 200, r#"{"x":1}"#)]).await;
+        let err = client(&m.url).upload_input(vec![1]).await.unwrap_err();
+        assert_eq!(err.code(), "ENGINE_BAD_RESPONSE");
+    }
+
+    #[tokio::test]
+    async fn submit_with_controlnet_embeds_uploaded_name_and_checks_count() {
+        use crate::domain::params::{ControlnetParams, ControlnetUnit, Preprocessor};
+        let mut p = sample(ModelKind::Sd15);
+        p.controlnet = Some(ControlnetParams {
+            enabled: true,
+            units: vec![ControlnetUnit {
+                image: "inputs/a.png".into(),
+                model: "canny.safetensors".into(),
+                preprocessor: Preprocessor::Canny,
+                strength: 1.0,
+                start_percent: 0.0,
+                end_percent: 1.0,
+            }],
+        });
+        let m = spawn(vec![Route::post("/prompt", 200, r#"{"prompt_id":"cn1"}"#)]).await;
+        let c = client(&m.url);
+
+        // 参照画像の数が合わなければ、エンジンへ送る前に断る
+        assert_eq!(c.submit(&p, &[]).await.unwrap_err().code(), "INTERNAL");
+        assert!(m.requests.lock().unwrap().is_empty());
+
+        let id = c.submit(&p, &["gazoo-x.png".to_string()]).await.unwrap();
+        assert_eq!(id, "cn1");
+        let reqs = m.requests.lock().unwrap();
+        let body = reqs
+            .iter()
+            .find(|r| r.starts_with("POST /prompt "))
+            .unwrap();
+        assert!(body.contains("ControlNetApplyAdvanced"));
+        assert!(body.contains("gazoo-x.png"));
+    }
+
+    #[tokio::test]
     async fn submit_maps_validation_errors() {
         let model_missing = r#"{"error":{"type":"prompt_outputs_failed_validation","message":"Prompt outputs failed validation"},
             "node_errors":{"1":{"class_type":"CheckpointLoaderSimple","errors":[
             {"type":"value_not_in_list","details":"ckpt_name: 'x' not in []"}]}}}"#;
         let m = spawn(vec![Route::post("/prompt", 400, model_missing)]).await;
         let err = client(&m.url)
-            .submit(&sample(ModelKind::Sd15))
+            .submit(&sample(ModelKind::Sd15), &[])
             .await
             .unwrap_err();
         assert_eq!(err.code(), "ENGINE_MODEL_MISSING");
 
         let m = spawn(vec![Route::post("/prompt", 500, "oops")]).await;
         let err = client(&m.url)
-            .submit(&sample(ModelKind::Sd15))
+            .submit(&sample(ModelKind::Sd15), &[])
             .await
             .unwrap_err();
         assert_eq!(err.code(), "ENGINE_BAD_RESPONSE");
@@ -306,9 +429,54 @@ mod tests {
             [Progress {
                 step: 5,
                 total: 20,
-                node: Some("5".into())
+                node: Some("5".into()),
+                phase: Some(ProgressPhase::Generate),
             }],
             "他のジョブの進捗は無視され、自分の進捗だけが通知される"
+        );
+    }
+
+    #[tokio::test]
+    async fn progress_on_face_detailer_node_is_tagged_as_face_phase() {
+        let main_pass =
+            r#"{"type":"progress","data":{"value":20,"max":20,"prompt_id":"p1","node":"5"}}"#;
+        let face_pass = format!(
+            r#"{{"type":"progress","data":{{"value":3,"max":10,"prompt_id":"p1","node":"{}"}}}}"#,
+            workflow::FACE_DETAILER_NODE
+        );
+        let done = r#"{"p1":{"status":{"status_str":"success","completed":true},
+            "outputs":{"8":{"images":[{"filename":"a.png","subfolder":"","type":"output"}]}}}}"#;
+        let m = spawn_with_ws(
+            vec![
+                Route::seq(
+                    "GET /history/p1",
+                    vec![
+                        (200, "{}"),
+                        (200, "{}"),
+                        (200, "{}"),
+                        (200, "{}"),
+                        (200, done),
+                    ],
+                ),
+                Route::bytes("GET /view", b"x".to_vec()),
+            ],
+            vec![main_pass.to_string(), face_pass],
+        )
+        .await;
+
+        let seen: Arc<Mutex<Vec<Progress>>> = Arc::default();
+        let sink = Arc::clone(&seen);
+        client(&m.url)
+            .wait("p1", &move |p| sink.lock().unwrap().push(p))
+            .await
+            .unwrap();
+        let phases: Vec<_> = seen.lock().unwrap().iter().map(|p| p.phase).collect();
+        assert_eq!(
+            phases,
+            [
+                Some(ProgressPhase::Generate),
+                Some(ProgressPhase::FaceDetail)
+            ]
         );
     }
 
@@ -355,7 +523,7 @@ mod tests {
         p.model.name = "definitely-not-installed.safetensors".into();
         let err = ComfyUiClient::new(&url)
             .unwrap()
-            .submit(&p)
+            .submit(&p, &[])
             .await
             .unwrap_err();
         println!("{err}");
@@ -366,7 +534,7 @@ mod tests {
         p.model.name = "nope.gguf".into();
         let err = ComfyUiClient::new(&url)
             .unwrap()
-            .submit(&p)
+            .submit(&p, &[])
             .await
             .unwrap_err();
         println!("{err}");
@@ -397,7 +565,8 @@ mod tests {
         ] {
             let mut p = sample(kind);
             p.model.name = "not-installed.safetensors".into();
-            let body = json!({ "prompt": workflow::build(&p, "gazoo"), "client_id": c.client_id });
+            let body =
+                json!({ "prompt": workflow::build(&p, "gazoo", &[]), "client_id": c.client_id });
             let resp = c
                 .http
                 .post(format!("{}/prompt", c.base))
@@ -454,7 +623,10 @@ mod tests {
     #[ignore = "requires a running ComfyUI with an SD 1.5 checkpoint"]
     async fn real_comfyui_generates_sd15_image_with_progress() {
         let c = ComfyUiClient::new(&real_url()).unwrap();
-        let id = c.submit(&real_sd15_params(8, 1)).await.expect("submit");
+        let id = c
+            .submit(&real_sd15_params(8, 1), &[])
+            .await
+            .expect("submit");
 
         let seen: Arc<Mutex<Vec<Progress>>> = Arc::default();
         let sink = Arc::clone(&seen);
@@ -482,7 +654,10 @@ mod tests {
         let c = ComfyUiClient::new(&real_url()).unwrap();
         let mut pixels = Vec::new();
         for _ in 0..2 {
-            let id = c.submit(&real_sd15_params(6, 777)).await.expect("submit");
+            let id = c
+                .submit(&real_sd15_params(6, 777), &[])
+                .await
+                .expect("submit");
             let images = c.wait(&id, &|_| {}).await.expect("wait");
             pixels.push(
                 image::load_from_memory(&images[0].bytes)
@@ -494,12 +669,200 @@ mod tests {
         assert_eq!(pixels[0], pixels[1], "同じシードで画素が一致しない");
 
         // 別のシードなら別の画像になる(シードが実際に効いている)
-        let id = c.submit(&real_sd15_params(6, 778)).await.expect("submit");
+        let id = c
+            .submit(&real_sd15_params(6, 778), &[])
+            .await
+            .expect("submit");
         let other = c.wait(&id, &|_| {}).await.expect("wait");
         let other = image::load_from_memory(&other[0].bytes)
             .unwrap()
             .to_rgb8()
             .into_raw();
         assert_ne!(pixels[0], other, "シードを変えても同じ画像になっている");
+    }
+
+    /// 実機: 顔補正(FaceDetailer)が動き、進捗が「顔補正」の段階で通知されること。
+    /// 顔が写らない絵では補正をスキップして正常終了し、バッチ(2 枚)でも全枚が返ること。
+    /// Impact Pack / Subpack と `bbox/face_yolov8m.pt` が必要(docs/08 §6.1)。
+    #[tokio::test]
+    #[ignore = "requires a running ComfyUI with Impact Pack, a detector model and an SD 1.5 checkpoint"]
+    async fn real_comfyui_face_detailer_runs_and_skips_when_no_face() {
+        use crate::domain::params::FaceDetailerParams;
+        let c = ComfyUiClient::new(&real_url()).unwrap();
+        let face = |p: &mut GenerationParams| {
+            p.face_detailer = Some(FaceDetailerParams {
+                enabled: true,
+                detector: "bbox/face_yolov8m.pt".into(),
+                denoise: 0.4,
+                prompt: String::new(),
+                confidence: 0.3,
+            });
+        };
+
+        // 顔あり: 補正の段階の進捗が来る
+        let mut p = real_sd15_params(20, 3);
+        p.prompt = "portrait photo of a woman, detailed face, looking at camera".into();
+        p.width = 512;
+        p.height = 512;
+        face(&mut p);
+        let id = c.submit(&p, &[]).await.expect("submit");
+        let seen: Arc<Mutex<Vec<Progress>>> = Arc::default();
+        let sink = Arc::clone(&seen);
+        let images = c
+            .wait(&id, &move |p| sink.lock().unwrap().push(p))
+            .await
+            .expect("wait");
+        assert_eq!(images.len(), 1);
+        assert_eq!(&images[0].bytes[..8], &PNG_MAGIC);
+        let phases: Vec<_> = seen
+            .lock()
+            .unwrap()
+            .iter()
+            .filter_map(|p| p.phase)
+            .collect();
+        println!("phases: {phases:?}");
+        assert!(phases.contains(&ProgressPhase::Generate));
+        assert!(
+            phases.contains(&ProgressPhase::FaceDetail),
+            "顔補正の進捗が通知されない"
+        );
+
+        // 顔なし(リンゴ): 検出ゼロでもエラーにならず、画像が返る。バッチ 2 枚
+        let mut p = real_sd15_params(8, 5);
+        p.batch_size = 2;
+        face(&mut p);
+        let id = c.submit(&p, &[]).await.expect("submit");
+        let images = c.wait(&id, &|_| {}).await.expect("wait");
+        assert_eq!(images.len(), 2, "バッチの全枚が返る");
+    }
+
+    /// 参照画像用の合成画像(黒地に白い円と四角。輪郭がはっきりしていて Canny で抽出できる)。
+    fn reference_png() -> Vec<u8> {
+        use image::{ImageFormat, Rgba, RgbaImage};
+        let img = RgbaImage::from_fn(512, 512, |x, y| {
+            let (dx, dy) = (x as i32 - 180, y as i32 - 200);
+            let circle = dx * dx + dy * dy < 100 * 100;
+            let square = (300..460).contains(&x) && (280..440).contains(&y);
+            let v = if circle || square { 255 } else { 0 };
+            Rgba([v, v, v, 255])
+        });
+        let mut out = Vec::new();
+        img.write_to(&mut std::io::Cursor::new(&mut out), ImageFormat::Png)
+            .unwrap();
+        out
+    }
+
+    fn cn_unit(
+        model: &str,
+        pre: crate::domain::params::Preprocessor,
+    ) -> crate::domain::params::ControlnetParams {
+        use crate::domain::params::{ControlnetParams, ControlnetUnit};
+        ControlnetParams {
+            enabled: true,
+            units: vec![ControlnetUnit {
+                image: "inputs/ref.png".into(),
+                model: model.into(),
+                preprocessor: pre,
+                strength: 1.0,
+                start_percent: 0.0,
+                end_percent: 1.0,
+            }],
+        }
+    }
+
+    /// 実機: 参照画像のアップロード → ControlNet(Canny)付きの生成が完了すること。
+    /// 同じシードでも、ControlNet の有無で画像が変わる(条件が効いている)こと。
+    /// `COMFYUI_CONTROLNET_MODEL`(既定 control_v11p_sd15_canny_fp16.safetensors)が必要(docs/08 §6.1)。
+    #[tokio::test]
+    #[ignore = "requires a running ComfyUI with an SD 1.5 checkpoint and a canny ControlNet model"]
+    async fn real_comfyui_controlnet_canny_generates_with_uploaded_reference() {
+        use crate::domain::params::Preprocessor;
+        let c = ComfyUiClient::new(&real_url()).unwrap();
+        let model = std::env::var("COMFYUI_CONTROLNET_MODEL")
+            .unwrap_or_else(|_| "control_v11p_sd15_canny_fp16.safetensors".into());
+
+        let name = c.upload_input(reference_png()).await.expect("upload");
+        println!("uploaded as {name}");
+
+        let mut p = real_sd15_params(12, 11);
+        p.prompt = "a still life with a glowing orb and a wooden box, studio photo".into();
+        p.controlnet = Some(cn_unit(&model, Preprocessor::Canny));
+        let id = c
+            .submit(&p, std::slice::from_ref(&name))
+            .await
+            .expect("submit");
+        let with_cn = c.wait(&id, &|_| {}).await.expect("wait");
+        assert_eq!(with_cn.len(), 1);
+        assert_eq!(&with_cn[0].bytes[..8], &PNG_MAGIC);
+
+        let mut plain = p.clone();
+        plain.controlnet = None;
+        let id = c.submit(&plain, &[]).await.expect("submit");
+        let without = c.wait(&id, &|_| {}).await.expect("wait");
+        let px = |d: &ImageData| {
+            image::load_from_memory(&d.bytes)
+                .unwrap()
+                .to_rgb8()
+                .into_raw()
+        };
+        assert_ne!(
+            px(&with_cn[0]),
+            px(&without[0]),
+            "ControlNet が効いていない"
+        );
+    }
+
+    /// 実機: Depth / OpenPose の前処理を含むワークフローが、バリデータに構造的に受理されること。
+    /// ControlNet モデル名だけ存在しないものにし、検出されるエラーがそれだけなら、
+    /// ほかのノード種別・必須入力・リンクの型は正しい(前処理の重みは実行時に取得されるため、実行はしない)。
+    #[tokio::test]
+    #[ignore = "requires a running ComfyUI with controlnet_aux and an SD 1.5 checkpoint"]
+    async fn real_comfyui_controlnet_preprocessor_workflows_are_structurally_valid() {
+        use crate::domain::params::Preprocessor;
+        let c = ComfyUiClient::new(&real_url()).unwrap();
+        let name = c.upload_input(reference_png()).await.expect("upload");
+
+        for pre in [
+            Preprocessor::Canny,
+            Preprocessor::Depth,
+            Preprocessor::Openpose,
+            Preprocessor::None,
+        ] {
+            let mut p = real_sd15_params(8, 1);
+            p.controlnet = Some(cn_unit("definitely-not-installed.safetensors", pre));
+            let body = json!({
+                "prompt": workflow::build(&p, "gazoo", std::slice::from_ref(&name)),
+                "client_id": c.client_id,
+            });
+            let v: Value = c
+                .http
+                .post(format!("{}/prompt", c.base))
+                .json(&body)
+                .send()
+                .await
+                .unwrap()
+                .json()
+                .await
+                .unwrap();
+            let errors: Vec<String> = v["node_errors"]
+                .as_object()
+                .expect("node_errors")
+                .iter()
+                .flat_map(|(node, ne)| {
+                    ne["errors"].as_array().unwrap().iter().map(move |e| {
+                        format!(
+                            "{node}/{}: {} {}",
+                            ne["class_type"], e["type"], e["details"]
+                        )
+                    })
+                })
+                .collect();
+            println!("{pre:?}: {errors:?}");
+            assert_eq!(errors.len(), 1, "{pre:?}: {errors:?}");
+            assert!(
+                errors[0].starts_with("33/\"ControlNetLoader\": \"value_not_in_list\""),
+                "{pre:?}: {errors:?}"
+            );
+        }
     }
 }

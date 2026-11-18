@@ -15,6 +15,8 @@ const eslintConfig = defineConfig([
     "build/**",
     "next-env.d.ts",
     "src-tauri/**",
+    // ローカル ComfyUI の生成物(venv 内の JS などを走査しない。docs/08)
+    "comfyui/**",
   ]),
 ]);
 

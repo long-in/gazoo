@@ -79,6 +79,27 @@ cd src-tauri && cargo test -- --ignored real_comfyui --nocapture
 
 ComfyUI のバージョンを上げたとき(§7)に、応答形式の変化を検出するために実行する。接続先は環境変数 `COMFYUI_URL` で変更できる。
 
+## 6.1 生成補助機能用のカスタムノード(v0.2、10 参照。承認済み)
+
+顔補正(F-11)と ControlNet(F-12)の開発・検証用に、次を **コミット固定** で `setup` に追加する(実装時に `versions.env` へ値を追記)。
+
+| 項目 | 固定する値(案) | 用途 |
+|---|---|---|
+| ComfyUI-Impact-Pack | `IMPACT_PACK_COMMIT` | `FaceDetailer` |
+| ComfyUI-Impact-Subpack | `IMPACT_SUBPACK_COMMIT` | `UltralyticsDetectorProvider`(検出モデルの読み込み) |
+| comfyui_controlnet_aux | `CONTROLNET_AUX_COMMIT` | Depth / OpenPose の前処理 |
+
+- 追加の pip 依存(ultralytics 等)が PyTorch 固定(§1)と衝突しないことを、導入時に確認する(M6 で確認済み: PyTorch は固定どおり)。ただし **ultralytics 本体と、その推移的依存はバージョンを固定していない**(Subpack の `requirements.txt` が無指定のため)。再現性が必要になったら、導入結果を制約ファイルとして固定する。
+- M6 で `versions.env` に追加した値: `IMPACT_PACK_COMMIT`(リリースタグが無いため、検証したコミット)、`IMPACT_SUBPACK_COMMIT`(タグ 1.3.4 のコミット)。M7 で `CONTROLNET_AUX_COMMIT`(comfyui_controlnet_aux。リリースタグが無いため検証したコミット)を追加した。controlnet_aux は opencv-contrib-python など多数の依存を入れ、既存の opencv-python と並存する(動作は確認済み)。
+- モデルは自動ダウンロードしない(§1 の方針)。置き場所と推奨を案内する。
+
+| 種類 | 置き場所 | 用途 |
+|---|---|---|
+| 顔検出モデル | `ultralytics/bbox/`(例: `face_yolov8m.pt`) | 顔補正(手は `hand_yolov8s.pt` など) |
+| ControlNet モデル | `controlnet/`(SD1.5 用 / SDXL 用はベースモデルに合わせる) | ControlNet |
+
+- 検出モデル(`.pt`)は pickle 形式のため、信頼できる配布元のものだけを使うこと。
+
 ## 7. 更新手順
 
 1. `versions.env` の値を変更する(ComfyUI タグ、GGUF コミット、PyTorch)。

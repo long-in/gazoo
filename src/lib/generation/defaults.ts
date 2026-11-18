@@ -1,5 +1,12 @@
 import type { EngineModels } from "@/lib/tauri/engine";
-import type { GenerationParams, ModelKind } from "@/lib/tauri/jobs";
+import type {
+  ControlnetParams,
+  ControlnetUnit,
+  FaceDetailerParams,
+  GenerationParams,
+  ModelKind,
+  Preprocessor,
+} from "@/lib/tauri/jobs";
 
 export const MODEL_KINDS: ModelKind[] = ["sd15", "sdxl", "flux", "flux_gguf"];
 
@@ -29,6 +36,46 @@ export function defaultParams(kind: ModelKind): GenerationParams {
   }
 }
 
+/** 顔補正の既定値(docs/10 §4.2)。無効の状態で始める。 */
+export function defaultFaceDetailer(): FaceDetailerParams {
+  return { enabled: false, detector: "", denoise: 0.4, prompt: "", confidence: 0.5 };
+}
+
+/** 顔補正に対応するモデル種別(SD 1.5 / SDXL)。 */
+export const supportsFaceDetailer = (kind: ModelKind) => !isFlux(kind);
+
+/** ControlNet の既定値(docs/10 §5.2)。参照画像とモデルは未選択。 */
+export function defaultControlnetUnit(): ControlnetUnit {
+  return { image: "", model: "", preprocessor: "canny", strength: 1, startPercent: 0, endPercent: 1 };
+}
+
+export function defaultControlnet(): ControlnetParams {
+  return { enabled: false, units: [] };
+}
+
+/** ControlNet に対応するモデル種別(SD 1.5 / SDXL)。 */
+export const supportsControlnet = (kind: ModelKind) => !isFlux(kind);
+
+const MODEL_HINT: Record<Preprocessor, RegExp | undefined> = {
+  canny: /canny/i,
+  depth: /depth/i,
+  openpose: /pose/i,
+  none: undefined,
+};
+
+/**
+ * 前処理に合う ControlNet モデルを選ぶ。現在のモデルが合うならそのまま、合わなければ名前に前処理名を含む
+ * 最初のもの、それも無ければ現在のモデル(一覧にあれば)、最後に一覧の先頭。一覧が空なら現在値のまま。
+ */
+export function pickControlnetModel(controlnets: string[], preprocessor: Preprocessor, current: string): string {
+  if (controlnets.length === 0) return current;
+  const hint = MODEL_HINT[preprocessor];
+  if (hint?.test(current) && controlnets.includes(current)) return current;
+  const match = hint && controlnets.find((n) => hint.test(n));
+  if (match) return match;
+  return controlnets.includes(current) ? current : controlnets[0];
+}
+
 /** 種別を切り替える。プロンプトとシード設定は引き継ぎ、サイズ・ステップ・サンプラー等は種別の既定に戻す。 */
 export function switchKind(current: GenerationParams, kind: ModelKind): GenerationParams {
   if (current.model.kind === kind) return current;
@@ -39,6 +86,14 @@ export function switchKind(current: GenerationParams, kind: ModelKind): Generati
     seed: current.seed,
     seedRandomize: current.seedRandomize,
     batchSize: current.batchSize,
+    // 顔補正の設定は引き継ぐ。非対応の種別(Flux)へ切り替えるときは無効にする(値は残す)
+    ...(current.faceDetailer && {
+      faceDetailer: { ...current.faceDetailer, enabled: current.faceDetailer.enabled && supportsFaceDetailer(kind) },
+    }),
+    // ControlNet も同様(参照画像などの設定は残し、非対応の種別では無効にする)
+    ...(current.controlnet && {
+      controlnet: { ...current.controlnet, enabled: current.controlnet.enabled && supportsControlnet(kind) },
+    }),
   };
 }
 
@@ -87,7 +142,29 @@ export function autofill(params: GenerationParams, models: EngineModels | null):
     ? params.scheduler
     : (models.schedulers[0] ?? params.scheduler);
 
-  const next = { ...params, model: { ...params.model, name, clip, vae }, sampler, scheduler };
+  // 顔補正の検出モデル: 未選択・存在しないものは、顔用(face)を優先して一覧から選ぶ。
+  // 一覧が空(ノード未導入)なら触らない(設定は残し、利用可否は画面側で判断する)
+  let faceDetailer = params.faceDetailer;
+  if (faceDetailer && models.faceDetectors.length > 0 && !models.faceDetectors.includes(faceDetailer.detector)) {
+    faceDetailer = { ...faceDetailer, detector: first(models.faceDetectors, /face/i) };
+  }
+
+  // ControlNet のモデル: 前処理に合うものを選ぶ。有効な選択は保つ(一覧が空なら触らない)
+  let controlnet = params.controlnet;
+  const unit = controlnet?.units[0];
+  if (controlnet && unit) {
+    const model = pickControlnetModel(models.controlnets, unit.preprocessor, unit.model);
+    if (model !== unit.model) controlnet = { ...controlnet, units: [{ ...unit, model }] };
+  }
+
+  const next = {
+    ...params,
+    model: { ...params.model, name, clip, vae },
+    sampler,
+    scheduler,
+    ...(faceDetailer && { faceDetailer }),
+    ...(controlnet && { controlnet }),
+  };
   return JSON.stringify(next) === JSON.stringify(params) ? params : next;
 }
 
@@ -100,6 +177,14 @@ export function restoreParams(saved: Partial<GenerationParams> | null | undefine
     ...base,
     ...saved,
     model: { ...base.model, ...saved.model, clip: saved.model?.clip ?? [], vae: saved.model?.vae ?? null },
+    // 古い下書き・プリセット(顔補正なし)は無効のまま。ある場合は欠けた項目を既定で埋める
+    ...(saved.faceDetailer && { faceDetailer: { ...defaultFaceDetailer(), ...saved.faceDetailer } }),
+    ...(saved.controlnet && {
+      controlnet: {
+        enabled: saved.controlnet.enabled ?? false,
+        units: (saved.controlnet.units ?? []).slice(0, 1).map((u) => ({ ...defaultControlnetUnit(), ...u })),
+      },
+    }),
   };
 }
 

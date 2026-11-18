@@ -12,6 +12,9 @@ APP="$DEST/ComfyUI"
 VENV="$DEST/venv"
 DATA="$DEST/data"
 GGUF_DIR="$DATA/custom_nodes/ComfyUI-GGUF"
+IMPACT_DIR="$DATA/custom_nodes/ComfyUI-Impact-Pack"
+SUBPACK_DIR="$DATA/custom_nodes/ComfyUI-Impact-Subpack"
+AUX_DIR="$DATA/custom_nodes/comfyui_controlnet_aux"
 
 fail() { echo "ERROR: $*" >&2; exit 1; }
 
@@ -40,6 +43,18 @@ mkdir -p "$DATA/custom_nodes" "$DATA/models"
 checkout_pinned "$GGUF_DIR" "$GGUF_NODE_REPO" "$GGUF_NODE_COMMIT"
 [ "$(git -C "$GGUF_DIR" rev-parse HEAD)" = "$GGUF_NODE_COMMIT" ] || fail "GGUF ノードのコミットが固定値と一致しません"
 
+echo "==> ComfyUI-Impact-Pack ${IMPACT_PACK_COMMIT}"
+checkout_pinned "$IMPACT_DIR" "$IMPACT_PACK_REPO" "$IMPACT_PACK_COMMIT"
+[ "$(git -C "$IMPACT_DIR" rev-parse HEAD)" = "$IMPACT_PACK_COMMIT" ] || fail "Impact Pack のコミットが固定値と一致しません"
+
+echo "==> ComfyUI-Impact-Subpack ${IMPACT_SUBPACK_COMMIT}"
+checkout_pinned "$SUBPACK_DIR" "$IMPACT_SUBPACK_REPO" "$IMPACT_SUBPACK_COMMIT"
+[ "$(git -C "$SUBPACK_DIR" rev-parse HEAD)" = "$IMPACT_SUBPACK_COMMIT" ] || fail "Impact Subpack のコミットが固定値と一致しません"
+
+echo "==> comfyui_controlnet_aux ${CONTROLNET_AUX_COMMIT}"
+checkout_pinned "$AUX_DIR" "$CONTROLNET_AUX_REPO" "$CONTROLNET_AUX_COMMIT"
+[ "$(git -C "$AUX_DIR" rev-parse HEAD)" = "$CONTROLNET_AUX_COMMIT" ] || fail "controlnet_aux のコミットが固定値と一致しません"
+
 echo "==> Python venv (${PYTHON_VERSION})"
 if [ -x "$VENV/bin/python" ]; then
   have="$("$VENV/bin/python" -c 'import sys; print("%d.%d" % sys.version_info[:2])')"
@@ -58,6 +73,13 @@ echo "==> ComfyUI requirements"
 
 echo "==> ComfyUI-GGUF requirements"
 "${PIP[@]}" -r "$GGUF_DIR/requirements.txt"
+
+echo "==> Impact Pack / Subpack requirements"
+"${PIP[@]}" -r "$IMPACT_DIR/requirements.txt"
+"${PIP[@]}" -r "$SUBPACK_DIR/requirements.txt"
+
+echo "==> controlnet_aux requirements"
+"${PIP[@]}" -r "$AUX_DIR/requirements.txt"
 
 "$VENV/bin/python" - <<'PYEOF'
 import torch

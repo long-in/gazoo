@@ -90,6 +90,26 @@ CREATE TABLE settings (
 ```
 (キーは IPC(04)と同じ camelCase。`seed` は 0〜2^53-1(JS で安全に扱える範囲)。)
 
+### 生成補助機能のフィールド(v0.2、設計: 10)
+
+任意のオブジェクトで、**無ければ無効**。追加は前方互換(古いデータはそのまま読める)のため `schemaVersion` は 1 のまま、DB マイグレーションも不要(`params_json` は JSON のため)。
+
+```json
+{
+  "faceDetailer": { "enabled": true, "detector": "bbox/face_yolov8m.pt",
+                    "denoise": 0.4, "prompt": "", "confidence": 0.5 },
+  "controlnet": { "enabled": true, "units": [
+    { "image": "inputs/0190….png", "model": "control_v11p_sd15_canny.pth",
+      "preprocessor": "canny", "strength": 1.0, "startPercent": 0.0, "endPercent": 1.0 }
+  ] }
+}
+```
+
+- `faceDetailer.enabled` / `controlnet.enabled` が false(またはフィールドなし)なら無効。無効のときも設定(参照画像など)は残せる(フォームの切り替えで消えないようにするため)。
+- `preprocessor`: `canny | depth | openpose | none`。`units` は 0〜1 件(v0.2)。
+- `controlnet.units[].image` は **画像保存先からの相対パス**(`/` 区切り)。
+- 両フィールドとも `sd15` / `sdxl` のときのみ指定できる(検証は 10 §7)。
+
 - `model.kind`: `sd15 | sdxl | flux | flux_gguf`。種別ごとに使われるフィールドが異なる(Flux は `cfg=1.0` 固定で `guidance` を使用、ネガティブ不使用)。
 - `schemaVersion` により後方互換を管理。未知フィールドは保持する。
 
@@ -102,6 +122,41 @@ CREATE TABLE settings (
 | `ui.theme` | `"light"\|"dark"\|"system"` | `system` |
 | `ui.language` | `"ja"\|"en"` | OS ロケール |
 | `generation.default_params` | GenerationRequest | 組み込み既定 |
+
+### AI サポートの設定とデータ(v0.3、設計: 11 §4・§9)
+
+| key | 型 | 既定値 |
+|---|---|---|
+| `assistant.api_key` | string | 未設定(**平文**。`settings_get` では返さない) |
+| `assistant.key_verified` | boolean | false(キーの検証結果。キー削除時に一緒に消える) |
+| `assistant.model` | string(`claude-haiku-5-5` / `claude-sonnet-5-5` / `claude-opus-5-5`) | `claude-sonnet-5-5` |
+| `assistant.consent` | boolean | false |
+| `assistant.auto_delete` | boolean | true |
+
+### マイグレーション 0003(AI サポートの会話履歴)
+
+```sql
+CREATE TABLE assistant_conversations (
+  id         TEXT PRIMARY KEY,
+  title      TEXT NOT NULL,
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL
+);
+CREATE INDEX idx_assistant_conv_updated ON assistant_conversations(updated_at DESC);
+
+CREATE TABLE assistant_messages (
+  id              TEXT PRIMARY KEY,
+  conversation_id TEXT NOT NULL REFERENCES assistant_conversations(id) ON DELETE CASCADE,
+  role            TEXT NOT NULL CHECK (role IN ('user','assistant')),
+  text            TEXT NOT NULL,
+  params_json     TEXT,              -- user: 送信時点のフォーム内容
+  suggestions_json TEXT,             -- assistant: 検証済みの提案と適用済みフラグ
+  created_at      INTEGER NOT NULL
+);
+CREATE INDEX idx_assistant_msg_conv ON assistant_messages(conversation_id, created_at);
+```
+
+- 自動削除(`assistant.auto_delete = true`)のとき、会話は **最大 30 件**。保存のたびに、`updated_at` が古い会話から超過分を削除する(メッセージは `ON DELETE CASCADE`)。`false` のときは上限なし。
 
 ## マイグレーション 0002(キュー表示の非表示フラグ)
 
@@ -118,6 +173,7 @@ CREATE TABLE settings (
 {images_dir}/
   2026/11/<image_id>.png          # 原寸(ComfyUI から取得した PNG、メタデータ埋め込み)
   thumbs/<image_id>.jpg           # サムネイル(長辺 384px の JPEG、品質 85)
+  inputs/<uuid>.png               # ControlNet の参照画像(v0.2。ギャラリー(images テーブル)には載せない)
 ```
 
 - `inputs/` の画像は取り込み時に PNG へ再エンコードし、メタデータを除去する(10 §6)。保存先の変更では原寸・サムネイルと同様に移動の対象。

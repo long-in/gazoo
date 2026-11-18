@@ -74,6 +74,14 @@ pub struct ImageItem {
     pub thumb_path: String,
 }
 
+/// 進捗がどの段階のものか(顔補正を有効にしたジョブで「生成中」→「顔補正中」と表示するため)。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ProgressPhase {
+    Generate,
+    FaceDetail,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ProgressEvent {
@@ -82,6 +90,8 @@ pub struct ProgressEvent {
     pub total_steps: u32,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub node: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub phase: Option<ProgressPhase>,
 }
 
 #[derive(Debug, Clone, Serialize)]

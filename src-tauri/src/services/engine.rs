@@ -116,6 +116,7 @@ pub async fn monitor(app: AppHandle) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::domain::params::Preprocessor;
     use crate::engine::EngineFeatures;
 
     fn connected() -> EngineStatus {
@@ -125,7 +126,11 @@ mod tests {
             version: Some("0.45.6".into()),
             device: Some("mps".into()),
             vram_free: Some(100),
-            features: EngineFeatures { gguf_node: true },
+            features: EngineFeatures {
+                gguf_node: true,
+                face_detailer: true,
+                controlnet_preprocessors: vec![Preprocessor::Canny],
+            },
             error: None,
         }
     }
@@ -146,9 +151,28 @@ mod tests {
         let disconnected = EngineStatus::disconnected(a.url.clone(), EngineFailure::Unreachable);
         assert!(!same_state(&a, &disconnected));
         let no_gguf = EngineStatus {
-            features: EngineFeatures { gguf_node: false },
+            features: EngineFeatures {
+                gguf_node: false,
+                ..connected().features
+            },
             ..connected()
         };
         assert!(!same_state(&a, &no_gguf));
+        let no_face = EngineStatus {
+            features: EngineFeatures {
+                face_detailer: false,
+                ..connected().features
+            },
+            ..connected()
+        };
+        assert!(!same_state(&a, &no_face));
+        let no_cn = EngineStatus {
+            features: EngineFeatures {
+                controlnet_preprocessors: vec![],
+                ..connected().features
+            },
+            ..connected()
+        };
+        assert!(!same_state(&a, &no_cn));
     }
 }

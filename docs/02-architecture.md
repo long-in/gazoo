@@ -81,6 +81,8 @@ pub trait GenerationEngine: Send + Sync {
 ### 3.4 ComfyUI アダプタ
 
 - **ワークフロー生成**: モデル種別(`sd15` / `sdxl` / `flux` / `flux_gguf`)ごとに、API 形式のワークフロー JSON を **Rust コードで組み立てる**(`engine/comfyui/workflow.rs`)。テンプレートファイル+置換ではなくコードにするのは、型安全にでき、バンドルしたリソースのパス解決(Windows/macOS 差)が不要で、リンクの整合性をユニットテストで検証できるため。ユーザー定義ワークフローのインポートは将来。
+- **生成補助機能(v0.2、10 参照)**: 顔補正(Impact Pack の `FaceDetailer`)と ControlNet を、同じ「Rust コードで組み立てる」方式で追加する。`workflow.rs` は肥大化を避けて `workflow/{mod.rs, base.rs, controlnet.rs, face_detailer.rs}` に分割し、基本の生成グラフに対して「conditioning への ControlNet 適用」「VAEDecode 後の顔補正」を差し込む形にする。対象は `sd15` / `sdxl` のみ。必要なカスタムノードは `/object_info` で有無を検出し、無ければ機能を無効化して導入手順を案内する(GGUF と同じ扱い)。
+- **入力画像のアップロード(ControlNet)**: 参照画像はアプリが `{images_dir}/inputs/` に保管し、生成時に `POST /upload/image`(multipart)で ComfyUI の `input` へ送って `LoadImage` で読む。これに伴い `reqwest` の `multipart` feature を有効化する(依存の変更のため、固定バージョンの更新手順に従う)。
 - **完了検知と進捗**: 完了・失敗の判定は `/history/{prompt_id}` のポーリング(500ms)で行い、確実性を優先する。ステップ進捗は WebSocket の `progress` を受信できた場合に上乗せする(ベストエフォート。接続先が https の場合は WebSocket を使わず進捗は不定表示)。プレビュー画像(バイナリフレーム)は M2 では扱わない。
 - **通信**:
   - `GET /system_stats` … ヘルスチェック
@@ -89,6 +91,7 @@ pub trait GenerationEngine: Send + Sync {
   - `WS /ws?clientId=…` … `progress`, `executing`, `executed`, `execution_error` と、バイナリのプレビュー画像を受信
   - `GET /history/{prompt_id}` / `GET /view` … 結果画像の取得
   - `POST /interrupt` / `POST /queue`(delete)… キャンセル
+  - `POST /upload/image` … 参照画像のアップロード(v0.2、ControlNet)
 - **Flux の扱い**: モデルは `unet` 系(+ `clip`/`vae` 別ファイル)ローダーを使う。GGUF 利用には ComfyUI-GGUF カスタムノードが必要。`/object_info` に該当ノードがあるかを検出し、無ければ UI で導入手順を案内する。
 - ComfyUI の WebSocket クライアントは `tokio-tungstenite`、HTTP は `reqwest`(rustls)。
 
@@ -120,6 +123,10 @@ pub trait GenerationEngine: Send + Sync {
 - Tauri 2 の capability でフロントに許可する権限を明示(`core:default`、`dialog:default`、`opener:default` など必要最小限)。
 - CSP: `default-src 'self'; img-src 'self' asset: http://asset.localhost data:; connect-src ipc: http://ipc.localhost`。WebView から ComfyUI へは直接通信せず、すべて Rust 経由。
 - 外部 URL へのリンクは opener プラグインでシステムブラウザを使用。
+
+### 3.10 外部 API(AI サポート、v0.3)
+
+- 唯一の外部通信は、AI サポートの `api.anthropic.com`(設計: 11)。Rust 側のみで行い、WebView の CSP は変えない。キー未登録・未同意では通信しない。キーは設定 DB に平文で保存し(11 §4)、WebView に返さず、ログに出さない。
 
 ## 4. 使用予定クレート / パッケージ
 

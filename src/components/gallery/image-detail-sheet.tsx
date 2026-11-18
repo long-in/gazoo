@@ -1,7 +1,7 @@
 "use client";
 
 import { save } from "@tauri-apps/plugin-dialog";
-import { Copy, Download, FolderOpen, Sparkles, Star, Trash2 } from "lucide-react";
+import { Copy, Download, FolderOpen, ImagePlus, Sparkles, Star, Trash2 } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
@@ -18,6 +18,8 @@ import {
 import { useErrorMessage, useT } from "@/lib/i18n/use-t";
 import { toAppError } from "@/lib/tauri/errors";
 import { type ImageDetail, imageExport, imageGet, imageReveal } from "@/lib/tauri/images";
+import { inputImageFromGallery } from "@/lib/tauri/inputs";
+import { useEngineStore } from "@/stores/engine-store";
 import { useFormStore } from "@/stores/form-store";
 import { useGalleryStore } from "@/stores/gallery-store";
 
@@ -85,6 +87,21 @@ export function ImageDetailSheet({ id, onClose }: { id: string | null; onClose: 
     router.push("/");
   }
 
+  /** この画像を ControlNet の参照画像として生成画面に設定する。 */
+  async function setAsReference() {
+    if (!image) return;
+    try {
+      const input = await inputImageFromGallery(image.id);
+      const controlnets = useEngineStore.getState().models?.controlnets ?? [];
+      const enabled = useFormStore.getState().setReferenceImage(input.path, controlnets);
+      if (enabled) toast.success(t("gallery.referenceSet"));
+      else toast.info(t("gallery.referenceFlux"));
+      router.push("/");
+    } catch (e) {
+      toast.error(errorMessage(toAppError(e)));
+    }
+  }
+
   return (
     <>
       <Sheet open={id !== null} onOpenChange={(open) => !open && onClose()}>
@@ -110,6 +127,10 @@ export function ImageDetailSheet({ id, onClose }: { id: string | null; onClose: 
                 <Button type="button" onClick={useSettings}>
                   <Sparkles />
                   {t("gallery.useSettings")}
+                </Button>
+                <Button type="button" variant="outline" onClick={() => void setAsReference()}>
+                  <ImagePlus />
+                  {t("gallery.useAsReference")}
                 </Button>
                 <Button
                   type="button"
@@ -163,6 +184,24 @@ export function ImageDetailSheet({ id, onClose }: { id: string | null; onClose: 
                 <dd>
                   {params.sampler} / {params.scheduler}
                 </dd>
+                {params.controlnet?.enabled && params.controlnet.units[0] && (
+                  <>
+                    <dt className="text-muted-foreground">{t("gallery.params.controlnet")}</dt>
+                    <dd className="break-all">
+                      {params.controlnet.units[0].preprocessor} · {params.controlnet.units[0].model} ·{" "}
+                      {params.controlnet.units[0].strength}
+                    </dd>
+                  </>
+                )}
+                {params.faceDetailer?.enabled && (
+                  <>
+                    <dt className="text-muted-foreground">{t("gallery.params.face")}</dt>
+                    <dd className="break-all">
+                      {params.faceDetailer.detector.replace(/^bbox\//, "")} · {params.faceDetailer.denoise}
+                      {params.faceDetailer.prompt.trim() && ` · ${params.faceDetailer.prompt}`}
+                    </dd>
+                  </>
+                )}
                 <dt className="text-muted-foreground">{t("gallery.params.seed")}</dt>
                 <dd className="flex items-center gap-1">
                   <span>{image.seed}</span>

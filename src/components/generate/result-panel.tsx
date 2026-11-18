@@ -43,7 +43,7 @@ export function ResultPanel() {
           <div className="flex flex-col gap-3">
             <div className="flex items-center justify-between gap-3">
               <p className="font-medium">
-                {t("generate.running")}
+                {p?.phase === "face_detail" ? t("generate.running.face") : t("generate.running")}
                 {p && (
                   <span className="ml-2 text-sm font-normal text-muted-foreground">
                     {t("generate.step")} {p.step} / {p.totalSteps}

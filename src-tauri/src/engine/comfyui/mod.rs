@@ -3,7 +3,7 @@
 mod generate;
 mod parse;
 #[cfg(test)]
-mod testutil;
+pub(crate) mod testutil;
 pub mod workflow;
 
 use std::time::Duration;
@@ -12,7 +12,7 @@ use async_trait::async_trait;
 use serde_json::Value;
 
 use super::{EngineFeatures, EngineModels, EngineStatus, GenerationEngine, ImageData, Progress};
-use crate::domain::params::GenerationParams;
+use crate::domain::params::{GenerationParams, Preprocessor};
 use crate::error::{AppError, AppResult};
 
 const NODE_CHECKPOINT: &str = "CheckpointLoaderSimple";
@@ -22,6 +22,12 @@ const NODE_CLIP: &str = "CLIPLoader";
 const NODE_VAE: &str = "VAELoader";
 const NODE_LORA: &str = "LoraLoader";
 const NODE_KSAMPLER: &str = "KSampler";
+const NODE_CONTROLNET: &str = "ControlNetLoader";
+const NODE_CANNY: &str = "Canny";
+const NODE_DEPTH: &str = "DepthAnythingV2Preprocessor";
+const NODE_OPENPOSE: &str = "OpenposePreprocessor";
+const NODE_FACE_DETAILER: &str = "FaceDetailer";
+const NODE_FACE_DETECTOR: &str = "UltralyticsDetectorProvider";
 
 pub struct ComfyUiClient {
     base: String,
@@ -108,19 +114,49 @@ impl GenerationEngine for ComfyUiClient {
             Err(_) => false,
         };
 
+        // 顔補正には FaceDetailer(Impact Pack)と検出モデルのローダー(Subpack)の両方が要る
+        let (face, detector) = tokio::join!(
+            self.node_info(NODE_FACE_DETAILER),
+            self.node_info(NODE_FACE_DETECTOR),
+        );
+        let face_detailer = matches!(
+            (face, detector),
+            (Ok(f), Ok(d)) if parse::has_node(&f, NODE_FACE_DETAILER) && parse::has_node(&d, NODE_FACE_DETECTOR)
+        );
+
+        // ControlNet の前処理。Canny はコア、Depth / OpenPose は controlnet_aux が提供する
+        let (canny, depth, openpose) = tokio::join!(
+            self.node_info(NODE_CANNY),
+            self.node_info(NODE_DEPTH),
+            self.node_info(NODE_OPENPOSE),
+        );
+        let controlnet_preprocessors = [
+            (Preprocessor::Canny, NODE_CANNY, canny),
+            (Preprocessor::Depth, NODE_DEPTH, depth),
+            (Preprocessor::Openpose, NODE_OPENPOSE, openpose),
+        ]
+        .into_iter()
+        .filter(|(_, node, info)| matches!(info, Ok(i) if parse::has_node(i, node)))
+        .map(|(kind, _, _)| kind)
+        .collect();
+
         Ok(EngineStatus {
             connected: true,
             url: self.url(),
             version: stats.version,
             device: stats.device,
             vram_free: stats.vram_free,
-            features: EngineFeatures { gguf_node },
+            features: EngineFeatures {
+                gguf_node,
+                face_detailer,
+                controlnet_preprocessors,
+            },
             error: None,
         })
     }
 
     async fn list_models(&self) -> AppResult<EngineModels> {
-        let (ckpt, unet, gguf, clip, vae, lora, ks) = tokio::join!(
+        let (ckpt, unet, gguf, clip, vae, lora, ks, detector, controlnet) = tokio::join!(
             self.node_info(NODE_CHECKPOINT),
             self.node_info(NODE_UNET),
             self.node_info(NODE_UNET_GGUF),
@@ -128,9 +164,20 @@ impl GenerationEngine for ComfyUiClient {
             self.node_info(NODE_VAE),
             self.node_info(NODE_LORA),
             self.node_info(NODE_KSAMPLER),
+            self.node_info(NODE_FACE_DETECTOR),
+            self.node_info(NODE_CONTROLNET),
         );
-        let (ckpt, unet, gguf, clip, vae, lora, ks) =
-            (ckpt?, unet?, gguf?, clip?, vae?, lora?, ks?);
+        let (ckpt, unet, gguf, clip, vae, lora, ks, detector, controlnet) = (
+            ckpt?,
+            unet?,
+            gguf?,
+            clip?,
+            vae?,
+            lora?,
+            ks?,
+            detector?,
+            controlnet?,
+        );
 
         Ok(EngineModels {
             checkpoints: parse::extract_options(&ckpt, NODE_CHECKPOINT, "ckpt_name"),
@@ -139,13 +186,22 @@ impl GenerationEngine for ComfyUiClient {
             clips: parse::extract_options(&clip, NODE_CLIP, "clip_name"),
             vaes: parse::extract_options(&vae, NODE_VAE, "vae_name"),
             loras: parse::extract_options(&lora, NODE_LORA, "lora_name"),
+            controlnets: parse::extract_options(&controlnet, NODE_CONTROLNET, "control_net_name"),
+            face_detectors: parse::extract_options(&detector, NODE_FACE_DETECTOR, "model_name")
+                .into_iter()
+                .filter(|m| m.starts_with("bbox/"))
+                .collect(),
             samplers: parse::extract_options(&ks, NODE_KSAMPLER, "sampler_name"),
             schedulers: parse::extract_options(&ks, NODE_KSAMPLER, "scheduler"),
         })
     }
 
-    async fn submit(&self, params: &GenerationParams) -> AppResult<String> {
-        self.submit_prompt(params).await
+    async fn upload_input(&self, png: Vec<u8>) -> AppResult<String> {
+        self.upload_image(png).await
+    }
+
+    async fn submit(&self, params: &GenerationParams, inputs: &[String]) -> AppResult<String> {
+        self.submit_prompt(params, inputs).await
     }
 
     async fn wait(
@@ -220,6 +276,78 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn health_face_detailer_needs_both_nodes() {
+        let face = || {
+            Route::get(
+                "/object_info/FaceDetailer",
+                r#"{"FaceDetailer":{"input":{}}}"#,
+            )
+        };
+        let detector = || {
+            Route::get(
+                "/object_info/UltralyticsDetectorProvider",
+                r#"{"UltralyticsDetectorProvider":{"input":{}}}"#,
+            )
+        };
+        let check = |routes: Vec<Route>| async move {
+            let mut all = vec![Route::get("/system_stats", STATS)];
+            all.extend(routes);
+            let url = spawn(all).await.url;
+            ComfyUiClient::new(&url)
+                .unwrap()
+                .health()
+                .await
+                .unwrap()
+                .features
+                .face_detailer
+        };
+        assert!(check(vec![face(), detector()]).await);
+        // 片方だけ(Impact Pack のみ / Subpack のみ)では使えない
+        assert!(!check(vec![face()]).await);
+        assert!(!check(vec![detector()]).await);
+        assert!(!check(vec![]).await);
+    }
+
+    #[tokio::test]
+    async fn health_lists_available_controlnet_preprocessors() {
+        let node = |name: &str| {
+            Route::get(
+                &format!("/object_info/{name}"),
+                &format!(r#"{{"{name}":{{"input":{{}}}}}}"#),
+            )
+        };
+        let check = |routes: Vec<Route>| async move {
+            let mut all = vec![Route::get("/system_stats", STATS)];
+            all.extend(routes);
+            let url = spawn(all).await.url;
+            ComfyUiClient::new(&url)
+                .unwrap()
+                .health()
+                .await
+                .unwrap()
+                .features
+                .controlnet_preprocessors
+        };
+        // コアの Canny だけ(controlnet_aux 未導入)
+        assert_eq!(check(vec![node("Canny")]).await, [Preprocessor::Canny]);
+        // すべて導入済み(並びは Canny、Depth、OpenPose)
+        assert_eq!(
+            check(vec![
+                node("OpenposePreprocessor"),
+                node("Canny"),
+                node("DepthAnythingV2Preprocessor"),
+            ])
+            .await,
+            [
+                Preprocessor::Canny,
+                Preprocessor::Depth,
+                Preprocessor::Openpose
+            ]
+        );
+        assert!(check(vec![]).await.is_empty());
+    }
+
+    #[tokio::test]
     async fn health_unreachable_when_port_closed() {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
@@ -260,6 +388,8 @@ mod tests {
             Route::get("/object_info/UNETLoader", r#"{"UNETLoader":{"input":{"required":{"unet_name":["COMBO",{"options":["flux.safetensors"]}]}}}}"#),
             Route::get("/object_info/CLIPLoader", r#"{"CLIPLoader":{"input":{"required":{"clip_name":[["t5xxl.safetensors","clip_l.safetensors"]]}}}}"#),
             Route::get("/object_info/KSampler", r#"{"KSampler":{"input":{"required":{"sampler_name":[["euler","dpmpp_2m"]],"scheduler":[["simple","karras"]]}}}}"#),
+            Route::get("/object_info/ControlNetLoader", r#"{"ControlNetLoader":{"input":{"required":{"control_net_name":[["canny.safetensors","depth.safetensors"]]}}}}"#),
+            Route::get("/object_info/UltralyticsDetectorProvider", r#"{"UltralyticsDetectorProvider":{"input":{"required":{"model_name":[["bbox/face_yolov8m.pt","bbox/hand_yolov8s.pt","segm/person_yolov8m-seg.pt"]]}}}}"#),
             // VAELoader / LoraLoader / UnetLoaderGGUF は 404(未提供)
         ])
         .await.url;
@@ -274,6 +404,12 @@ mod tests {
         assert_eq!(m.samplers, ["euler", "dpmpp_2m"]);
         assert_eq!(m.schedulers, ["simple", "karras"]);
         assert!(m.gguf_unets.is_empty() && m.vaes.is_empty() && m.loras.is_empty());
+        assert_eq!(m.controlnets, ["canny.safetensors", "depth.safetensors"]);
+        // 検出モデルは bbox/ のものだけ(segm/ は顔補正に使わない)
+        assert_eq!(
+            m.face_detectors,
+            ["bbox/face_yolov8m.pt", "bbox/hand_yolov8s.pt"]
+        );
     }
 
     /// 実際に起動している ComfyUI に対するスモークテスト(通常は実行しない)。

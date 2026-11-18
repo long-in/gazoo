@@ -30,3 +30,44 @@ impl EventSink for TauriSink {
             .emit("image://deleted", serde_json::json!({ "ids": ids }));
     }
 }
+
+impl crate::services::assistant::AssistantSink for TauriSink {
+    fn delta(&self, request_id: &str, text: &str) {
+        let _ = self.0.emit(
+            "assistant://delta",
+            serde_json::json!({ "requestId": request_id, "text": text }),
+        );
+    }
+    fn suggestion(
+        &self,
+        request_id: &str,
+        index: usize,
+        s: &crate::db::assistant::StoredSuggestion,
+    ) {
+        let _ = self.0.emit(
+            "assistant://suggestion",
+            serde_json::json!({
+                "requestId": request_id,
+                "index": index,
+                "summary": s.summary,
+                "changes": s.changes,
+            }),
+        );
+    }
+    fn done(&self, request_id: &str, cancelled: bool) {
+        let _ = self.0.emit(
+            "assistant://done",
+            serde_json::json!({ "requestId": request_id, "cancelled": cancelled }),
+        );
+    }
+    fn error(&self, request_id: &str, error: &crate::error::AppError) {
+        let _ = self.0.emit(
+            "assistant://error",
+            serde_json::json!({
+                "requestId": request_id,
+                "code": error.code(),
+                "message": error.to_string(),
+            }),
+        );
+    }
+}

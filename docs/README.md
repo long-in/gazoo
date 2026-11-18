@@ -6,19 +6,25 @@
 
 | # | 資料 | 内容 | ステータス |
 |---|---|---|---|
-| 01 | [requirements.md](01-requirements.md) | 目的・スコープ・機能/非機能要件 | 🟢 承認済み |
-| 02 | [architecture.md](02-architecture.md) | 全体構成・エンジン抽象化・ジョブ実行 | 🟢 承認済み |
-| 03 | [data-model.md](03-data-model.md) | SQLite スキーマ・マイグレーション | 🟢 承認済み |
-| 04 | [ipc-api.md](04-ipc-api.md) | Tauri コマンド / イベント定義 | 🟢 承認済み |
-| 05 | [ui-design.md](05-ui-design.md) | 画面構成・状態管理・UI 方針 | 🟢 承認済み |
+| 01 | [requirements.md](01-requirements.md) | 目的・スコープ・機能/非機能要件 | 🟢 承認済み(v0.2 追記分を含む) |
+| 02 | [architecture.md](02-architecture.md) | 全体構成・エンジン抽象化・ジョブ実行 | 🟢 承認済み(v0.2 追記分を含む) |
+| 03 | [data-model.md](03-data-model.md) | SQLite スキーマ・マイグレーション | 🟢 承認済み(v0.2 追記分を含む) |
+| 04 | [ipc-api.md](04-ipc-api.md) | Tauri コマンド / イベント定義 | 🟢 承認済み(v0.2 追記分を含む) |
+| 05 | [ui-design.md](05-ui-design.md) | 画面構成・状態管理・UI 方針 | 🟢 承認済み(v0.2 追記分を含む) |
 | 06 | [cross-platform.md](06-cross-platform.md) | Windows / macOS 対応・ビルド・CI | 🟢 承認済み |
-| 07 | [open-questions.md](07-open-questions.md) | 未決事項・レビューで決めてほしい点 | 🟢 決定済み |
-| 08 | [local-comfyui.md](08-local-comfyui.md) | ローカル ComfyUI 開発環境(セットアップ/起動スクリプト) | 🟢 承認済み |
+| 07 | [open-questions.md](07-open-questions.md) | 未決事項・レビューで決めてほしい点 | 🟢 決定済み(Q-19〜26 追記) |
+| 08 | [local-comfyui.md](08-local-comfyui.md) | ローカル ComfyUI 開発環境(セットアップ/起動スクリプト) | 🟢 承認済み(§6.1 追記分を含む) |
 | 09 | [release-checklist.md](09-release-checklist.md) | リリース前の手動検証チェックリスト(Windows / macOS) | 🟢 承認済み |
+| 10 | [assist-features.md](10-assist-features.md) | 生成補助機能(顔補正・ControlNet)の設計(v0.2) | 🟢 承認済み |
+| 11 | [ai-assistant.md](11-ai-assistant.md) | AI サポート(Claude API による設定アドバイス)の設計(v0.3) | 🟢 承認済み |
 
 ステータス凡例: 🟡 レビュー待ち / 🟢 承認済み / 🔴 要修正
 
 **実装フェーズへの移行条件**: 01〜06 がすべて 🟢 かつ 07 の「決定が必要」項目が解決済みであること。
+
+**v0.2(M6 以降)の実装条件**: 10 と、それに伴う 01〜05・07・08 の追記分が 🟢 になること(AGENTS.md §3「2 回目以降の変更」)。09 には、実装時に検証項目を追加する。
+
+**v0.3(M8)の実装条件**: 11 と、それに伴う 02〜05・07 の追記分が 🟢(2026-11-19 承認)。
 
 ## 実装マイルストーン
 
@@ -32,6 +38,9 @@
 | M3 | ギャラリー: サムネイル、仮想化グリッド・検索、詳細、お気に入り、再現(この設定で生成)、エクスポート、削除 | F-06, F-07, F-10 | ✅ 実装完了(サムネイル生成は実機で検証済み。画面操作の目視確認は未実施) |
 | M4 | プリセット・仕上げ(エラー UX、ショートカット、画像保存先を変更したときの既存画像の移動(Q-11)) | F-08 | ✅ 実装完了(画面の目視確認は未実施) |
 | M5 | CI(Windows / macOS)・インストーラ・手動検証チェックリスト | 06 §5〜6 | ✅ 実装完了(CI は GitHub 上での初回実行が未確認。Windows のビルドは未検証) |
+| M6 | 顔補正: ノード検出、`faceDetailer` パラメータ、ワークフロー拡張、UI、進捗の段階表示 | F-11(10) | ✅ 実装完了(エンジン層は実機で検証済み(09 の検証ログ)。画面操作の目視確認と Windows は未実施) |
+| M7 | ControlNet: 参照画像の取り込み・保管・アップロード、`controlnet` パラメータ、ワークフロー拡張、UI | F-12(10) | ✅ 実装完了(エンジン層は実機で検証済み(09 の検証ログ)。画面操作の目視確認と Windows は未実施) |
+| M8 | AI サポート: API キー管理、Anthropic への問い合わせ(ストリーミング)、会話履歴(最大 30 件・自動削除フラグ)、提案の適用 UI | F-13(11) | ✅ 実装完了(Rust のモックサーバでの検証まで。実際の Anthropic API・画面操作の目視確認・Windows は未実施) |
 
 ## 読む順序
 

@@ -7,7 +7,8 @@ pub mod comfyui;
 use async_trait::async_trait;
 use serde::Serialize;
 
-use crate::domain::params::GenerationParams;
+use crate::domain::job::ProgressPhase;
+use crate::domain::params::{GenerationParams, Preprocessor};
 use crate::error::AppResult;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -22,6 +23,11 @@ pub enum EngineFailure {
 pub struct EngineFeatures {
     /// ComfyUI-GGUF(`UnetLoaderGGUF`)が導入されているか。
     pub gguf_node: bool,
+    /// 顔補正に必要なノード(Impact Pack の `FaceDetailer` と、Subpack の
+    /// `UltralyticsDetectorProvider`)が導入されているか(docs/10 §3)。
+    pub face_detailer: bool,
+    /// 利用できる ControlNet の前処理(`Preprocessor::None` は含めない。docs/10 §3)。
+    pub controlnet_preprocessors: Vec<Preprocessor>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -63,6 +69,10 @@ pub struct EngineModels {
     pub clips: Vec<String>,
     pub vaes: Vec<String>,
     pub loras: Vec<String>,
+    /// `UltralyticsDetectorProvider` の `bbox/…`(ノード未導入なら空)。
+    pub face_detectors: Vec<String>,
+    /// `ControlNetLoader.control_net_name`。
+    pub controlnets: Vec<String>,
     pub samplers: Vec<String>,
     pub schedulers: Vec<String>,
 }
@@ -73,6 +83,7 @@ pub struct Progress {
     pub step: u32,
     pub total: u32,
     pub node: Option<String>,
+    pub phase: Option<ProgressPhase>,
 }
 
 /// 生成結果の画像 1 枚(エンジンから取得済みの PNG など)。
@@ -89,8 +100,11 @@ pub trait GenerationEngine: Send + Sync {
     async fn health(&self) -> AppResult<EngineStatus>;
     async fn list_models(&self) -> AppResult<EngineModels>;
 
+    /// 参照画像(PNG)をエンジンへ送り、ワークフローから参照する名前を返す(ControlNet)。
+    async fn upload_input(&self, png: Vec<u8>) -> AppResult<String>;
     /// 生成ジョブを投入し、エンジン側の ID を返す。
-    async fn submit(&self, params: &GenerationParams) -> AppResult<String>;
+    /// `inputs` は有効な ControlNet ユニットの順に並べた、`upload_input` が返した名前。
+    async fn submit(&self, params: &GenerationParams, inputs: &[String]) -> AppResult<String>;
     /// 完了まで待ち、結果画像を取得して返す。進捗があれば `on_progress` を呼ぶ。
     /// この Future を drop すれば待機を中止できる(エンジン側の停止は `cancel`)。
     async fn wait(

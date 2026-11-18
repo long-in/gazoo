@@ -19,6 +19,7 @@ import { toAppError } from "@/lib/tauri/errors";
 import type { Language, Settings, Theme } from "@/lib/tauri/settings";
 import { useSettingsStore } from "@/stores/settings-store";
 
+import { AssistantSection } from "./assistant-section";
 import { StorageSection } from "./storage-section";
 
 type LanguageChoice = Language | "auto";
@@ -99,6 +100,8 @@ function SettingsFormInner({ initial }: { initial: Settings }) {
       </section>
 
       <StorageSection />
+
+      <AssistantSection />
 
       <section className="flex flex-col gap-3">
         <h2 className="text-lg font-medium">{t("settings.ui.title")}</h2>

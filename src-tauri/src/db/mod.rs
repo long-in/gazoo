@@ -8,6 +8,7 @@ use std::sync::{Arc, Mutex};
 use rusqlite::Connection;
 use rusqlite_migration::{M, Migrations};
 
+pub mod assistant;
 pub mod images;
 pub mod jobs;
 pub mod presets;
@@ -17,6 +18,7 @@ use crate::error::{AppError, AppResult};
 const MIGRATION_SLICE: &[M<'static>] = &[
     M::up(include_str!("migrations/0001_init.sql")),
     M::up(include_str!("migrations/0002_job_queue_hidden.sql")),
+    M::up(include_str!("migrations/0003_assistant.sql")),
 ];
 const MIGRATIONS: Migrations<'static> = Migrations::from_slice(MIGRATION_SLICE);
 
@@ -114,7 +116,17 @@ mod tests {
             })
             .await
             .unwrap();
-        assert_eq!(tables, ["images", "jobs", "presets", "settings"]);
+        assert_eq!(
+            tables,
+            [
+                "assistant_conversations",
+                "assistant_messages",
+                "images",
+                "jobs",
+                "presets",
+                "settings"
+            ]
+        );
     }
 
     #[tokio::test]

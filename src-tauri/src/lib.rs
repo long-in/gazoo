@@ -12,9 +12,12 @@ use std::sync::Arc;
 use tauri::Manager;
 
 use crate::db::Db;
+use crate::services::assistant::AssistantService;
+use crate::services::assistant::anthropic::AnthropicClient;
 use crate::services::engine::EngineService;
 use crate::services::events::TauriSink;
 use crate::services::images::{ImageService, OsTrash};
+use crate::services::inputs::InputService;
 use crate::services::jobs::JobService;
 use crate::services::presets::PresetService;
 use crate::services::settings::Settings;
@@ -89,9 +92,19 @@ pub fn run() {
             );
             let storage = StorageService::new(db.clone(), paths.clone(), Arc::new(OsTrash));
             app.manage(Arc::new(PresetService::new(db.clone())));
+            app.manage(AssistantService::new(
+                db.clone(),
+                AnthropicClient::new()?,
+                Arc::new(TauriSink(app.handle().clone())),
+            ));
             app.manage(storage);
             app.manage(engine);
             app.manage(Arc::clone(&jobs));
+            app.manage(InputService::new(
+                db.clone(),
+                paths.clone(),
+                Arc::clone(&images),
+            ));
             app.manage(Arc::clone(&images));
             // サムネイル未生成の画像(以前に保存したもの)を裏で補完する
             tauri::async_runtime::spawn(async move {
@@ -133,10 +146,23 @@ pub fn run() {
             commands::images::image_delete,
             commands::images::image_export,
             commands::images::image_reveal,
+            commands::inputs::input_image_pick,
+            commands::inputs::input_image_from_gallery,
+            commands::inputs::input_image_get,
             commands::presets::preset_list,
             commands::presets::preset_save,
             commands::presets::preset_delete,
             commands::storage::storage_change_images_dir,
+            commands::assistant::assistant_status,
+            commands::assistant::assistant_set_key,
+            commands::assistant::assistant_clear_key,
+            commands::assistant::assistant_update,
+            commands::assistant::assistant_ask,
+            commands::assistant::assistant_cancel,
+            commands::assistant::assistant_conversation_list,
+            commands::assistant::assistant_conversation_get,
+            commands::assistant::assistant_conversation_delete,
+            commands::assistant::assistant_suggestion_applied,
         ])
         .run(tauri::generate_context!())
         .expect("error while building tauri application");

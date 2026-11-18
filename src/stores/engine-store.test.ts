@@ -18,6 +18,8 @@ const MODELS: EngineModels = {
   clips: [],
   vaes: [],
   loras: [],
+  faceDetectors: [],
+  controlnets: [],
   samplers: ["euler"],
   schedulers: ["simple"],
 };
@@ -25,7 +27,7 @@ const MODELS: EngineModels = {
 const status = (over: Partial<EngineStatus> = {}): EngineStatus => ({
   connected: true,
   url: "http://127.0.0.1:8188",
-  features: { ggufNode: false },
+  features: { ggufNode: false, faceDetailer: false, controlnetPreprocessors: [] },
   ...over,
 });
 
