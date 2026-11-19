@@ -1,6 +1,6 @@
 # 03. データモデル(SQLite)
 
-- 配置: `{app_data_dir}/gazoo.db`(Windows: `%APPDATA%\<identifier>\`、macOS: `~/Library/Application Support/<identifier>/`)
+- 配置: `{app_data_dir}/gazooo.db`(Windows: `%APPDATA%\<identifier>\`、macOS: `~/Library/Application Support/<identifier>/`)
 - PRAGMA: `journal_mode=WAL`, `foreign_keys=ON`, `synchronous=NORMAL`
 - ID は UUID v7 文字列(TEXT)。時刻は UTC の Unix ミリ秒(INTEGER)。
 - スキーマ変更は `src-tauri/src/db/migrations/` の連番マイグレーションのみで行う。
@@ -111,7 +111,7 @@ CREATE TABLE settings (
 - 両フィールドとも `sd15` / `sdxl` のときのみ指定できる(検証は 10 §7)。
 - v0.5: `inpaint: { enabled, image, mask, denoise, growMask, feather, compositeBack }`(13 §3.2)。`image` / `mask` は `inputs/<uuid>.png`。`sd15` / `sdxl` のみ、`faceDetailer` とは同時に有効にできない。`params_json` の拡張のみでマイグレーションは不要。
 
-- `model.kind`: `sd15 | sdxl | flux | flux_gguf`。種別ごとに使われるフィールドが異なる(Flux は `cfg=1.0` 固定で `guidance` を使用、ネガティブ不使用)。
+- `model.kind`: `sd15 | sdxl | flux | flux_gguf | anima | qwen_image | krea2`。種別ごとに使われるフィールドが異なる(Flux は `cfg=1.0` 固定で `guidance` を使用、ネガティブ不使用)。v0.9(17): `anima` / `qwen_image` / `krea2` は `model.name`=拡散モデル、`model.clip`=テキストエンコーダ 1 つ、`model.vae`=VAE(必須)。`cfg` を使い(`guidance` は不使用)、ネガティブは Anima・Qwen-Image 2.1 で使い Krea 2 では使わない。顔補正・ControlNet・Inpaint は SD 1.5 / SDXL のみ。
 - `schemaVersion` により後方互換を管理。未知フィールドは保持する。
 
 ## 設定キー(`settings`)
@@ -198,4 +198,4 @@ CREATE INDEX idx_assistant_msg_conv ON assistant_messages(conversation_id, creat
 ## マイグレーション方針
 
 - `0001_init.sql` で上記を作成。以降は前方互換のみ(ダウングレードは非対応)。
-- マイグレーション前に DB ファイルのバックアップ(`gazoo.db.bak-<version>`)を作成。
+- マイグレーション前に DB ファイルのバックアップ(`gazooo.db.bak-<version>`)を作成。

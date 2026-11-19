@@ -121,6 +121,17 @@ pub struct StoredSuggestion {
     pub changes: serde_json::Map<String, Value>,
     #[serde(default)]
     pub applied: bool,
+    /// モデルの提案(docs/18 §6.3)。設定変更の提案では `None`。保存済みの古い提案にはない。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<ModelSuggestion>,
+}
+
+/// 「このモデルを使うとよい」という提案。`family_id` はカタログに存在するものだけが入る。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ModelSuggestion {
+    pub family_id: String,
+    pub reason: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -376,6 +387,7 @@ mod tests {
                     summary: "s".into(),
                     changes: serde_json::from_value(serde_json::json!({"steps": 30})).unwrap(),
                     applied: false,
+                    model: None,
                 };
                 append_message(c, "a", "m2", "assistant", "ans", None, &[sug])?;
                 mark_suggestion_applied(c, "m2", 0)?;

@@ -114,13 +114,13 @@ ComfyUI は起動時に、`main.py` と同じフォルダの `extra_model_paths.
   > 「この保存先は ComfyUI が参照しているフォルダと異なります。[ComfyUI に反映] を押し、ComfyUI を再起動してください。」
 - **[ComfyUI に反映]** ボタン: `extra_model_paths.yaml` を `main.py` と同じフォルダに書く(IPC `models_apply_dir_to_engine`、04 に追記)。成功後、「ComfyUI を再起動すると有効になります」と表示する。アプリは ComfyUI を起動・停止しない(01 の MVP 方針)。
 - **[反映を解除]** ボタン(反映済みのときだけ): アプリが書いたファイルを削除する(既定の検索先に戻る)。
-- 反映済みかどうかは、ファイルの存在とアプリの印(先頭コメント `# managed by gazoo`)で判定する。
+- 反映済みかどうかは、ファイルの存在とアプリの印(先頭コメント `# managed by gazooo`)で判定する。アプリ名変更前の旧印 `# managed by gazoo` も「アプリが書いたもの」として扱う(07 Q-52b)。
 
 ### 書き込みの安全策
 
 - 対象は **接続先がこの PC の ComfyUI で、`main.py` の場所が特定でき、そのフォルダに書き込める場合だけ**(それ以外はボタンを無効にし、理由を表示。リモート等は 12 §3 と同じ扱い)。
-- 既に `extra_model_paths.yaml` があり、先頭に `# managed by gazoo` が **無い** ときは上書きしない(ユーザー自身の設定を壊さない)。エラー `MODELS_EXTRA_PATHS_FOREIGN` で理由を表示し、手動で追記する YAML の例を見せる。
-- 内容は `gazoo:` セクションに `base_path: <保存先>` と、12 §4.2 の取得先サブフォルダ(`checkpoints` / `unet` / `clip` / `vae` / `loras` / `controlnet` / `ultralytics` …)の対応。パスは YAML 用に引用符で囲み、Windows の `\` を正しくエスケープする。保存先は絶対パスで、存在するフォルダであること。
+- 既に `extra_model_paths.yaml` があり、先頭に `# managed by gazooo` が **無い** ときは上書きしない(ユーザー自身の設定を壊さない)。エラー `MODELS_EXTRA_PATHS_FOREIGN` で理由を表示し、手動で追記する YAML の例を見せる。
+- 内容は `gazooo:` セクションに `base_path: <保存先>` と、12 §4.2 の取得先サブフォルダ(`checkpoints` / `unet` / `clip` / `vae` / `loras` / `controlnet` / `ultralytics` …)の対応。パスは YAML 用に引用符で囲み、Windows の `\` を正しくエスケープする。保存先は絶対パスで、存在するフォルダであること。
 - 書き込みは一時ファイル → リネーム。ComfyUI 本体以外のファイルには触れない。
 
 ### 受け入れ基準と検証

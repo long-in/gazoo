@@ -5,14 +5,22 @@
 
 use serde_json::{Map, Value, json};
 
-use crate::db::assistant::StoredSuggestion;
+use serde::Deserialize;
+
+use crate::db::assistant::{ModelSuggestion, StoredSuggestion};
 use crate::domain::params::GenerationParams;
+use crate::services::models::catalog::Catalog;
 
 pub const TOOL_NAME: &str = "suggest_params";
+/// モデルの提案(docs/18 §6.3)。
+pub const TOOL_MODEL_NAME: &str = "suggest_model";
 /// Claude に渡す履歴の最大メッセージ数(保存数とは別)。
 pub const HISTORY_LIMIT: i64 = 20;
 const MAX_PROMPT_CHARS: usize = 4000;
 const MAX_SUMMARY_CHARS: usize = 80;
+const MAX_REASON_CHARS: usize = 300;
+/// 導入済みとして受け付けるファミリー ID の最大数(カタログの大きさに比べて十分に大きい上限)。
+const MAX_INSTALLED_FAMILIES: usize = 64;
 
 pub const SYSTEM_PROMPT: &str = r#"あなたは、ローカル画像生成アプリ「gazoo」に組み込まれた、画像生成の設定アドバイザーです。
 画像生成エンジンは ComfyUI(Stable Diffusion 1.5 / SDXL / Flux)で、ユーザーは生成フォームの設定について相談します。
@@ -31,7 +39,8 @@ pub const SYSTEM_PROMPT: &str = r#"あなたは、ローカル画像生成アプ
 - sampler / scheduler: ComfyUI の名前(例: euler, dpmpp_2m, dpmpp_2m_sde, normal, karras, simple)。
 - batchSize: 1〜8。
 - faceDetailer(顔補正、SD 系のみ): enabled と denoise(0.05〜1.0。0.3〜0.5 が目安)。
-- 提案できるのは prompt / negativePrompt / width / height / steps / cfg / guidance / sampler / scheduler / batchSize / faceDetailer だけ。モデルの切替・seed・ControlNet・Inpaint は提案できない(必要なら本文で手順を説明する)。
+- suggest_params で提案できるのは prompt / negativePrompt / width / height / steps / cfg / guidance / sampler / scheduler / batchSize / faceDetailer だけ。seed・ControlNet・Inpaint は提案できない(必要なら本文で手順を説明する)。
+- モデルを勧めるときは、本文で理由を説明したうえで suggest_model ツールを呼ぶ(下の「モデルガイド」にある ID だけ。1 回の回答につき 1 回まで)。
 - Inpaint が有効なときは、width / height が参照画像から決まるため提案しない。
 - 提案では変えたい項目だけを changes に入れる。"#;
 
@@ -67,6 +76,17 @@ pub fn tool_definition() -> Value {
                 }
             },
             "required": ["summary", "changes"]
+        }
+    }, {
+        "name": TOOL_MODEL_NAME,
+        "description": "依頼に合うモデルを 1 つ提案する。モデルガイドにあるファミリー ID だけを指定する。ユーザーが確認して切り替える。",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "familyId": { "type": "string", "description": "モデルガイドのファミリー ID(例: checkpoint-sdxl)" },
+                "reason": { "type": "string", "description": "このモデルを勧める理由(依頼との対応を 1〜2 文で)" }
+            },
+            "required": ["familyId", "reason"]
         }
     }])
 }
@@ -120,7 +140,12 @@ pub fn snapshot(p: &GenerationParams) -> Value {
 }
 
 /// 最新の質問に付けるユーザーメッセージ本文。
-pub fn user_content(snapshot: &Value, capabilities: Option<&Value>, question: &str) -> String {
+pub fn user_content(
+    snapshot: &Value,
+    capabilities: Option<&Value>,
+    models: Option<&Value>,
+    question: &str,
+) -> String {
     let caps = capabilities
         .map(|c| {
             format!(
@@ -129,11 +154,96 @@ pub fn user_content(snapshot: &Value, capabilities: Option<&Value>, question: &s
             )
         })
         .unwrap_or_default();
+    let models = models
+        .map(|m| {
+            format!(
+                "\n\n選択中のモデルと導入済みのモデル(ファミリー ID。ファイル名ではない):\n```json\n{}\n```",
+                serde_json::to_string_pretty(m).unwrap_or_default()
+            )
+        })
+        .unwrap_or_default();
     format!(
-        "現在のフォーム:\n```json\n{}\n```{caps}\n\n質問:\n{}",
+        "現在のフォーム:\n```json\n{}\n```{caps}{models}\n\n質問:\n{}",
         serde_json::to_string_pretty(snapshot).unwrap_or_default(),
         question
     )
+}
+
+/// フロントエンドが添える、選択中・導入済みのモデルの情報(docs/18 §6.2)。
+/// **ファミリー ID だけ** を受け取り、カタログに無い値は捨てる(ファイル名・パスは送らない)。
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ModelContext {
+    /// 選択中のモデルのファミリー ID。カタログ外のモデルなら `None`。
+    #[serde(default)]
+    pub family_id: Option<String>,
+    /// 導入済み(ComfyUI から選べる)ファミリーの ID。
+    #[serde(default)]
+    pub installed_families: Vec<String>,
+}
+
+impl ModelContext {
+    /// カタログに存在する ID だけを残した、送信用の JSON。
+    pub fn to_value(&self, catalog: &Catalog) -> Value {
+        let known = |id: &str| {
+            catalog
+                .families
+                .iter()
+                .any(|f| f.id == id && f.is_selectable_model())
+        };
+        let mut installed: Vec<&str> = Vec::new();
+        for id in self
+            .installed_families
+            .iter()
+            .take(MAX_INSTALLED_FAMILIES)
+            .map(String::as_str)
+        {
+            if known(id) && !installed.contains(&id) {
+                installed.push(id);
+            }
+        }
+        json!({
+            "selectedFamilyId": self.family_id.as_deref().filter(|id| known(id)),
+            "installedFamilies": installed,
+        })
+    }
+}
+
+/// `suggest_model` の入力を検証する。カタログに無い(または選べない)ファミリー ID・理由が空・
+/// 今選んでいるモデルと同じ提案は捨てる(docs/18 §6.3)。
+pub fn sanitize_model(
+    input: &Value,
+    catalog: &Catalog,
+    current_family: Option<&str>,
+) -> Option<StoredSuggestion> {
+    let family_id = input.get("familyId")?.as_str()?.trim();
+    let family = catalog
+        .families
+        .iter()
+        .find(|f| f.id == family_id && f.is_selectable_model())?;
+    if current_family == Some(family.id.as_str()) {
+        return None;
+    }
+    let reason: String = input
+        .get("reason")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .trim()
+        .chars()
+        .take(MAX_REASON_CHARS)
+        .collect();
+    if reason.is_empty() {
+        return None;
+    }
+    Some(StoredSuggestion {
+        summary: reason.chars().take(MAX_SUMMARY_CHARS).collect(),
+        changes: Map::new(),
+        applied: false,
+        model: Some(ModelSuggestion {
+            family_id: family.id.clone(),
+            reason,
+        }),
+    })
 }
 
 /// 保存済みのメッセージ(古い順)を API に渡せる形に整える。
@@ -178,7 +288,8 @@ fn text_in(v: &Value, allow_empty: bool) -> Option<String> {
 /// 現在値と同じ項目は取り除く。残る項目が無ければ `None`(docs/11 §6)。
 pub fn sanitize(input: &Value, current: &GenerationParams) -> Option<StoredSuggestion> {
     let changes = input.get("changes")?.as_object()?;
-    let flux = current.model.kind.is_flux();
+    let kind = current.model.kind;
+    let flux = kind.is_flux();
     let mut out = Map::new();
 
     for (key, v) in changes {
@@ -186,7 +297,7 @@ pub fn sanitize(input: &Value, current: &GenerationParams) -> Option<StoredSugge
             "prompt" => text_in(v, false)
                 .filter(|s| *s != current.prompt.trim())
                 .map(Value::from),
-            "negativePrompt" if !flux => text_in(v, true)
+            "negativePrompt" if kind.uses_negative() => text_in(v, true)
                 .filter(|s| *s != current.negative_prompt.trim())
                 .map(Value::from),
             "width" => int_in(v, 256, 2048)
@@ -215,7 +326,7 @@ pub fn sanitize(input: &Value, current: &GenerationParams) -> Option<StoredSugge
             "batchSize" => int_in(v, 1, 8)
                 .filter(|n| *n != i64::from(current.batch_size))
                 .map(Value::from),
-            "faceDetailer" if !flux => sanitize_face(v, current),
+            "faceDetailer" if kind.supports_extras() => sanitize_face(v, current),
             _ => None,
         };
         if let Some(a) = accepted {
@@ -237,6 +348,7 @@ pub fn sanitize(input: &Value, current: &GenerationParams) -> Option<StoredSugge
         summary,
         changes: out,
         applied: false,
+        model: None,
     })
 }
 
@@ -413,11 +525,11 @@ mod tests {
         assert!(snapshot(&p).get("inpaint").is_none());
 
         let caps = json!({ "inpaint": false });
-        let with = user_content(&snap, Some(&caps), "質問です");
+        let with = user_content(&snap, Some(&caps), None, "質問です");
         assert!(with.contains("capabilities"));
         assert!(with.contains("\"inpaint\": false"));
         assert!(with.ends_with("質問です"));
-        assert!(!user_content(&snap, None, "q").contains("capabilities"));
+        assert!(!user_content(&snap, None, None, "q").contains("capabilities"));
     }
 
     #[test]
@@ -438,5 +550,121 @@ mod tests {
         assert_eq!(title_from("顔が\n崩れる"), "顔が 崩れる");
         assert_eq!(title_from(&"a".repeat(100)).chars().count(), 40);
         assert_eq!(title_from("   "), "(無題)");
+    }
+}
+
+#[cfg(test)]
+mod model_tests {
+    use super::*;
+    use crate::services::assistant::capabilities::catalog;
+
+    fn cat() -> &'static Catalog {
+        catalog().expect("同梱カタログを読める")
+    }
+
+    #[test]
+    fn sanitize_model_accepts_catalog_ids_only() {
+        let ok = sanitize_model(
+            &json!({"familyId": "checkpoint-noobai-xl", "reason": "アニメ調のタグ指定に向くため"}),
+            cat(),
+            Some("checkpoint-sdxl"),
+        )
+        .unwrap();
+        let m = ok.model.as_ref().unwrap();
+        assert_eq!(m.family_id, "checkpoint-noobai-xl");
+        assert!(ok.changes.is_empty() && !ok.applied);
+        assert!(!m.reason.is_empty() && ok.summary.chars().count() <= MAX_SUMMARY_CHARS);
+
+        for bad in [
+            json!({"familyId": "evil-model", "reason": "x"}),
+            // 選べないもの(ControlNet・テキストエンコーダ・VAE)
+            json!({"familyId": "controlnet-canny", "reason": "x"}),
+            json!({"familyId": "flux-vae", "reason": "x"}),
+            json!({"familyId": "../x", "reason": "x"}),
+            json!({"familyId": 5, "reason": "x"}),
+            json!({"familyId": "checkpoint-sdxl"}),
+            json!({"familyId": "checkpoint-sdxl", "reason": "   "}),
+            json!({}),
+        ] {
+            assert!(sanitize_model(&bad, cat(), None).is_none(), "{bad}");
+        }
+    }
+
+    #[test]
+    fn sanitize_model_drops_the_model_already_selected_and_caps_the_reason() {
+        let input = json!({"familyId": "checkpoint-sdxl", "reason": "いま使っているモデル"});
+        assert!(sanitize_model(&input, cat(), Some("checkpoint-sdxl")).is_none());
+        let long = "あ".repeat(1000);
+        let s = sanitize_model(
+            &json!({"familyId": "checkpoint-sd15", "reason": long}),
+            cat(),
+            None,
+        )
+        .unwrap();
+        assert_eq!(s.model.unwrap().reason.chars().count(), MAX_REASON_CHARS);
+    }
+
+    #[test]
+    fn model_context_keeps_only_known_family_ids_and_never_file_names() {
+        let ctx = ModelContext {
+            family_id: Some("checkpoint-noobai-xl".into()),
+            installed_families: vec![
+                "checkpoint-sdxl".into(),
+                "checkpoint-sdxl".into(),            // 重複
+                "NoobAI-XL-v1.1.safetensors".into(), // ファイル名は捨てる
+                "../../secret".into(),
+                "controlnet-canny".into(), // 選べないもの
+            ],
+        };
+        let v = ctx.to_value(cat());
+        assert_eq!(v["selectedFamilyId"], "checkpoint-noobai-xl");
+        assert_eq!(v["installedFamilies"], json!(["checkpoint-sdxl"]));
+        let text = v.to_string();
+        assert!(!text.contains("safetensors") && !text.contains("secret"));
+
+        // カタログ外の選択は null になる
+        let unknown = ModelContext {
+            family_id: Some("my-private-model".into()),
+            installed_families: vec![],
+        };
+        assert!(unknown.to_value(cat())["selectedFamilyId"].is_null());
+    }
+
+    #[test]
+    fn model_context_deserializes_from_the_frontend_payload() {
+        let ctx: ModelContext = serde_json::from_value(
+            json!({"familyId": null, "installedFamilies": ["checkpoint-sd15"]}),
+        )
+        .unwrap();
+        assert_eq!(ctx.family_id, None);
+        assert_eq!(ctx.installed_families, vec!["checkpoint-sd15".to_string()]);
+        // 無い項目は空
+        let empty: ModelContext = serde_json::from_value(json!({})).unwrap();
+        assert!(empty.family_id.is_none() && empty.installed_families.is_empty());
+    }
+
+    #[test]
+    fn user_content_includes_the_models_block_only_when_given() {
+        let snap = json!({"prompt": "x"});
+        let models = json!({"selectedFamilyId": null, "installedFamilies": ["checkpoint-sdxl"]});
+        let with = user_content(&snap, None, Some(&models), "質問");
+        assert!(with.contains("installedFamilies"));
+        assert!(with.contains("ファイル名ではない"));
+        assert!(!user_content(&snap, None, None, "質問").contains("installedFamilies"));
+    }
+
+    #[test]
+    fn both_tools_are_defined() {
+        let tools = tool_definition();
+        let names: Vec<_> = tools
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|t| t["name"].as_str().unwrap().to_string())
+            .collect();
+        assert_eq!(
+            names,
+            vec![TOOL_NAME.to_string(), TOOL_MODEL_NAME.to_string()]
+        );
     }
 }

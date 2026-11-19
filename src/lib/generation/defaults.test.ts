@@ -9,11 +9,18 @@ import {
   defaultFaceDetailer,
   pickControlnetModel,
   defaultParams,
+  isFlux,
+  isSplit,
   MAX_SEED,
   modelsFor,
+  needsExternalVae,
   randomSeed,
   restoreParams,
+  supportsControlnet,
+  supportsFaceDetailer,
+  supportsInpaint,
   switchKind,
+  usesNegative,
 } from "./defaults";
 
 const MODELS: EngineModels = {
@@ -236,5 +243,80 @@ describe("ControlNet", () => {
     // 一覧が空(ノード未導入)なら設定に触らない
     const p = withCn("sd15", { model: "anything.safetensors" });
     expect(autofill(p, { ...MODELS, controlnets: [] }).controlnet?.units[0].model).toBe("anything.safetensors");
+  });
+});
+
+describe("Anima / Qwen-Image 2.1 / Krea 2(docs/17)", () => {
+  const models = {
+    checkpoints: [],
+    unets: ["anima-base-v1.0.safetensors", "krea2_turbo_fp8_scaled.safetensors"],
+    ggufUnets: [],
+    clips: ["qwen3vl_4b_fp8_scaled.safetensors", "qwen_3_06b_base.safetensors", "qwen3vl_8b_int8_convrot.safetensors"],
+    vaes: ["qwen_image_2.1_vae_bf16.safetensors", "qwen_image_vae.safetensors", "ae.safetensors"],
+    loras: [],
+    faceDetectors: [],
+    controlnets: [],
+    samplers: ["euler", "euler_ancestral"],
+    schedulers: ["simple", "normal"],
+  };
+
+  it("既定値は公式の ComfyUI テンプレートに合わせる", () => {
+    const a = defaultParams("anima");
+    expect([a.width, a.height, a.steps, a.cfg, a.sampler, a.scheduler]).toEqual([1024, 1024, 30, 4, "euler", "simple"]);
+    expect(a.negativePrompt).toContain("worst quality");
+    const q = defaultParams("qwen_image");
+    expect([q.steps, q.cfg, q.sampler, q.scheduler]).toEqual([25, 1, "euler", "simple"]);
+    const k = defaultParams("krea2");
+    expect([k.steps, k.cfg, k.sampler, k.scheduler]).toEqual([8, 1, "euler", "simple"]);
+  });
+
+  it("種別の性質: 別ローダー・ネガティブ・拡張機能", () => {
+    for (const k of ["anima", "qwen_image", "krea2"] as const) {
+      expect(isSplit(k)).toBe(true);
+      expect(needsExternalVae(k)).toBe(true);
+      expect(isFlux(k)).toBe(false);
+      expect(supportsFaceDetailer(k) || supportsControlnet(k) || supportsInpaint(k)).toBe(false);
+    }
+    expect([usesNegative("sdxl"), usesNegative("anima"), usesNegative("qwen_image")]).toEqual([true, true, true]);
+    expect([usesNegative("krea2"), usesNegative("flux"), usesNegative("flux_gguf")]).toEqual([false, false, false]);
+    expect(isSplit("sdxl") || isSplit("flux_gguf")).toBe(false);
+    expect(needsExternalVae("flux")).toBe(true);
+    expect(needsExternalVae("sd15")).toBe(false);
+  });
+
+  it("拡散モデルは unets から選ぶ", () => {
+    for (const k of ["anima", "qwen_image", "krea2", "flux"] as const) expect(modelsFor(k, models)).toEqual(models.unets);
+  });
+
+  it("autofill: テキストエンコーダは 1 つで、種別に合うものと、合う VAE を選ぶ", () => {
+    const anima = autofill(defaultParams("anima"), models);
+    expect(anima.model.name).toBe("anima-base-v1.0.safetensors");
+    expect(anima.model.clip).toEqual(["qwen_3_06b_base.safetensors"]);
+    expect(anima.model.vae).toBe("qwen_image_vae.safetensors");
+
+    const krea = autofill(defaultParams("krea2"), models);
+    expect(krea.model.clip).toEqual(["qwen3vl_4b_fp8_scaled.safetensors"]);
+    expect(krea.model.vae).toBe("qwen_image_vae.safetensors");
+
+    // Qwen-Image 2.1 は専用の VAE(旧 VAE は使えない)
+    const qwen = autofill(defaultParams("qwen_image"), models);
+    expect(qwen.model.clip).toEqual(["qwen3vl_8b_int8_convrot.safetensors"]);
+    expect(qwen.model.vae).toBe("qwen_image_2.1_vae_bf16.safetensors");
+  });
+
+  it("autofill: 有効な選択は保つ", () => {
+    const p = defaultParams("krea2");
+    p.model = { kind: "krea2", name: "krea2_turbo_fp8_scaled.safetensors", clip: ["qwen_3_06b_base.safetensors"], vae: "ae.safetensors" };
+    const next = autofill(p, models);
+    expect(next.model.clip).toEqual(["qwen_3_06b_base.safetensors"]);
+    expect(next.model.vae).toBe("ae.safetensors");
+  });
+
+  it("種別を切り替えても、プロンプトは引き継ぐ。顔補正などは無効にする", () => {
+    const p = { ...defaultParams("sdxl"), prompt: "1girl", faceDetailer: { enabled: true, detector: "d", denoise: 0.4, prompt: "", confidence: 0.5 } };
+    const next = switchKind(p, "anima");
+    expect(next.model.kind).toBe("anima");
+    expect(next.prompt).toBe("1girl");
+    expect(next.faceDetailer?.enabled).toBe(false);
   });
 });

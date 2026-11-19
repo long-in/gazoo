@@ -25,10 +25,22 @@ fn node(class_type: &str, inputs: Value) -> Value {
 
 /// `control_images` は有効な ControlNet ユニットの順に並べた、エンジンへアップロード済みの画像名。
 pub fn build(params: &GenerationParams, filename_prefix: &str, control_images: &[String]) -> Value {
-    if params.model.kind.is_flux() {
-        build_flux(params, filename_prefix)
-    } else {
-        build_sd(params, filename_prefix, control_images)
+    match params.model.kind {
+        ModelKind::Flux | ModelKind::FluxGguf => build_flux(params, filename_prefix),
+        ModelKind::Anima => build_split(
+            params,
+            filename_prefix,
+            "stable_diffusion",
+            Conditioning::Plain,
+        ),
+        ModelKind::QwenImage => build_split(
+            params,
+            filename_prefix,
+            "qwen_image",
+            Conditioning::QwenImage21,
+        ),
+        ModelKind::Krea2 => build_split(params, filename_prefix, "krea2", Conditioning::ZeroOut),
+        ModelKind::Sd15 | ModelKind::Sdxl => build_sd(params, filename_prefix, control_images),
     }
 }
 
@@ -400,16 +412,124 @@ fn build_flux(p: &GenerationParams, prefix: &str) -> Value {
     })
 }
 
+/// 正・負の条件づけの作り方(docs/17 §4)。
+#[derive(Clone, Copy)]
+enum Conditioning {
+    /// `CLIPTextEncode` が正・負の 2 つ(Anima)。
+    Plain,
+    /// `TextEncodeQwenImage21` が正・負を 1 ノードで出す(Qwen-Image 2.1)。
+    QwenImage21,
+    /// 正は `CLIPTextEncode`、負は `ConditioningZeroOut`(Krea 2)。
+    ZeroOut,
+}
+
+/// Anima / Qwen-Image 2.1 / Krea 2。拡散モデル・テキストエンコーダ(1 つ)・VAE を別々に読む。
+/// ノード構成と既定値は、ComfyUI 同梱の公式テンプレート(`image_anima_base_v1` / `image_qwen_image_2_1_t2i` /
+/// `image_krea2_turbo_t2i`)に合わせている。`clip_type` は `CLIPLoader` の `type`。
+fn build_split(p: &GenerationParams, prefix: &str, clip_type: &str, cond: Conditioning) -> Value {
+    let clip = p.model.clip.first().cloned().unwrap_or_default();
+    let vae = p.model.vae.clone().unwrap_or_default();
+
+    let (positive, negative, extra) = match cond {
+        Conditioning::Plain => (
+            link("4", 0),
+            link("5", 0),
+            vec![
+                (
+                    "4",
+                    node(
+                        "CLIPTextEncode",
+                        json!({ "text": p.prompt, "clip": link("2", 0) }),
+                    ),
+                ),
+                (
+                    "5",
+                    node(
+                        "CLIPTextEncode",
+                        json!({ "text": p.negative_prompt, "clip": link("2", 0) }),
+                    ),
+                ),
+            ],
+        ),
+        Conditioning::QwenImage21 => (
+            link("4", 0),
+            link("4", 1),
+            vec![(
+                "4",
+                node(
+                    "TextEncodeQwenImage21",
+                    json!({
+                        "clip": link("2", 0),
+                        "prompt": p.prompt,
+                        "negative_prompt": p.negative_prompt,
+                        "resolution": 1024
+                    }),
+                ),
+            )],
+        ),
+        Conditioning::ZeroOut => (
+            link("4", 0),
+            link("5", 0),
+            vec![
+                (
+                    "4",
+                    node(
+                        "CLIPTextEncode",
+                        json!({ "text": p.prompt, "clip": link("2", 0) }),
+                    ),
+                ),
+                (
+                    "5",
+                    node(
+                        "ConditioningZeroOut",
+                        json!({ "conditioning": link("4", 0) }),
+                    ),
+                ),
+            ],
+        ),
+    };
+
+    let mut wf = json!({
+        "1": node("UNETLoader", json!({ "unet_name": p.model.name, "weight_dtype": "default" })),
+        "2": node("CLIPLoader", json!({ "clip_name": clip, "type": clip_type, "device": "default" })),
+        "3": node("VAELoader", json!({ "vae_name": vae })),
+        "6": node("EmptyLatentImage", json!({
+            "width": p.width, "height": p.height, "batch_size": p.batch_size
+        })),
+        "7": node("KSampler", json!({
+            "model": link("1", 0),
+            "seed": p.seed,
+            "steps": p.steps,
+            "cfg": p.cfg,
+            "sampler_name": p.sampler,
+            "scheduler": p.scheduler,
+            "positive": positive,
+            "negative": negative,
+            "latent_image": link("6", 0),
+            "denoise": 1.0
+        })),
+        "8": node("VAEDecode", json!({ "samples": link("7", 0), "vae": link("3", 0) })),
+        "9": node("SaveImage", json!({ "images": link("8", 0), "filename_prefix": prefix })),
+    });
+    for (id, n) in extra {
+        wf[id] = n;
+    }
+    wf
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::domain::params::{ControlnetParams, sample};
 
-    const ALL: [ModelKind; 4] = [
+    const ALL: [ModelKind; 7] = [
         ModelKind::Sd15,
         ModelKind::Sdxl,
         ModelKind::Flux,
         ModelKind::FluxGguf,
+        ModelKind::Anima,
+        ModelKind::QwenImage,
+        ModelKind::Krea2,
     ];
 
     fn class_of<'a>(wf: &'a Value, id: &str) -> &'a str {
@@ -757,6 +877,108 @@ mod tests {
         let mut p = inpaint_params(ModelKind::Sd15);
         p.inpaint.as_mut().unwrap().enabled = false;
         assert_eq!(build(&p, "gazoo", &[]), plain);
+    }
+
+    fn split(kind: ModelKind) -> Value {
+        let mut p = sample(kind);
+        p.model.name = "unet.safetensors".into();
+        p.model.clip = vec!["te.safetensors".into()];
+        p.model.vae = Some("vae.safetensors".into());
+        p.cfg = 4.0;
+        p.steps = 30;
+        build(&p, "gazoo", &[])
+    }
+
+    #[test]
+    fn split_models_share_the_loader_skeleton() {
+        // docs/17 §4: UNETLoader → CLIPLoader(type)→ VAELoader → EmptyLatentImage → KSampler → VAEDecode → SaveImage
+        for (kind, clip_type) in [
+            (ModelKind::Anima, "stable_diffusion"),
+            (ModelKind::QwenImage, "qwen_image"),
+            (ModelKind::Krea2, "krea2"),
+        ] {
+            let wf = split(kind);
+            assert_well_formed(&wf);
+            assert_eq!(class_of(&wf, "1"), "UNETLoader");
+            assert_eq!(wf["1"]["inputs"]["unet_name"], "unet.safetensors");
+            assert_eq!(wf["1"]["inputs"]["weight_dtype"], "default");
+            assert_eq!(class_of(&wf, "2"), "CLIPLoader");
+            assert_eq!(wf["2"]["inputs"]["clip_name"], "te.safetensors");
+            assert_eq!(wf["2"]["inputs"]["type"], clip_type, "{kind:?}");
+            assert_eq!(wf["2"]["inputs"]["device"], "default");
+            assert_eq!(class_of(&wf, "3"), "VAELoader");
+            assert_eq!(wf["3"]["inputs"]["vae_name"], "vae.safetensors");
+            // SD3 用ではなく標準の EmptyLatentImage(公式テンプレートと同じ)
+            assert_eq!(class_of(&wf, "6"), "EmptyLatentImage");
+            assert_eq!(class_of(&wf, "7"), "KSampler");
+            assert_eq!(
+                wf["7"]["inputs"]["model"],
+                json!(["1", 0]),
+                "ModelSampling などを挟まない"
+            );
+            assert_eq!(wf["7"]["inputs"]["cfg"], 4.0);
+            assert_eq!(wf["7"]["inputs"]["steps"], 30);
+            assert_eq!(wf["8"]["inputs"]["vae"], json!(["3", 0]));
+            // チェックポイントを読むノードや Flux 用のノードは使わない
+            let used = classes(&wf);
+            for banned in [
+                "CheckpointLoaderSimple",
+                "DualCLIPLoader",
+                "FluxGuidance",
+                "EmptySD3LatentImage",
+            ] {
+                assert!(!used.contains(&banned), "{kind:?}: {banned}");
+            }
+        }
+    }
+
+    #[test]
+    fn anima_encodes_positive_and_negative_with_clip_text_encode() {
+        let wf = split(ModelKind::Anima);
+        assert_eq!(class_of(&wf, "4"), "CLIPTextEncode");
+        assert_eq!(wf["4"]["inputs"]["text"], "a cat");
+        assert_eq!(class_of(&wf, "5"), "CLIPTextEncode");
+        assert_eq!(wf["5"]["inputs"]["text"], "blurry");
+        assert_eq!(wf["7"]["inputs"]["positive"], json!(["4", 0]));
+        assert_eq!(wf["7"]["inputs"]["negative"], json!(["5", 0]));
+    }
+
+    #[test]
+    fn qwen_image_encodes_both_prompts_with_one_node() {
+        let wf = split(ModelKind::QwenImage);
+        assert_eq!(class_of(&wf, "4"), "TextEncodeQwenImage21");
+        assert_eq!(wf["4"]["inputs"]["prompt"], "a cat");
+        assert_eq!(wf["4"]["inputs"]["negative_prompt"], "blurry");
+        assert_eq!(wf["4"]["inputs"]["clip"], json!(["2", 0]));
+        assert_eq!(wf["7"]["inputs"]["positive"], json!(["4", 0]));
+        assert_eq!(wf["7"]["inputs"]["negative"], json!(["4", 1]));
+        assert!(wf.get("5").is_none());
+    }
+
+    #[test]
+    fn krea2_zeroes_out_the_negative() {
+        let wf = split(ModelKind::Krea2);
+        assert_eq!(class_of(&wf, "4"), "CLIPTextEncode");
+        assert_eq!(class_of(&wf, "5"), "ConditioningZeroOut");
+        assert_eq!(wf["5"]["inputs"]["conditioning"], json!(["4", 0]));
+        assert_eq!(wf["7"]["inputs"]["negative"], json!(["5", 0]));
+        // ネガティブプロンプトの文字列はワークフローに入らない
+        assert!(!wf.to_string().contains("blurry"));
+    }
+
+    #[test]
+    fn split_models_apply_size_batch_seed_and_prefix() {
+        let mut p = sample(ModelKind::Krea2);
+        p.width = 832;
+        p.height = 1216;
+        p.batch_size = 3;
+        p.seed = 99;
+        let wf = build(&p, "out", &[]);
+        assert_eq!(wf["6"]["inputs"]["width"], 832);
+        assert_eq!(wf["6"]["inputs"]["height"], 1216);
+        assert_eq!(wf["6"]["inputs"]["batch_size"], 3);
+        assert_eq!(wf["7"]["inputs"]["seed"], 99);
+        assert_eq!(wf["9"]["inputs"]["filename_prefix"], "out");
     }
 
     #[test]

@@ -178,6 +178,7 @@ fn history_error_message(status: Option<&Value>) -> String {
 const MODEL_INPUTS: &[&str] = &[
     "ckpt_name",
     "unet_name",
+    "clip_name",
     "clip_name1",
     "clip_name2",
     "vae_name",
@@ -211,6 +212,13 @@ pub fn parse_prompt_error(body: &Value) -> AppError {
                 }
                 if kind == Some("value_not_in_list") {
                     let input = details.split(':').next().unwrap_or("").trim();
+                    // `CLIPLoader` の type に krea2 / qwen_image が無いのは、ComfyUI が古いため(docs/17 §4)。
+                    // モデルの不在ではなく、ComfyUI の更新が必要なものとして扱う
+                    if class == "CLIPLoader" && input == "type" {
+                        return AppError::EngineNodeMissing(
+                            "CLIPLoader の type(ComfyUI の更新が必要)".to_owned(),
+                        );
+                    }
                     if MODEL_INPUTS.contains(&input) {
                         return AppError::EngineModelMissing(details.to_owned());
                     }
@@ -396,6 +404,29 @@ mod tests {
             parse_prompt_error(&json!({})).code(),
             "ENGINE_EXECUTION_FAILED"
         );
+    }
+
+    #[test]
+    fn missing_text_encoder_is_a_missing_model_and_an_old_clip_type_needs_a_comfyui_update() {
+        // docs/17: Anima / Qwen-Image 2.1 / Krea 2 は CLIPLoader の clip_name(1 つ)と type を使う
+        let missing_te = json!({"error": {"message": "x"}, "node_errors": {"2": {"class_type": "CLIPLoader",
+            "errors": [{"type": "value_not_in_list", "details": "clip_name: 'te.safetensors' not in []"}]}}});
+        assert_eq!(
+            parse_prompt_error(&missing_te).code(),
+            "ENGINE_MODEL_MISSING"
+        );
+
+        let old_comfyui = json!({"error": {"message": "x"}, "node_errors": {"2": {"class_type": "CLIPLoader",
+            "errors": [{"type": "value_not_in_list", "details": "type: 'krea2' not in ['stable_diffusion', 'stable_cascade']"}]}}});
+        assert_eq!(
+            parse_prompt_error(&old_comfyui).code(),
+            "ENGINE_NODE_MISSING"
+        );
+
+        // type 以外の CLIPLoader の入力や、別のノードの type は、これまでどおり
+        let other = json!({"error": {"message": "x"}, "node_errors": {"5": {"class_type": "KSampler",
+            "errors": [{"type": "value_not_in_list", "details": "type: 'x' not in []"}]}}});
+        assert_ne!(parse_prompt_error(&other).code(), "ENGINE_NODE_MISSING");
     }
 
     #[test]

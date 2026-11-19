@@ -6,9 +6,11 @@ import { toast } from "sonner";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { ModelProfileView } from "@/components/models/model-profile-view";
 import { Progress } from "@/components/ui/progress";
-import { downloadFor, etaSeconds, formatBytes, formatDuration, formatSpeed, isActiveStatus, localized, pickVariant, progressPercent } from "@/lib/models/catalog";
+import { type BundleItem, bundleMissingBytes, downloadFor, etaSeconds, formatBytes, formatDuration, formatSpeed, isActiveStatus, localized, pickVariant, progressPercent } from "@/lib/models/catalog";
 import type { MessageKey } from "@/lib/i18n";
+import { familyKinds, featuresFor } from "@/lib/models/profile";
 import { useErrorMessage, useT } from "@/lib/i18n/use-t";
 import { toAppError } from "@/lib/tauri/errors";
 import { type DownloadState, type ModelFamily, type ModelVariant, openExternal } from "@/lib/tauri/models";
@@ -25,6 +27,8 @@ const USED_BY_KEY: Record<string, MessageKey> = {
 export function FamilyCard({
   family,
   variants,
+  bundle = [],
+  onDownloadAll,
   lang,
   chosenId,
   installed,
@@ -34,6 +38,10 @@ export function FamilyCard({
   onDownload,
 }: {
   family: ModelFamily;
+  /** 選択中の variant と、一緒に必要なファイル(テキストエンコーダ・VAE)。無ければ空(docs/17 §5)。 */
+  bundle?: BundleItem[];
+  /** 必要なファイルをまとめて取得する。 */
+  onDownloadAll?: () => void;
   /** 絞り込み後に表示する variant。 */
   variants: ModelVariant[];
   lang: Language;
@@ -76,6 +84,15 @@ export function FamilyCard({
           <h2 id={`fam-${family.id}`} className="text-base font-medium">
             {localized(family.name, lang)}
           </h2>
+          {family.tags.length > 0 && (
+            <div className="mt-1 flex flex-wrap gap-1">
+              {family.tags.map((tag) => (
+                <Badge key={tag} variant={tag === "nsfw" ? "outline" : "secondary"}>
+                  {t(`models.tag.${tag}` as MessageKey)}
+                </Badge>
+              ))}
+            </div>
+          )}
           <p className="mt-0.5 text-sm text-muted-foreground">{localized(family.description, lang)}</p>
         </div>
         {family.usedBy.length > 0 && (
@@ -84,6 +101,19 @@ export function FamilyCard({
           </p>
         )}
       </div>
+
+      {family.profile && (
+        <details className="mt-3 rounded-md border px-3 py-2">
+          <summary className="cursor-pointer text-sm font-medium">{t("modelProfile.title")}</summary>
+          <div className="mt-2">
+            <ModelProfileView
+              profile={family.profile}
+              lang={lang}
+              features={familyKinds(family)[0] ? featuresFor(familyKinds(family)[0]) : undefined}
+            />
+          </div>
+        </details>
+      )}
 
       <fieldset className="mt-3">
         <legend className="mb-1 text-xs font-medium text-muted-foreground">{t("models.version")}</legend>
@@ -157,6 +187,45 @@ export function FamilyCard({
           </p>
         )}
       </div>
+
+      {/* 一緒に必要なファイル(Anima・Qwen-Image 2.1・Krea 2)。足りないものをまとめて取得できる */}
+      {bundle.length > 1 && (
+        <div className="mt-3 rounded-md border p-3 text-sm" role="group" aria-label={t("models.bundle.title")}>
+          <p className="text-xs font-medium text-muted-foreground">{t("models.bundle.title")}</p>
+          <ul className="mt-1 flex flex-col gap-0.5 text-xs">
+            {bundle.map((b) => (
+              <li key={`${b.family.id}/${b.variant.id}`} className="flex items-center gap-2">
+                <span className="min-w-0 flex-1">
+                  {b.family.id === family.id ? t("models.bundle.main") : localized(b.family.name, lang)}
+                  <span className="ml-2 text-muted-foreground">{formatBytes(b.variant.sizeBytes)}</span>
+                </span>
+                {b.installed && (
+                  <Badge variant="outline" className="gap-1">
+                    <CheckCircle2 />
+                    {t("models.installed")}
+                  </Badge>
+                )}
+              </li>
+            ))}
+          </ul>
+          <div className="mt-2">
+            {bundle.every((b) => b.installed) ? (
+              <p className="text-xs text-muted-foreground">{t("models.bundle.complete")}</p>
+            ) : (
+              <Button
+                size="sm"
+                variant="outline"
+                disabled={!canDownload}
+                title={canDownload ? undefined : t("models.download.disabled")}
+                onClick={() => onDownloadAll?.()}
+              >
+                {t("models.bundle.download")}
+                <span className="ml-1 text-xs opacity-80">({formatBytes(bundleMissingBytes(bundle))})</span>
+              </Button>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* 操作 */}
       <div className="mt-3 flex flex-col gap-2">

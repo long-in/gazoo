@@ -155,16 +155,19 @@ impl AssistantService {
         text: String,
         params: GenerationParams,
     ) -> AppResult<AskStarted> {
-        self.ask_with(conversation_id, text, params, None).await
+        self.ask_with(conversation_id, text, params, None, None)
+            .await
     }
 
     /// `capabilities`: 今の ComfyUI で使える機能(docs/13 §4.2)。接続状態が不明なら `None`。
+    /// `models`: 選択中・導入済みのモデルのファミリー ID(docs/18 §6.2)。無ければ `None`。
     pub async fn ask_with(
         self: &Arc<Self>,
         conversation_id: Option<String>,
         text: String,
         params: GenerationParams,
         capabilities: Option<serde_json::Value>,
+        models: Option<context::ModelContext>,
     ) -> AppResult<AskStarted> {
         let text = text.trim().to_string();
         if text.is_empty() || text.chars().count() > MAX_QUESTION_CHARS {
@@ -210,10 +213,25 @@ impl AssistantService {
         };
         let me = Arc::clone(self);
         let assistant_message_id = started.assistant_message_id.clone();
+        // 選択中のモデルは、カタログにあるファミリー ID だけに絞る(ファイル名・パスは送らない)
+        let catalog = capabilities::catalog();
+        let current_family = models
+            .as_ref()
+            .and_then(|m| m.family_id.clone())
+            .filter(|id| catalog.is_some_and(|c| c.families.iter().any(|f| &f.id == id)));
+        let models_value = match (&models, catalog) {
+            (Some(m), Some(c)) => Some(m.to_value(c)),
+            _ => None,
+        };
         let mut messages = history;
         messages.push((
             "user".to_string(),
-            context::user_content(&context::snapshot(&params), capabilities.as_ref(), &text),
+            context::user_content(
+                &context::snapshot(&params),
+                capabilities.as_ref(),
+                models_value.as_ref(),
+                &text,
+            ),
         ));
         tokio::spawn(async move {
             let tools = context::tool_definition();
@@ -236,11 +254,20 @@ impl AssistantService {
                         sink.delta(&rid, &t);
                     }
                     StreamEvent::ToolUse { name, input } => {
-                        // 回答 1 回につき提案は 1 件まで
-                        if name == context::TOOL_NAME
-                            && suggestions.is_empty()
-                            && let Some(s) = context::sanitize(&input, &params)
+                        // 回答 1 回につき、設定の提案とモデルの提案をそれぞれ 1 件まで
+                        let has_params = suggestions.iter().any(|s| s.model.is_none());
+                        let has_model = suggestions.iter().any(|s| s.model.is_some());
+                        let accepted = if name == context::TOOL_NAME && !has_params {
+                            context::sanitize(&input, &params)
+                        } else if name == context::TOOL_MODEL_NAME
+                            && !has_model
+                            && let Some(c) = capabilities::catalog()
                         {
+                            context::sanitize_model(&input, c, current_family.as_deref())
+                        } else {
+                            None
+                        };
+                        if let Some(s) = accepted {
                             sink.suggestion(&rid, suggestions.len(), &s);
                             suggestions.push(s);
                         }
@@ -358,10 +385,13 @@ mod tests {
             self.log(format!("delta:{t}"));
         }
         fn suggestion(&self, _: &str, i: usize, s: &StoredSuggestion) {
-            self.log(format!(
-                "suggestion:{i}:{}",
-                serde_json::Value::Object(s.changes.clone())
-            ));
+            match &s.model {
+                Some(m) => self.log(format!("model-suggestion:{i}:{}", m.family_id)),
+                None => self.log(format!(
+                    "suggestion:{i}:{}",
+                    serde_json::Value::Object(s.changes.clone())
+                )),
+            }
         }
         fn done(&self, _: &str, c: bool) {
             self.log(format!("done:{c}"));
@@ -379,6 +409,50 @@ mod tests {
         "event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":1,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"{\\\"summary\\\":\\\"増やす\\\",\\\"changes\\\":{\\\"steps\\\":40,\\\"seed\\\":1}}\"}}\n\n",
         "event: content_block_stop\ndata: {\"type\":\"content_block_stop\",\"index\":1}\n\n",
         "event: message_stop\ndata: {\"type\":\"message_stop\"}\n\n",
+    );
+
+    /// 設定の提案(steps)と、モデルの提案(NoobAI-XL)と、カタログ外の ID の提案(捨てられる)。
+    const SSE_MODEL: &str = concat!(
+        "event: content_block_start
+data: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}
+
+",
+        "event: content_block_delta
+data: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"アニメ調なら NoobAI-XL がおすすめです\"}}
+
+",
+        "event: content_block_stop
+data: {\"type\":\"content_block_stop\",\"index\":0}
+
+",
+        "event: content_block_start
+data: {\"type\":\"content_block_start\",\"index\":1,\"content_block\":{\"type\":\"tool_use\",\"name\":\"suggest_model\"}}
+
+",
+        "event: content_block_delta
+data: {\"type\":\"content_block_delta\",\"index\":1,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"{\\\"familyId\\\":\\\"checkpoint-noobai-xl\\\",\\\"reason\\\":\\\"Danbooru タグでアニメ調を指定できるため\\\"}\"}}
+
+",
+        "event: content_block_stop
+data: {\"type\":\"content_block_stop\",\"index\":1}
+
+",
+        "event: content_block_start
+data: {\"type\":\"content_block_start\",\"index\":2,\"content_block\":{\"type\":\"tool_use\",\"name\":\"suggest_model\"}}
+
+",
+        "event: content_block_delta
+data: {\"type\":\"content_block_delta\",\"index\":2,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"{\\\"familyId\\\":\\\"checkpoint-animagine-xl-4\\\",\\\"reason\\\":\\\"2 件目は捨てられる\\\"}\"}}
+
+",
+        "event: content_block_stop
+data: {\"type\":\"content_block_stop\",\"index\":2}
+
+",
+        "event: message_stop
+data: {\"type\":\"message_stop\"}
+
+",
     );
 
     async fn setup(
@@ -464,6 +538,72 @@ mod tests {
 
         let e = svc.set_key("has space".into()).await.unwrap_err();
         assert_eq!(e.code(), "VALIDATION");
+    }
+
+    #[tokio::test]
+    async fn model_suggestion_is_validated_saved_and_the_guide_is_sent() {
+        let (svc, rec, _db, mock) = setup(vec![
+            Route::get("/v1/models?limit=1", "{}"),
+            Route::post("/v1/messages", 200, SSE_MODEL),
+        ])
+        .await;
+        ready(&svc).await;
+        let mut p = sample(ModelKind::Sdxl);
+        p.model.name = "my-private-checkpoint-v7.safetensors".into();
+        let models = context::ModelContext {
+            family_id: None,
+            installed_families: vec![
+                "checkpoint-sdxl".into(),
+                "my-private-checkpoint-v7.safetensors".into(),
+            ],
+        };
+        let started = svc
+            .ask_with(None, "アニメ調にしたい".into(), p, None, Some(models))
+            .await
+            .unwrap();
+        wait_done(&rec).await;
+
+        // 回答 1 回につきモデルの提案は 1 件まで(2 件目は捨てる)
+        let log = rec.all();
+        let model_logs: Vec<_> = log
+            .iter()
+            .filter(|l| l.starts_with("model-suggestion:"))
+            .collect();
+        assert_eq!(
+            model_logs,
+            vec!["model-suggestion:0:checkpoint-noobai-xl"],
+            "{log:?}"
+        );
+
+        let conv = svc
+            .conversation_get(started.conversation_id.clone())
+            .await
+            .unwrap();
+        let saved = &conv.messages[1].suggestions;
+        assert_eq!(saved.len(), 1);
+        assert_eq!(
+            saved[0].model.as_ref().unwrap().family_id,
+            "checkpoint-noobai-xl"
+        );
+        assert!(saved[0].changes.is_empty());
+
+        // 送った内容: モデルガイドとルール(システム)、導入済みのファミリー ID。ファイル名は送らない
+        let sent = {
+            let reqs = mock.requests.lock().unwrap();
+            reqs.iter()
+                .find(|r| r.starts_with("POST /v1/messages"))
+                .unwrap()
+                .clone()
+        };
+        assert!(sent.contains("# モデルガイド") && sent.contains("[checkpoint-noobai-xl]"));
+        assert!(sent.contains("suggest_model"));
+        assert!(sent.contains("installedFamilies") && sent.contains("checkpoint-sdxl"));
+        // 導入済みの一覧に混ぜたファイル名は、カタログに無いので捨てられる(ModelContext のテストも参照)
+        assert!(!sent.contains(
+            "\"installedFamilies\": [
+    \"checkpoint-sdxl\",
+    \"my-private"
+        ));
     }
 
     #[tokio::test]

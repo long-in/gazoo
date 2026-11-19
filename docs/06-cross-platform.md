@@ -59,7 +59,7 @@ macOS Intel(x86_64)は MVP では非対象(ビルド自体は可能にしてお�
 - `build.beforeDevCommand: "npm run dev"`、`build.beforeBuildCommand: "npm run build"`
 - `app.security.csp` は 02 §3.9 の方針。`assetProtocol.enable: true` + 限定 scope
 - `bundle.targets`: `["nsis", "dmg", "app"]`、Windows の WebView2 は `downloadBootstrapper`
-- `identifier`: 例 `dev.gazoo.desktop`(07 で確認)
+- `identifier`: 例 `dev.gazooo.desktop`(07 で確認)
 
 ## 5. CI(GitHub Actions)
 
@@ -99,10 +99,10 @@ macOS 15(Sequoia)以降は、警告を右クリック →「開く」では回�
 
 | 項目 | Windows | macOS |
 |---|---|---|
-| 形式 | NSIS(`*-setup.exe`)。ユーザー単位のインストール(管理者権限不要) | `.dmg`(中身は `gazoo.app`) |
+| 形式 | NSIS(`*-setup.exe`)。ユーザー単位のインストール(管理者権限不要) | `.dmg`(中身は `gazooo.app`) |
 | WebView2 | 未導入の環境ではブートストラップが取得する | 不要(WKWebView) |
 | 署名 | なし(SmartScreen の警告) | **アドホック署名**(`signingIdentity: "-"`)。Developer ID 署名・公証はなし(Gatekeeper の警告)。バンドル全体を署名しないと `codesign --verify` が失敗するため、アドホック署名は必須 |
 | 最低 OS | Windows 10 | macOS 13(`minimumSystemVersion`) |
 | 言語 | 日本語・英語 | – |
-| アンインストール | 設定 → アプリ。**ユーザーデータ(`%APPDATA%\dev.gazoo.desktop` の DB・画像)は残る** | `.app` を削除。データ(`~/Library/Application Support/dev.gazoo.desktop`)は残る |
+| アンインストール | 設定 → アプリ。**ユーザーデータ(`%APPDATA%\dev.gazooo.desktop` の DB・画像)は残る** | `.app` を削除。データ(`~/Library/Application Support/dev.gazooo.desktop`)は残る |
 | アイコン | 原画は `assets/icon.svg`(山の写真フレーム+生成の星)。更新時は `npm run tauri -- icon assets/icon.svg` で再生成し、不要な `android/` `ios/` `64x64.png` は削除する。`src/app/favicon.ico` は `icon.ico` と同一にする | 同左 |

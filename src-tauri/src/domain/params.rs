@@ -14,11 +14,31 @@ pub enum ModelKind {
     Sdxl,
     Flux,
     FluxGguf,
+    /// docs/17: 拡散モデル・テキストエンコーダ 1 つ・VAE を別々に読む種別。
+    Anima,
+    QwenImage,
+    #[serde(rename = "krea2")]
+    Krea2,
 }
 
 impl ModelKind {
     pub fn is_flux(self) -> bool {
         matches!(self, Self::Flux | Self::FluxGguf)
+    }
+
+    /// 拡散モデル・テキストエンコーダ(1 つ)・VAE を別々に読む種別(Anima / Qwen-Image 2.1 / Krea 2)。
+    pub fn is_split_model(self) -> bool {
+        matches!(self, Self::Anima | Self::QwenImage | Self::Krea2)
+    }
+
+    /// 顔補正・ControlNet・Inpaint に対応するのは SD 1.5 / SDXL のみ(docs/10 §7、17 §3)。
+    pub fn supports_extras(self) -> bool {
+        matches!(self, Self::Sd15 | Self::Sdxl)
+    }
+
+    /// ネガティブプロンプトを使う種別。Flux は使わず、Krea 2 は `ConditioningZeroOut` で代える。
+    pub fn uses_negative(self) -> bool {
+        !self.is_flux() && self != Self::Krea2
     }
 }
 
@@ -27,10 +47,10 @@ impl ModelKind {
 pub struct ModelSpec {
     pub kind: ModelKind,
     pub name: String,
-    /// Flux 系: `[T5, CLIP-L]` の順。SD 系は空。
+    /// Flux 系: `[T5, CLIP-L]` の順。Anima / Qwen-Image 2.1 / Krea 2: テキストエンコーダ 1 つ。SD 系は空。
     #[serde(default)]
     pub clip: Vec<String>,
-    /// Flux 系は必須。SD 系は未指定ならチェックポイント内蔵の VAE を使う。
+    /// Flux 系・Anima / Qwen-Image 2.1 / Krea 2 は必須。SD 系は未指定ならチェックポイント内蔵の VAE を使う。
     #[serde(default)]
     pub vae: Option<String>,
 }
@@ -279,17 +299,22 @@ impl GenerationParams {
             if self.model.clip.len() != 2 || self.model.clip.iter().any(|c| c.trim().is_empty()) {
                 return bad("clip", "テキストエンコーダ(T5 と CLIP-L)を選択してください");
             }
-            if self
+        } else if self.model.kind.is_split_model()
+            && (self.model.clip.len() != 1 || self.model.clip[0].trim().is_empty())
+        {
+            return bad("clip", "テキストエンコーダを選択してください");
+        }
+        if (self.model.kind.is_flux() || self.model.kind.is_split_model())
+            && self
                 .model
                 .vae
                 .as_deref()
                 .is_none_or(|v| v.trim().is_empty())
-            {
-                return bad("vae", "VAE を選択してください");
-            }
+        {
+            return bad("vae", "VAE を選択してください");
         }
         if let Some(fd) = self.active_face_detailer() {
-            if self.model.kind.is_flux() {
+            if !self.model.kind.supports_extras() {
                 return bad("faceDetailer", "顔補正は SD 1.5 / SDXL のみ対応です");
             }
             if fd.detector.trim().is_empty() {
@@ -319,7 +344,7 @@ impl GenerationParams {
 
     fn validate_inpaint(&self, ip: &InpaintParams) -> AppResult<()> {
         let bad = |field: &str, msg: &str| Err(AppError::validation(field, msg));
-        if self.model.kind.is_flux() {
+        if !self.model.kind.supports_extras() {
             return bad("inpaint", "Inpaint は SD 1.5 / SDXL のみ対応です");
         }
         if self.active_face_detailer().is_some() {
@@ -348,7 +373,7 @@ impl GenerationParams {
 
     fn validate_controlnet(&self) -> AppResult<()> {
         let bad = |field: &str, msg: &str| Err(AppError::validation(field, msg));
-        if self.model.kind.is_flux() {
+        if !self.model.kind.supports_extras() {
             return bad("controlnet", "ControlNet は SD 1.5 / SDXL のみ対応です");
         }
         let units = self.active_controlnet_units();
@@ -393,6 +418,7 @@ impl GenerationParams {
 #[cfg(test)]
 pub fn sample(kind: ModelKind) -> GenerationParams {
     let flux = kind.is_flux();
+    let split = kind.is_split_model();
     GenerationParams {
         schema_version: 1,
         model: ModelSpec {
@@ -404,10 +430,12 @@ pub fn sample(kind: ModelKind) -> GenerationParams {
             },
             clip: if flux {
                 vec!["t5xxl.safetensors".into(), "clip_l.safetensors".into()]
+            } else if split {
+                vec!["text_encoder.safetensors".into()]
             } else {
                 vec![]
             },
-            vae: flux.then(|| "ae.safetensors".to_string()),
+            vae: (flux || split).then(|| "ae.safetensors".to_string()),
         },
         prompt: "a cat".into(),
         negative_prompt: "blurry".into(),
@@ -431,6 +459,15 @@ pub fn sample(kind: ModelKind) -> GenerationParams {
 mod tests {
     use super::*;
 
+    /// 顔補正・ControlNet・Inpaint に対応しない種別(docs/17 §3)。
+    const NON_SD: [ModelKind; 5] = [
+        ModelKind::Flux,
+        ModelKind::FluxGguf,
+        ModelKind::Anima,
+        ModelKind::QwenImage,
+        ModelKind::Krea2,
+    ];
+
     fn field_of(r: AppResult<()>) -> String {
         match r.unwrap_err() {
             AppError::Validation { field, .. } => field,
@@ -440,13 +477,58 @@ mod tests {
 
     #[test]
     fn valid_samples_pass() {
-        for k in [
-            ModelKind::Sd15,
-            ModelKind::Sdxl,
-            ModelKind::Flux,
-            ModelKind::FluxGguf,
-        ] {
+        for k in [ModelKind::Sd15, ModelKind::Sdxl].into_iter().chain(NON_SD) {
             sample(k).validate().unwrap();
+        }
+    }
+
+    #[test]
+    fn split_models_need_exactly_one_text_encoder_and_a_vae() {
+        // docs/17 §3: Anima / Qwen-Image 2.1 / Krea 2 は、テキストエンコーダ 1 つと VAE が必須
+        for kind in [ModelKind::Anima, ModelKind::QwenImage, ModelKind::Krea2] {
+            let mut p = sample(kind);
+            p.model.clip.clear();
+            assert_eq!(field_of(p.validate()), "clip", "{kind:?}");
+
+            let mut p = sample(kind);
+            p.model.clip.push("second.safetensors".into());
+            assert_eq!(field_of(p.validate()), "clip", "{kind:?}");
+
+            let mut p = sample(kind);
+            p.model.clip = vec!["  ".into()];
+            assert_eq!(field_of(p.validate()), "clip", "{kind:?}");
+
+            let mut p = sample(kind);
+            p.model.vae = None;
+            assert_eq!(field_of(p.validate()), "vae", "{kind:?}");
+        }
+        // SD 系はこれまでどおり、エンコーダも VAE も要らない
+        let mut p = sample(ModelKind::Sdxl);
+        p.model.clip.clear();
+        p.model.vae = None;
+        p.validate().unwrap();
+    }
+
+    #[test]
+    fn model_kind_capabilities_and_serde_names() {
+        assert!(ModelKind::Sd15.supports_extras() && ModelKind::Sdxl.supports_extras());
+        for k in NON_SD {
+            assert!(!k.supports_extras(), "{k:?}");
+        }
+        assert!(ModelKind::Anima.uses_negative() && ModelKind::QwenImage.uses_negative());
+        assert!(!ModelKind::Krea2.uses_negative() && !ModelKind::Flux.uses_negative());
+        assert!(ModelKind::Sdxl.uses_negative());
+        for (kind, name) in [
+            (ModelKind::Anima, "anima"),
+            (ModelKind::QwenImage, "qwen_image"),
+            (ModelKind::Krea2, "krea2"),
+            (ModelKind::FluxGguf, "flux_gguf"),
+        ] {
+            assert_eq!(serde_json::to_value(kind).unwrap(), name);
+            assert_eq!(
+                serde_json::from_value::<ModelKind>(name.into()).unwrap(),
+                kind
+            );
         }
     }
 
@@ -508,7 +590,7 @@ mod tests {
     fn face_detailer_is_valid_for_sd_only() {
         with_face(ModelKind::Sd15).validate().unwrap();
         with_face(ModelKind::Sdxl).validate().unwrap();
-        for k in [ModelKind::Flux, ModelKind::FluxGguf] {
+        for k in NON_SD {
             assert_eq!(field_of(with_face(k).validate()), "faceDetailer");
         }
         // 無効のままなら Flux でも通る(モデル切替で残った設定を弾かない)
@@ -580,7 +662,7 @@ mod tests {
     fn controlnet_is_valid_for_sd_only() {
         with_cn(ModelKind::Sd15).validate().unwrap();
         with_cn(ModelKind::Sdxl).validate().unwrap();
-        for k in [ModelKind::Flux, ModelKind::FluxGguf] {
+        for k in NON_SD {
             assert_eq!(field_of(with_cn(k).validate()), "controlnet");
         }
         // 無効のままなら Flux でも通り、ユニットも作られない
@@ -609,7 +691,7 @@ mod tests {
         for k in [ModelKind::Sd15, ModelKind::Sdxl] {
             assert!(with_inpaint(k).validate().is_ok());
         }
-        for k in [ModelKind::Flux, ModelKind::FluxGguf] {
+        for k in NON_SD {
             assert_eq!(field_of(with_inpaint(k).validate()), "inpaint");
         }
         let mut p = with_inpaint(ModelKind::Sd15);

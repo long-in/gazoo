@@ -10,8 +10,43 @@ export interface Localized {
   en: string;
 }
 
-export type ModelCategory = "checkpoint" | "controlnet" | "detector" | "flux";
+export type ModelCategory = "checkpoint" | "controlnet" | "detector" | "flux" | "anima" | "qwen_image" | "krea2";
+
+/** 生成画面で選べる拡散モデル本体(`unet/` に置くもの)の種別(docs/17 §5)。 */
+export type FamilyKind = "flux_gguf" | "anima" | "qwen_image" | "krea2";
+
+/** 「まとめて取得」で一緒に取得する、必要なファイル(別ファミリーの variant)。 */
+export interface ModelRequirement {
+  familyId: string;
+  variantId: string;
+}
 export type BaseModel = "sd15" | "sdxl";
+
+/** 取得ページの用途フィルタ用のタグ(docs/16 §3.1)。 */
+export type ModelTag = "anime" | "nsfw";
+
+export type ModelStyle = "anime" | "realistic" | "illustration" | "general";
+export type NsfwSupport = "capable" | "limited" | "not-intended" | "unknown";
+
+/** モデルの説明(docs/18 §3)。生成画面の説明パネル・取得ページ・AI のモデルガイドの単一の情報源。 */
+export interface ModelProfile {
+  summary: Localized;
+  style: ModelStyle[];
+  bestFor: { ja: string[]; en: string[] };
+  weakAt: { ja: string[]; en: string[] };
+  promptStyle: { kind: "tags" | "natural" | "both"; hint: Localized };
+  recommended: {
+    steps: number;
+    cfg: number;
+    sampler?: string;
+    scheduler?: string;
+    size: { width: number; height: number };
+  };
+  /** `vramGb` は必要な VRAM の最小の目安(GB)。 */
+  resources: { vramGb: number; speed: "fast" | "medium" | "slow" };
+  nsfw: NsfwSupport;
+  sourceNote: Localized;
+}
 
 export interface ModelVariant {
   id: string;
@@ -35,6 +70,14 @@ export interface ModelFamily {
   name: Localized;
   description: Localized;
   usedBy: string[];
+  /** 用途フィルタ用(docs/16 §3.1)。無ければ空。 */
+  tags: ModelTag[];
+  /** 拡散モデル本体のファミリーの種別。あれば生成画面で選べるモデルで、`profile` もある。 */
+  kind?: FamilyKind;
+  /** 一緒に取得が必要なファイル(テキストエンコーダ・VAE)。無ければ空。 */
+  requires?: ModelRequirement[];
+  /** モデルの説明。生成画面で選べるモデル(チェックポイント・Flux 本体)には必ずある。 */
+  profile?: ModelProfile;
   variants: ModelVariant[];
 }
 

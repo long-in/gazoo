@@ -11,6 +11,8 @@ import {
   supportsControlnet,
   switchKind,
 } from "@/lib/generation/defaults";
+import { applyBuiltinPreset, type BuiltinPreset } from "@/lib/generation/builtin-presets";
+import type { RecommendedPatch } from "@/lib/models/profile";
 import { defaultInpaint, sizeForImage } from "@/lib/generation/inpaint";
 import { applyChanges, usableChanges } from "@/lib/generation/suggestions";
 import type { SuggestedChanges } from "@/lib/tauri/assistant";
@@ -54,6 +56,12 @@ interface FormState {
   loadParams: (params: Partial<GenerationParams>) => void;
   /** プリセットの適用: 保存された設定をそのまま復元する(シードのランダム設定も含む)。 */
   applyPreset: (params: Partial<GenerationParams>) => void;
+  /** モデルの推奨設定(サイズ・ステップ・CFG・サンプラー)を適用する(docs/18 §5)。プロンプトは変えない。 */
+  applyRecommended: (patch: RecommendedPatch, models: EngineModels | null) => void;
+  /** 種別とモデルを切り替える(AI のモデル提案の反映。docs/18 §6.3)。プロンプトなどは引き継ぐ。 */
+  switchModel: (kind: ModelKind, name: string, models: EngineModels | null) => void;
+  /** 組み込みプリセットを適用する(docs/16 §5)。プロンプトなどは保ち、エンジンの一覧でモデルを補う。 */
+  applyBuiltinPreset: (preset: BuiltinPreset, models: EngineModels | null) => void;
   /** AI の提案を適用する(適用できた項目があれば true)。 */
   applySuggestion: (changes: SuggestedChanges, models: EngineModels | null) => boolean;
   /** 直近の提案の適用を、その項目だけ元に戻す。 */
@@ -134,6 +142,17 @@ export const useFormStore = create<FormState>((set, get) => ({
   setCount: (count) => set({ count }),
 
   applyPreset: (params) => set({ params: restoreParams(params), hydrated: true }),
+
+  applyRecommended: (patch, models) => set((s) => ({ params: autofill({ ...s.params, ...patch }, models) })),
+
+  switchModel: (kind, name, models) =>
+    set((s) => {
+      const switched = switchKind(s.params, kind);
+      return { params: autofill({ ...switched, model: { ...switched.model, name } }, models) };
+    }),
+
+  applyBuiltinPreset: (preset, models) =>
+    set((s) => ({ params: autofill(applyBuiltinPreset(s.params, preset), models), hydrated: true })),
 
   loadParams: (params) =>
     set({ params: { ...restoreParams(params), seedRandomize: false }, hydrated: true }),

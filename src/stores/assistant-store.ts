@@ -11,11 +11,15 @@ import {
   assistantSuggestionApplied,
   type ConversationMessage,
   type ConversationSummary,
+  type ModelSuggestion,
   type SuggestedChanges,
   type Suggestion,
 } from "@/lib/tauri/assistant";
 import { type AppError, toAppError } from "@/lib/tauri/errors";
+import { modelContext } from "@/lib/models/profile";
 import type { GenerationParams } from "@/lib/tauri/jobs";
+import { useEngineStore } from "@/stores/engine-store";
+import { useModelsStore } from "@/stores/models-store";
 
 /** 表示用のメッセージ。回答の生成中は `id` が確定前(`pending = true`)で、本文が増えていく。 */
 export interface ChatMessage extends Omit<ConversationMessage, "createdAt"> {
@@ -32,8 +36,13 @@ interface AssistantState {
   error: AppError | null;
   /** 相談パネルの開閉(パネルは生成フォームの外に置くため、ストアで共有する)。 */
   panelOpen: boolean;
+  /** 入力欄の下書き(「AI に相談」ボタンから仮入力するため、ストアで持つ)。 */
+  draft: string;
 
   setPanelOpen: (open: boolean) => void;
+  setDraft: (draft: string) => void;
+  /** 下書きを入れて、パネルを開く(送信はユーザー操作)。 */
+  openWithDraft: (draft: string) => void;
   loadStatus: () => Promise<void>;
   setStatus: (s: AssistantStatus) => void;
   loadConversations: () => Promise<void>;
@@ -47,7 +56,13 @@ interface AssistantState {
 
   // イベントの反映(`requestId` が現在の相談と一致するものだけ)
   onDelta: (requestId: string, text: string) => void;
-  onSuggestion: (requestId: string, index: number, summary: string, changes: SuggestedChanges) => void;
+  onSuggestion: (
+    requestId: string,
+    index: number,
+    summary: string,
+    changes: SuggestedChanges,
+    model?: ModelSuggestion,
+  ) => void;
   onDone: (requestId: string) => void;
   onError: (requestId: string, error: AppError) => void;
 }
@@ -61,8 +76,11 @@ export const useAssistantStore = create<AssistantState>((set, get) => ({
   requestId: null,
   error: null,
   panelOpen: false,
+  draft: "",
 
   setPanelOpen: (panelOpen) => set({ panelOpen }),
+  setDraft: (draft) => set({ draft }),
+  openWithDraft: (draft) => set({ draft, panelOpen: true }),
 
   loadStatus: async () => {
     try {
@@ -84,7 +102,9 @@ export const useAssistantStore = create<AssistantState>((set, get) => ({
 
   send: async (text, params) => {
     set({ error: null });
-    const started = await assistantAsk(get().conversationId, text, params);
+    // 選択中・導入済みのモデルは、ファミリー ID だけを添える(カタログが未取得なら添えない。docs/18 §6.2)
+    const models = modelContext(useModelsStore.getState().view?.catalog, params, useEngineStore.getState().models);
+    const started = await assistantAsk(get().conversationId, text, params, models);
     set((s) => ({
       conversationId: started.conversationId,
       requestId: started.requestId,
@@ -148,9 +168,9 @@ export const useAssistantStore = create<AssistantState>((set, get) => ({
     }));
   },
 
-  onSuggestion: (requestId, index, summary, changes) => {
+  onSuggestion: (requestId, index, summary, changes, model) => {
     if (get().requestId !== requestId) return;
-    const sug: Suggestion = { summary, changes, applied: false };
+    const sug: Suggestion = { summary, changes, applied: false, ...(model && { model }) };
     set((s) => ({
       messages: s.messages.map((m) => {
         if (!m.pending) return m;

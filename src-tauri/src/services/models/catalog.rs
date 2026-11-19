@@ -3,7 +3,7 @@
 //! アプリに同梱した JSON(`resources/models/catalog.json`)を読み込み、**構造と安全性を検証**する。
 //! 取得元・ハッシュ・配置先・ファイル名はすべてここで固定され、実行時に外部から差し替えられない。
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use serde::{Deserialize, Serialize};
 
@@ -11,7 +11,7 @@ use super::download::DownloadPolicy;
 use crate::error::{AppError, AppResult};
 
 const EMBEDDED: &str = include_str!("../../../resources/models/catalog.json");
-const SCHEMA_VERSION: u32 = 1;
+const SCHEMA_VERSION: u32 = 2;
 /// 配置を許すファイルの拡張子(ComfyUI のモデルとして読まれる形式)。
 const ALLOWED_EXTENSIONS: &[&str] = &["safetensors", "gguf", "pt", "ckpt", "pth"];
 
@@ -29,6 +29,32 @@ pub enum Category {
     Detector,
     /// Flux の本体(GGUF)・テキストエンコーダ・VAE。
     Flux,
+    /// Anima の本体・テキストエンコーダ・VAE(docs/17)。
+    Anima,
+    /// Qwen-Image 2.1 の本体・テキストエンコーダ・VAE。
+    #[serde(rename = "qwen_image")]
+    QwenImage,
+    /// Krea 2 の本体・テキストエンコーダ・VAE。
+    Krea2,
+}
+
+/// 生成画面で選べる拡散モデル本体(`unet/` に置くもの)の種別(docs/17 §5)。
+/// 以前の「`unet/` に置くもの = Flux」という推定の置き換え。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FamilyKind {
+    FluxGguf,
+    Anima,
+    QwenImage,
+    Krea2,
+}
+
+/// 「まとめて取得」で一緒に取得する、必要なファイル(別ファミリーの variant)への参照(docs/17 §5、Q-70)。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Requirement {
+    pub family_id: String,
+    pub variant_id: String,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -124,7 +150,112 @@ pub struct Variant {
     pub note: Option<Localized>,
 }
 
+/// 取得ページの用途フィルタ用のタグ(docs/16 §3.1)。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Tag {
+    Anime,
+    Nsfw,
+}
+
+/// 絵柄の傾向(docs/18 §3)。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Style {
+    Anime,
+    Realistic,
+    Illustration,
+    General,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum PromptKind {
+    Tags,
+    Natural,
+    Both,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Speed {
+    Fast,
+    Medium,
+    Slow,
+}
+
+/// NSFW 対応。配布元の記載で確認できたものだけ `capable` / `limited` にする(docs/16 §3.3、18 Q-79)。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum NsfwSupport {
+    Capable,
+    Limited,
+    NotIntended,
+    Unknown,
+}
+
+impl NsfwSupport {
+    pub fn is_nsfw(self) -> bool {
+        matches!(self, Self::Capable | Self::Limited)
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LocalizedList {
+    pub ja: Vec<String>,
+    pub en: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PromptStyle {
+    pub kind: PromptKind,
+    pub hint: Localized,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Size {
+    pub width: u32,
+    pub height: u32,
+}
+
+/// 「推奨設定を適用」の値(docs/18 §5)。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Recommended {
+    pub steps: u32,
+    pub cfg: f32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sampler: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scheduler: Option<String>,
+    pub size: Size,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Resources {
+    /// 必要な VRAM の最小の目安(GB)。
+    pub vram_gb: u32,
+    pub speed: Speed,
+}
+
+/// モデルの説明(docs/18 §3)。生成画面の説明パネル・取得ページ・AI のモデルガイドの単一の情報源。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Profile {
+    pub summary: Localized,
+    pub style: Vec<Style>,
+    pub best_for: LocalizedList,
+    pub weak_at: LocalizedList,
+    pub prompt_style: PromptStyle,
+    pub recommended: Recommended,
+    pub resources: Resources,
+    pub nsfw: NsfwSupport,
+    pub source_note: Localized,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Family {
     pub id: String,
@@ -133,10 +264,29 @@ pub struct Family {
     pub description: Localized,
     #[serde(default)]
     pub used_by: Vec<String>,
+    /// 用途フィルタ用(docs/16 §3.1)。
+    #[serde(default)]
+    pub tags: Vec<Tag>,
+    /// 拡散モデル本体(`unet/`)のファミリーの種別。生成画面で選べるモデルで、`profile` が必須。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub kind: Option<FamilyKind>,
+    /// 一緒に取得が必要なファイル(テキストエンコーダ・VAE)。
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub requires: Vec<Requirement>,
+    /// モデルの説明。生成画面で選べるモデル(チェックポイント・Flux 本体)では必須(docs/18 §2)。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub profile: Option<Profile>,
     pub variants: Vec<Variant>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+impl Family {
+    /// 生成画面のモデル選択に出るファミリー(チェックポイント、拡散モデル本体)。
+    pub fn is_selectable_model(&self) -> bool {
+        self.category == Category::Checkpoint || self.kind.is_some()
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Catalog {
     pub schema_version: u32,
@@ -175,13 +325,20 @@ impl Catalog {
             ));
         }
         let mut family_ids = HashSet::new();
-        let mut targets = HashSet::new();
+        // 配置先ごとの SHA-256。同じファイルを複数のファミリーが共有するのは許す(docs/17 §5)
+        let mut targets: HashMap<(DestDir, String), &str> = HashMap::new();
         for f in &self.families {
             if f.id.is_empty() || !family_ids.insert(f.id.as_str()) {
                 return bad(format!("ファミリー ID が空か重複しています: {}", f.id));
             }
             if f.variants.is_empty() {
                 return bad(format!("{}: variant がありません", f.id));
+            }
+            if let Err(why) = check_kind(f) {
+                return bad(format!("{}: {why}", f.id));
+            }
+            if let Err(why) = check_profile(f) {
+                return bad(format!("{}: {why}", f.id));
             }
             let mut variant_ids = HashSet::new();
             let mut recommended = HashSet::new();
@@ -204,10 +361,17 @@ impl Catalog {
                 if let Err(why) = check_file_name(&v.file_name) {
                     return bad(format!("{at}: fileName が不正です({why})"));
                 }
-                if !targets.insert((v.dest_dir, v.file_name.to_ascii_lowercase())) {
-                    return bad(format!(
-                        "{at}: 配置先のファイルが他の variant と重複しています"
-                    ));
+                let slot = (v.dest_dir, v.file_name.to_ascii_lowercase());
+                match targets.get(&slot) {
+                    Some(sha) if *sha != v.sha256 => {
+                        return bad(format!(
+                            "{at}: 配置先のファイルが、内容(SHA-256)の違う別の variant と重複しています"
+                        ));
+                    }
+                    Some(_) => {}
+                    None => {
+                        targets.insert(slot, v.sha256.as_str());
+                    }
                 }
                 match reqwest::Url::parse(&v.source.url) {
                     Ok(url) if policy.url_allowed(&url) => {}
@@ -220,8 +384,104 @@ impl Catalog {
                 }
             }
         }
+        // 「まとめて取得」の参照先が存在すること
+        for f in &self.families {
+            for r in &f.requires {
+                if r.family_id == f.id {
+                    return bad(format!("{}: requires が自分自身を指しています", f.id));
+                }
+                if self.find(&r.family_id, &r.variant_id).is_none() {
+                    return bad(format!(
+                        "{}: requires の参照先がありません({}/{})",
+                        f.id, r.family_id, r.variant_id
+                    ));
+                }
+            }
+        }
         Ok(())
     }
+}
+
+/// `kind` と配置先・カテゴリの整合性(docs/17 §5)。拡散モデル本体(`unet/`)だけが `kind` を持つ。
+fn check_kind(f: &Family) -> Result<(), String> {
+    let has_unet = f.variants.iter().any(|v| v.dest_dir == DestDir::Unet);
+    let all_unet = f.variants.iter().all(|v| v.dest_dir == DestDir::Unet);
+    match f.kind {
+        Some(kind) => {
+            if !all_unet {
+                return Err(
+                    "kind を持つファミリーの variant は、すべて unet/ に置くものにしてください"
+                        .into(),
+                );
+            }
+            let expected = match kind {
+                FamilyKind::FluxGguf => Category::Flux,
+                FamilyKind::Anima => Category::Anima,
+                FamilyKind::QwenImage => Category::QwenImage,
+                FamilyKind::Krea2 => Category::Krea2,
+            };
+            if f.category != expected {
+                return Err("kind とカテゴリが一致しません".into());
+            }
+        }
+        None if has_unet => {
+            return Err("unet/ に置く拡散モデルには kind が必要です".into());
+        }
+        None => {}
+    }
+    if f.kind.is_none() && !f.requires.is_empty() {
+        return Err("requires は拡散モデル本体(kind を持つファミリー)だけに付けられます".into());
+    }
+    Ok(())
+}
+
+/// プロフィールとタグの整合性(docs/18 §2〜3)。
+fn check_profile(f: &Family) -> Result<(), String> {
+    let Some(p) = &f.profile else {
+        if f.is_selectable_model() {
+            return Err("profile がありません(選べるモデルには必須です)".into());
+        }
+        if f.tags.contains(&Tag::Nsfw) {
+            return Err("nsfw タグには profile が必要です".into());
+        }
+        return Ok(());
+    };
+    // `nsfw` タグは、プロフィールの NSFW 対応と一致させる(確認できていないものに付けない)
+    if f.tags.contains(&Tag::Nsfw) != p.nsfw.is_nsfw() {
+        return Err("nsfw タグと profile.nsfw(capable / limited)が一致しません".into());
+    }
+    if f.tags.contains(&Tag::Anime) != p.style.contains(&Style::Anime) {
+        return Err("anime タグと profile.style(anime)が一致しません".into());
+    }
+    let text_ok = |l: &Localized| !l.ja.trim().is_empty() && !l.en.trim().is_empty();
+    if !text_ok(&p.summary) || !text_ok(&p.prompt_style.hint) || !text_ok(&p.source_note) {
+        return Err("profile の説明文(日英)が空です".into());
+    }
+    if p.style.is_empty() {
+        return Err("profile.style が空です".into());
+    }
+    for (name, l) in [("bestFor", &p.best_for), ("weakAt", &p.weak_at)] {
+        let ok =
+            |v: &Vec<String>| (1..=4).contains(&v.len()) && v.iter().all(|s| !s.trim().is_empty());
+        if !ok(&l.ja) || !ok(&l.en) || l.ja.len() != l.en.len() {
+            return Err(format!(
+                "profile.{name} は日英とも 1〜4 件(同数)で指定してください"
+            ));
+        }
+    }
+    let r = &p.recommended;
+    let dim_ok = |n: u32| (256..=2048).contains(&n) && n.is_multiple_of(64);
+    if !(1..=150).contains(&r.steps)
+        || !(0.0..=30.0).contains(&r.cfg)
+        || !dim_ok(r.size.width)
+        || !dim_ok(r.size.height)
+    {
+        return Err("profile.recommended の値が範囲外です".into());
+    }
+    if p.resources.vram_gb == 0 {
+        return Err("profile.resources.vramGb が 0 です".into());
+    }
+    Ok(())
 }
 
 fn is_sha256(s: &str) -> bool {
@@ -366,9 +626,299 @@ mod tests {
         }
     }
 
+    #[test]
+    fn every_selectable_model_has_a_profile() {
+        // docs/18 §2: 生成画面で選べるモデル(チェックポイント・Flux 本体)には説明が必須
+        let c = Catalog::embedded(&policy()).unwrap();
+        let selectable: Vec<_> = c
+            .families
+            .iter()
+            .filter(|f| f.is_selectable_model())
+            .collect();
+        assert!(
+            selectable.len() >= 6,
+            "SD1.5 / SDXL / Flux 2 種 / NoobAI-XL / Animagine"
+        );
+        for f in selectable {
+            assert!(f.profile.is_some(), "{} に profile がない", f.id);
+        }
+    }
+
+    #[test]
+    fn anime_models_are_in_the_catalog_with_tags() {
+        // docs/16 §3.2・§3.3: NoobAI-XL と Animagine XL 4.0(どちらも SDXL 派生・アニメ・成人向け対応)
+        let c = Catalog::embedded(&policy()).unwrap();
+        for id in ["checkpoint-noobai-xl", "checkpoint-animagine-xl-4"] {
+            let f = c
+                .families
+                .iter()
+                .find(|f| f.id == id)
+                .unwrap_or_else(|| panic!("{id}"));
+            assert_eq!(f.category, Category::Checkpoint);
+            assert!(
+                f.tags.contains(&Tag::Anime) && f.tags.contains(&Tag::Nsfw),
+                "{id}"
+            );
+            let p = f.profile.as_ref().unwrap();
+            assert_eq!(p.nsfw, NsfwSupport::Capable);
+            assert_eq!(p.prompt_style.kind, PromptKind::Tags);
+            for v in &f.variants {
+                // 既存の sdxl 種別でそのまま生成できる(docs/16 §2)ので、ベースは SDXL
+                assert_eq!(v.base_model, Some(BaseModel::Sdxl), "{id}/{}", v.id);
+                assert!(v.requires_consent, "{id}/{}: 同意ダイアログの対象", v.id);
+                assert_eq!(v.dest_dir, DestDir::Checkpoints);
+            }
+            assert_eq!(f.variants.iter().filter(|v| v.recommended).count(), 1);
+        }
+        // 取得元は Hugging Face の公開リポジトリのリビジョン固定(認証不要を 2026-11-19 に確認)
+        let (_, noob) = c.find("checkpoint-noobai-xl", "noobai-xl-v1.1").unwrap();
+        assert_eq!(noob.size_bytes, 7_105_349_958);
+        let (_, opt) = c
+            .find("checkpoint-animagine-xl-4", "animagine-xl-4.0-opt")
+            .unwrap();
+        assert_eq!(opt.size_bytes, 6_938_350_040);
+    }
+
+    #[test]
+    fn new_model_kinds_are_in_the_catalog_with_everything_they_need() {
+        // docs/17 §2・§5: Anima / Qwen-Image 2.1 / Krea 2 は、本体・テキストエンコーダ・VAE を取得できる
+        let c = Catalog::embedded(&policy()).unwrap();
+        let cases = [
+            (
+                "anima-base",
+                FamilyKind::Anima,
+                Category::Anima,
+                "anima-base-v1.0",
+                4_182_218_328u64,
+            ),
+            (
+                "qwen-image-2-1",
+                FamilyKind::QwenImage,
+                Category::QwenImage,
+                "int8-convrot",
+                7_256_783_064,
+            ),
+            (
+                "krea2-turbo",
+                FamilyKind::Krea2,
+                Category::Krea2,
+                "fp8-scaled",
+                13_141_730_784,
+            ),
+        ];
+        for (id, kind, category, recommended, size) in cases {
+            let f = c
+                .families
+                .iter()
+                .find(|f| f.id == id)
+                .unwrap_or_else(|| panic!("{id}"));
+            assert_eq!((f.kind, f.category), (Some(kind), category), "{id}");
+            assert!(f.is_selectable_model() && f.profile.is_some(), "{id}");
+            // 本体は unet/ に置き、同意の対象
+            assert!(
+                f.variants
+                    .iter()
+                    .all(|v| v.dest_dir == DestDir::Unet && v.requires_consent),
+                "{id}"
+            );
+            let rec = f.variants.iter().find(|v| v.recommended).unwrap();
+            assert_eq!(
+                (rec.id.as_str(), rec.size_bytes),
+                (recommended, size),
+                "{id}"
+            );
+            // 必要なファイル: テキストエンコーダ(clip/)と VAE(vae/)がちょうど 1 つずつ
+            assert_eq!(f.requires.len(), 2, "{id}");
+            let dests: Vec<_> = f
+                .requires
+                .iter()
+                .map(|r| c.find(&r.family_id, &r.variant_id).unwrap().1.dest_dir)
+                .collect();
+            assert_eq!(dests, vec![DestDir::Clip, DestDir::Vae], "{id}");
+            // 取得元は Hugging Face のリビジョン固定
+            for v in &f.variants {
+                assert!(
+                    v.source.url.contains("/resolve/") && !v.source.url.contains("/resolve/main/"),
+                    "{id}"
+                );
+            }
+        }
+        // 本体以外(エンコーダ・VAE)は、生成画面で選べるモデルではない
+        for id in [
+            "anima-text-encoder",
+            "anima-vae",
+            "qwen-image-2-1-text-encoder",
+            "qwen-image-2-1-vae",
+            "krea2-text-encoder",
+            "krea2-vae",
+        ] {
+            let f = c.families.iter().find(|f| f.id == id).unwrap();
+            assert!(
+                !f.is_selectable_model() && f.kind.is_none() && f.profile.is_none(),
+                "{id}"
+            );
+        }
+    }
+
+    #[test]
+    fn anima_and_krea2_share_the_identical_qwen_image_vae() {
+        // docs/17 §2: 同一ファイル(SHA-256・サイズが一致)なので、別ファミリーに置ける
+        let c = Catalog::embedded(&policy()).unwrap();
+        let (_, a) = c.find("anima-vae", "qwen-image-vae").unwrap();
+        let (_, k) = c.find("krea2-vae", "qwen-image-vae").unwrap();
+        assert_eq!(a.file_name, k.file_name);
+        assert_eq!(
+            (a.sha256.as_str(), a.size_bytes),
+            (k.sha256.as_str(), k.size_bytes)
+        );
+        assert_eq!(
+            a.sha256,
+            "a70580f0213e67967ee9c95f05bb400e8fb08307e017a924bf3441223e023d1f"
+        );
+        assert_ne!(a.source.repo, k.source.repo, "取得元は各配布元のもの");
+    }
+
+    #[test]
+    fn nsfw_is_claimed_only_for_anima_among_the_new_kinds() {
+        // Anima の README が safe / sensitive / nsfw / explicit の安全タグを挙げている(確認済み)。
+        // Qwen-Image 2.1・Krea 2 は配布元の記載で確認できていないので付けない(docs/16 §3.3、18 Q-79)
+        let c = Catalog::embedded(&policy()).unwrap();
+        let tags = |id: &str| c.families.iter().find(|f| f.id == id).unwrap().tags.clone();
+        assert_eq!(tags("anima-base"), vec![Tag::Anime, Tag::Nsfw]);
+        assert!(tags("qwen-image-2-1").is_empty() && tags("krea2-turbo").is_empty());
+    }
+
+    #[test]
+    fn existing_flux_models_carry_the_flux_gguf_kind() {
+        let c = Catalog::embedded(&policy()).unwrap();
+        for id in ["flux-schnell-gguf", "flux-dev-gguf"] {
+            assert_eq!(
+                c.families.iter().find(|f| f.id == id).unwrap().kind,
+                Some(FamilyKind::FluxGguf)
+            );
+        }
+    }
+
+    #[test]
+    fn rejects_inconsistent_kind_and_requires() {
+        let id = "anima-base";
+        assert!(mutated(id, |_| {}).is_ok());
+        // unet/ に置くのに kind が無い
+        assert!(
+            mutated(id, |f| {
+                f.as_object_mut().unwrap().remove("kind");
+            })
+            .is_err()
+        );
+        // kind とカテゴリの不一致
+        assert!(mutated(id, |f| f["kind"] = "krea2".into()).is_err());
+        // requires の参照先が無い・自分自身
+        assert!(mutated(id, |f| f["requires"][0]["familyId"] = "nope".into()).is_err());
+        assert!(mutated(id, |f| f["requires"][0]["variantId"] = "nope".into()).is_err());
+        assert!(mutated(id, |f| f["requires"][0]["familyId"] = id.into()).is_err());
+        // エンコーダ(kind なし)に requires は付けられない
+        assert!(
+            mutated("anima-text-encoder", |f| {
+                f["requires"] =
+                    serde_json::json!([{ "familyId": "anima-vae", "variantId": "qwen-image-vae" }]);
+            })
+            .is_err()
+        );
+        // 内容(SHA-256)の違う同名ファイルの共有は拒否
+        assert!(
+            mutated("krea2-vae", |f| f["variants"][0]["sha256"] =
+                "1".repeat(64).into())
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn plain_models_are_not_tagged_nsfw_without_evidence() {
+        // 配布元の記載で確認できていないモデルには nsfw を付けない(docs/16 §3.3、18 Q-79)
+        let c = Catalog::embedded(&policy()).unwrap();
+        for id in [
+            "checkpoint-sd15",
+            "checkpoint-sdxl",
+            "flux-schnell-gguf",
+            "flux-dev-gguf",
+        ] {
+            let f = c.families.iter().find(|f| f.id == id).unwrap();
+            assert!(!f.tags.contains(&Tag::Nsfw), "{id}");
+            assert_eq!(
+                f.profile.as_ref().unwrap().nsfw,
+                NsfwSupport::Unknown,
+                "{id}"
+            );
+        }
+    }
+
+    /// 組み込みカタログの 1 ファミリーを書き換えて検証する(検証が拒否することを確かめる)。
+    fn mutated(id: &str, edit: impl FnOnce(&mut serde_json::Value)) -> AppResult<Catalog> {
+        let mut v: serde_json::Value = serde_json::from_str(EMBEDDED).unwrap();
+        let fam = v["families"]
+            .as_array_mut()
+            .unwrap()
+            .iter_mut()
+            .find(|f| f["id"] == id)
+            .unwrap();
+        edit(fam);
+        Catalog::parse(&v.to_string(), &policy())
+    }
+
+    #[test]
+    fn rejects_inconsistent_profiles_and_tags() {
+        let id = "checkpoint-noobai-xl";
+        assert!(mutated(id, |_| {}).is_ok());
+        // profile を外す(選べるモデルには必須)
+        assert!(
+            mutated(id, |f| {
+                f.as_object_mut().unwrap().remove("profile");
+            })
+            .is_err()
+        );
+        // nsfw タグと profile.nsfw の不一致(確認できていないものに付けない)
+        assert!(mutated(id, |f| f["profile"]["nsfw"] = "unknown".into()).is_err());
+        assert!(mutated(id, |f| f["tags"] = serde_json::json!(["anime"])).is_err());
+        // anime タグと profile.style の不一致
+        assert!(mutated(id, |f| f["tags"] = serde_json::json!(["nsfw"])).is_err());
+        // 件数・値の範囲
+        assert!(
+            mutated(id, |f| f["profile"]["bestFor"]["en"] =
+                serde_json::json!([]))
+            .is_err()
+        );
+        assert!(
+            mutated(id, |f| {
+                f["profile"]["bestFor"]["ja"] = serde_json::json!(["a", "b", "c", "d", "e"]);
+                f["profile"]["bestFor"]["en"] = serde_json::json!(["a", "b", "c", "d", "e"]);
+            })
+            .is_err()
+        );
+        assert!(mutated(id, |f| f["profile"]["recommended"]["steps"] = 0.into()).is_err());
+        assert!(
+            mutated(id, |f| f["profile"]["recommended"]["size"]["width"] =
+                1000.into())
+            .is_err()
+        );
+        assert!(mutated(id, |f| f["profile"]["resources"]["vramGb"] = 0.into()).is_err());
+        assert!(mutated(id, |f| f["profile"]["summary"]["en"] = "".into()).is_err());
+        // 未知のタグは読み込めない
+        assert!(
+            mutated(id, |f| f["tags"] =
+                serde_json::json!(["anime", "nsfw", "gore"]))
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn rejects_an_old_schema_version() {
+        let json = EMBEDDED.replacen("\"schemaVersion\": 2", "\"schemaVersion\": 1", 1);
+        assert!(Catalog::parse(&json, &policy()).is_err());
+    }
+
     fn catalog_with(file_name: &str, url: &str, sha: &str) -> String {
         format!(
-            r#"{{"schemaVersion":1,"families":[{{"id":"f","category":"checkpoint",
+            r#"{{"schemaVersion":2,"families":[{{"id":"f","category":"detector",
             "name":{{"ja":"a","en":"a"}},"description":{{"ja":"a","en":"a"}},
             "variants":[{{"id":"v","label":{{"ja":"a","en":"a"}},"source":{{"url":"{url}","repo":"r"}},
             "sizeBytes":10,"sha256":"{sha}","destDir":"checkpoints","fileName":"{file_name}",
@@ -436,8 +986,28 @@ mod tests {
     fn rejects_duplicate_targets() {
         let one = catalog_with("m.safetensors", OK_URL, SHA);
         let mut v: serde_json::Value = serde_json::from_str(&one).unwrap();
+        // 同じファミリー ID の重複は拒否
         let fam = v["families"][0].clone();
-        v["families"].as_array_mut().unwrap().push(fam);
+        v["families"].as_array_mut().unwrap().push(fam.clone());
         assert!(Catalog::parse(&v.to_string(), &policy()).is_err());
+
+        // 別ファミリーで、配置先・ファイル名が同じで内容(SHA-256)が違うものは拒否
+        let mut other = fam.clone();
+        other["id"] = "g".into();
+        other["variants"][0]["sha256"] = "1".repeat(64).into();
+        let mut v: serde_json::Value = serde_json::from_str(&one).unwrap();
+        v["families"].as_array_mut().unwrap().push(other);
+        assert!(Catalog::parse(&v.to_string(), &policy()).is_err());
+    }
+
+    #[test]
+    fn allows_two_families_to_share_the_very_same_file() {
+        // docs/17 §5: Anima と Krea 2 は、同一の qwen_image_vae.safetensors を共有する
+        let one = catalog_with("m.safetensors", OK_URL, SHA);
+        let mut v: serde_json::Value = serde_json::from_str(&one).unwrap();
+        let mut other = v["families"][0].clone();
+        other["id"] = "g".into();
+        v["families"].as_array_mut().unwrap().push(other);
+        Catalog::parse(&v.to_string(), &policy()).unwrap();
     }
 }

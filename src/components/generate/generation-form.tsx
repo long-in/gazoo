@@ -6,23 +6,28 @@ import { toast } from "sonner";
 
 import { ModelsLink } from "@/components/models/models-link";
 import { PresetBar } from "@/components/presets/preset-bar";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import {
   isFlux,
+  isSplit,
   MAX_SEED,
   MODEL_KINDS,
   modelsFor,
+  needsExternalVae,
   randomSeed,
   sizePresets,
   supportsControlnet,
   supportsInpaint,
+  usesNegative,
 } from "@/lib/generation/defaults";
 import { inpaintReady } from "@/lib/generation/inpaint";
 import type { MessageKey } from "@/lib/i18n";
 import { useErrorMessage, useT } from "@/lib/i18n/use-t";
+import { type CandidateBadge, candidateBadges } from "@/lib/models/profile";
 import { type AppError, toAppError } from "@/lib/tauri/errors";
 import { MAX_ENQUEUE_COUNT, type ModelKind } from "@/lib/tauri/jobs";
 import { cn } from "@/lib/utils";
@@ -30,11 +35,13 @@ import { useAssistantStore } from "@/stores/assistant-store";
 import { useEngineStore } from "@/stores/engine-store";
 import { useFormStore } from "@/stores/form-store";
 import { useJobStore } from "@/stores/job-store";
+import { useModelsStore } from "@/stores/models-store";
 import { useSettingsStore } from "@/stores/settings-store";
 
 import { ControlnetSection } from "./controlnet-section";
 import { FaceDetailerSection } from "./face-detailer-section";
 import { InpaintSection } from "./inpaint-section";
+import { ModelProfilePanel } from "./model-profile-panel";
 import { Field, NumberInput, SliderNumber } from "./fields";
 
 const BUILTIN_VAE = "__builtin__";
@@ -51,12 +58,13 @@ function Choice({
 }: {
   id?: string;
   value: string;
-  options: { value: string; label: string }[];
+  options: { value: string; label: string; badges?: CandidateBadge[] }[];
   placeholder?: string;
   onChange: (v: string) => void;
   disabled?: boolean;
   invalid?: boolean;
 }) {
+  const t = useT();
   return (
     <Select
       value={value === "" ? null : value}
@@ -71,6 +79,11 @@ function Choice({
         {options.map((o) => (
           <SelectItem key={o.value} value={o.value}>
             {o.label}
+            {o.badges?.map((b) => (
+              <Badge key={b} variant="secondary" className="ml-1.5">
+                {t(`modelProfile.badge.${b}` as MessageKey)}
+              </Badge>
+            ))}
           </SelectItem>
         ))}
       </SelectContent>
@@ -98,6 +111,9 @@ export function GenerationForm() {
 
   const kind = params.model.kind;
   const flux = isFlux(kind);
+  // Anima / Qwen-Image 2.1 / Krea 2 は、テキストエンコーダ 1 つと VAE を別に選ぶ(docs/17 §3)
+  const split = isSplit(kind);
+  const externalVae = needsExternalVae(kind);
   const err = (field: string) =>
     fieldError?.code === "VALIDATION" && fieldError.details?.field === field ? fieldError.message : null;
 
@@ -126,10 +142,19 @@ export function GenerationForm() {
   }, [params, hydrated]);
 
   const modelNames = useMemo(() => modelsFor(kind, models), [kind, models]);
+  // モデルの説明(カタログ)。候補のバッジと説明パネルに使う。カタログは取得ページと同じものを読む(docs/18)
+  const catalog = useModelsStore((s) => s.view?.catalog);
+  useEffect(() => {
+    if (!useModelsStore.getState().view) void useModelsStore.getState().load();
+  }, []);
+  const modelOptions = useMemo(
+    () => modelNames.map((n) => ({ value: n, label: n, badges: candidateBadges(catalog, n) })),
+    [modelNames, catalog],
+  );
   const vaeOptions = useMemo(() => {
     const list = asOptions(models?.vaes ?? []);
-    return flux ? list : [{ value: BUILTIN_VAE, label: t("generate.vae.builtin") }, ...list];
-  }, [models, flux, t]);
+    return externalVae ? list : [{ value: BUILTIN_VAE, label: t("generate.vae.builtin") }, ...list];
+  }, [models, externalVae, t]);
 
   // ControlNet を有効にしている間は参照画像が必要
   const cnParams = params.controlnet;
@@ -146,7 +171,8 @@ export function GenerationForm() {
     !needsInpaintInput &&
     params.prompt.trim() !== "" &&
     params.model.name !== "" &&
-    (!flux || (params.model.clip.length === 2 && params.model.clip.every(Boolean) && !!params.model.vae));
+    (!flux || (params.model.clip.length === 2 && params.model.clip.every(Boolean) && !!params.model.vae)) &&
+    (!split || (params.model.clip.length === 1 && !!params.model.clip[0] && !!params.model.vae));
 
   async function submit() {
     if (!ready || submitting) return;
@@ -201,6 +227,8 @@ export function GenerationForm() {
 
       {flux ? (
         <p className="rounded-lg border bg-muted/40 p-2 text-xs text-muted-foreground">{t("generate.fluxHint")}</p>
+      ) : !usesNegative(kind) ? (
+        <p className="rounded-lg border bg-muted/40 p-2 text-xs text-muted-foreground">{t("generate.noNegativeHint")}</p>
       ) : (
         <Field label={t("generate.negative")} htmlFor="negative">
           <Textarea
@@ -225,7 +253,7 @@ export function GenerationForm() {
           <Choice
             id="model"
             value={params.model.name}
-            options={asOptions(modelNames)}
+            options={modelOptions}
             placeholder={modelNames.length === 0 ? t("generate.model.none") : t("generate.model.placeholder")}
             disabled={modelNames.length === 0}
             invalid={!!err("model")}
@@ -233,12 +261,14 @@ export function GenerationForm() {
           />
         </Field>
       </div>
+      <ModelProfilePanel />
       {modelNames.length === 0 && status?.connected && (
         <div className="flex flex-col gap-1">
           <p className="text-xs text-muted-foreground">{t("generate.model.none")}</p>
           {/* 取得できるのは SD 1.5 / SDXL のチェックポイントと、Flux(GGUF)。Flux 本体(safetensors)は対象外(docs/12 §1) */}
           {(kind === "sd15" || kind === "sdxl") && <ModelsLink category="checkpoint" kind={kind} />}
           {kind === "flux_gguf" && <ModelsLink category="flux" />}
+          {isSplit(kind) && <ModelsLink category={kind} />}
         </div>
       )}
       {kind === "flux_gguf" && status?.connected && !status.features.ggufNode && (
@@ -268,18 +298,34 @@ export function GenerationForm() {
         </div>
       )}
 
-      {/* Flux(GGUF)に必要なテキストエンコーダ・VAE が無いときも、取得ページへ案内する */}
+      {split && (
+        <Field label={t("generate.clip.single")} htmlFor="clip-te" error={err("clip")}>
+          <Choice
+            id="clip-te"
+            value={params.model.clip[0] ?? ""}
+            options={asOptions(models?.clips ?? [])}
+            placeholder={t("generate.model.placeholder")}
+            invalid={!!err("clip")}
+            onChange={(v) => patchModel({ clip: [v] })}
+          />
+        </Field>
+      )}
+
+      {/* テキストエンコーダ・VAE が無いときも、取得ページへ案内する */}
+      {isSplit(kind) &&
+        status?.connected &&
+        ((models?.clips.length ?? 0) === 0 || (models?.vaes.length ?? 0) === 0) && <ModelsLink category={kind} />}
       {kind === "flux_gguf" &&
         status?.connected &&
         ((models?.clips.length ?? 0) < 2 || (models?.vaes.length ?? 0) === 0) && (
           <ModelsLink category="flux" />
         )}
 
-      {(flux || vaeOptions.length > 1) && (
+      {(externalVae || vaeOptions.length > 1) && (
         <Field label={t("generate.vae")} htmlFor="vae" error={err("vae")}>
           <Choice
             id="vae"
-            value={params.model.vae ?? (flux ? "" : BUILTIN_VAE)}
+            value={params.model.vae ?? (externalVae ? "" : BUILTIN_VAE)}
             options={vaeOptions}
             placeholder={t("generate.model.placeholder")}
             onChange={(v) => patchModel({ vae: v === BUILTIN_VAE ? null : v })}

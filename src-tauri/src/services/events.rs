@@ -51,6 +51,7 @@ impl crate::services::assistant::AssistantSink for TauriSink {
                 "index": index,
                 "summary": s.summary,
                 "changes": s.changes,
+                "model": s.model,
             }),
         );
     }

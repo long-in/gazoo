@@ -11,11 +11,24 @@ import type {
 
 import { defaultInpaint } from "./inpaint";
 
-export const MODEL_KINDS: ModelKind[] = ["sd15", "sdxl", "flux", "flux_gguf"];
+export const MODEL_KINDS: ModelKind[] = ["sd15", "sdxl", "flux", "flux_gguf", "anima", "qwen_image", "krea2"];
 
 export const MAX_SEED = Number.MAX_SAFE_INTEGER; // 2^53 - 1(Rust 側の上限と同じ)
 
 export const isFlux = (kind: ModelKind) => kind === "flux" || kind === "flux_gguf";
+
+/** 拡散モデル・テキストエンコーダ(1 つ)・VAE を別々に読む種別(docs/17。Anima / Qwen-Image 2.1 / Krea 2)。 */
+export const isSplit = (kind: ModelKind): kind is "anima" | "qwen_image" | "krea2" =>
+  kind === "anima" || kind === "qwen_image" || kind === "krea2";
+
+/** VAE を別に選ぶ種別(Flux 系と、Anima / Qwen-Image 2.1 / Krea 2)。SD 系はチェックポイント内蔵の VAE が既定。 */
+export const needsExternalVae = (kind: ModelKind) => isFlux(kind) || isSplit(kind);
+
+/** ネガティブプロンプトを使う種別。Flux は使わず、Krea 2 は使えない(docs/17 §3)。 */
+export const usesNegative = (kind: ModelKind) => !isFlux(kind) && kind !== "krea2";
+
+/** 顔補正・ControlNet・Inpaint に対応するのは SD 1.5 / SDXL のみ。 */
+export const supportsExtras = (kind: ModelKind) => kind === "sd15" || kind === "sdxl";
 
 /** モデル種別ごとの推奨値(docs/05-ui-design.md §3)。 */
 export function defaultParams(kind: ModelKind): GenerationParams {
@@ -36,6 +49,23 @@ export function defaultParams(kind: ModelKind): GenerationParams {
     case "flux":
     case "flux_gguf":
       return { ...base, width: 1024, height: 1024, steps: 20, cfg: 1, guidance: 3.5, sampler: "euler", scheduler: "simple" };
+    // 公式の ComfyUI テンプレートの既定(docs/17 §4)
+    case "anima":
+      return {
+        ...base,
+        width: 1024,
+        height: 1024,
+        steps: 30,
+        cfg: 4,
+        guidance: 3.5,
+        sampler: "euler",
+        scheduler: "simple",
+        negativePrompt: "worst quality, low quality, score_1, score_2, score_3, artist name, blurry, jpeg artifacts, chromatic aberration",
+      };
+    case "qwen_image":
+      return { ...base, width: 1024, height: 1024, steps: 25, cfg: 1, guidance: 3.5, sampler: "euler", scheduler: "simple" };
+    case "krea2":
+      return { ...base, width: 1024, height: 1024, steps: 8, cfg: 1, guidance: 3.5, sampler: "euler", scheduler: "simple" };
   }
 }
 
@@ -45,7 +75,7 @@ export function defaultFaceDetailer(): FaceDetailerParams {
 }
 
 /** 顔補正に対応するモデル種別(SD 1.5 / SDXL)。 */
-export const supportsFaceDetailer = (kind: ModelKind) => !isFlux(kind);
+export const supportsFaceDetailer = (kind: ModelKind) => supportsExtras(kind);
 
 /** ControlNet の既定値(docs/10 §5.2)。参照画像とモデルは未選択。 */
 export function defaultControlnetUnit(): ControlnetUnit {
@@ -57,10 +87,10 @@ export function defaultControlnet(): ControlnetParams {
 }
 
 /** ControlNet に対応するモデル種別(SD 1.5 / SDXL)。 */
-export const supportsControlnet = (kind: ModelKind) => !isFlux(kind);
+export const supportsControlnet = (kind: ModelKind) => supportsExtras(kind);
 
 /** Inpaint に対応するモデル種別(SD 1.5 / SDXL)。 */
-export const supportsInpaint = (kind: ModelKind) => !isFlux(kind);
+export const supportsInpaint = (kind: ModelKind) => supportsExtras(kind);
 
 const MODEL_HINT: Record<Preprocessor, RegExp | undefined> = {
   canny: /canny/i,
@@ -115,11 +145,21 @@ export function modelsFor(kind: ModelKind, models: EngineModels | null): string[
     case "sdxl":
       return models.checkpoints;
     case "flux":
+    case "anima":
+    case "qwen_image":
+    case "krea2":
       return models.unets;
     case "flux_gguf":
       return models.ggufUnets;
   }
 }
+
+/** Anima / Qwen-Image 2.1 / Krea 2 の、テキストエンコーダと VAE を一覧から選ぶときの目印(docs/17 §2)。 */
+const SPLIT_FILES: Record<"anima" | "qwen_image" | "krea2", { clip: RegExp; vae: RegExp }> = {
+  anima: { clip: /qwen_3_06b|qwen3_0\.6b/i, vae: /^qwen_image_vae\b/i },
+  qwen_image: { clip: /qwen3vl_8b/i, vae: /qwen_image_2\.1_vae/i },
+  krea2: { clip: /qwen3vl_4b/i, vae: /^qwen_image_vae\b/i },
+};
 
 const first = (list: string[], pattern?: RegExp) =>
   (pattern ? list.find((n) => pattern.test(n)) : undefined) ?? list[0] ?? "";
@@ -141,6 +181,12 @@ export function autofill(params: GenerationParams, models: EngineModels | null):
     const clipL = models.clips.includes(clip[1]) ? clip[1] : first(models.clips, /clip_l|clip-l/i);
     clip = [t5, clipL];
     vae = vae && models.vaes.includes(vae) ? vae : first(models.vaes, /^ae\b|ae\.|flux/i) || null;
+  } else if (kind === "anima" || kind === "qwen_image" || kind === "krea2") {
+    // テキストエンコーダは 1 つ。種別に合うものを優先して選ぶ(有効な選択は保つ)
+    const hint = SPLIT_FILES[kind];
+    const te = models.clips.includes(clip[0]) ? clip[0] : first(models.clips, hint.clip);
+    clip = [te];
+    vae = vae && models.vaes.includes(vae) ? vae : first(models.vaes, hint.vae) || null;
   } else {
     clip = [];
     // SD 系の VAE は任意(null = チェックポイント内蔵)。存在しない指定だけ外す。

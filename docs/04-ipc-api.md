@@ -7,7 +7,7 @@
 
 ```ts
 type JobStatus = "queued" | "running" | "completed" | "failed" | "cancelled";
-type ModelKind = "sd15" | "sdxl" | "flux" | "flux_gguf";
+type ModelKind = "sd15" | "sdxl" | "flux" | "flux_gguf" | "anima" | "qwen_image" | "krea2"; // v0.9(17)
 
 interface GenerationParams { /* 03-data-model.md の params_json と同一 */ }
 

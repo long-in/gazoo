@@ -1,6 +1,6 @@
 import { create } from "zustand";
 
-import { type BaseFilter, isActiveStatus } from "@/lib/models/catalog";
+import { type BaseFilter, isActiveStatus, type PurposeFilter } from "@/lib/models/catalog";
 import { type AppError, toAppError } from "@/lib/tauri/errors";
 import {
   type CatalogView,
@@ -25,6 +25,8 @@ interface ModelsState {
   downloads: DownloadState[];
   category: ModelCategory;
   base: BaseFilter;
+  /** 用途フィルタ(チェックポイントのタブのみで効く)。 */
+  purpose: PurposeFilter;
   /** ユーザーが選んだ variant(ファミリー ID → variant ID)。 */
   chosen: Record<string, string>;
 
@@ -34,6 +36,7 @@ interface ModelsState {
   applyDownload: (state: DownloadState) => void;
   setCategory: (category: ModelCategory) => void;
   setBase: (base: BaseFilter) => void;
+  setPurpose: (purpose: PurposeFilter) => void;
   choose: (familyId: string, variantId: string) => void;
   /** 失敗時は `AppError` を throw する(同意なし `MODELS_NO_CONSENT` など)。 */
   start: (familyId: string, variantId: string, consent?: boolean) => Promise<void>;
@@ -53,6 +56,7 @@ export const useModelsStore = create<ModelsState>((set, get) => ({
   downloads: [],
   category: "checkpoint",
   base: "all",
+  purpose: "all",
   chosen: {},
 
   load: async () => {
@@ -102,6 +106,7 @@ export const useModelsStore = create<ModelsState>((set, get) => ({
 
   setCategory: (category) => set({ category }),
   setBase: (base) => set({ base }),
+  setPurpose: (purpose) => set({ purpose }),
   choose: (familyId, variantId) => set((s) => ({ chosen: { ...s.chosen, [familyId]: variantId } })),
 
   start: async (familyId, variantId, consent) => {

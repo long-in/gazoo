@@ -39,6 +39,8 @@ export interface AssistantSuggestionEvent {
   index: number;
   summary: string;
   changes: SuggestedChanges;
+  /** モデルの提案のとき(docs/18 §6.3)。 */
+  model?: { familyId: string; reason: string } | null;
 }
 
 export const onAssistantSuggestion = (handler: (p: AssistantSuggestionEvent) => void) =>

@@ -66,7 +66,7 @@ impl Drop for TmpDir {
 
 fn catalog_json(base: &str, body: &[u8], requires_consent: bool) -> String {
     format!(
-        r#"{{"schemaVersion":1,"families":[{{"id":"fam","category":"controlnet",
+        r#"{{"schemaVersion":2,"families":[{{"id":"fam","category":"controlnet",
         "name":{{"ja":"a","en":"a"}},"description":{{"ja":"a","en":"a"}},
         "variants":[{{"id":"var","label":{{"ja":"a","en":"a"}},"baseModel":"sdxl",
         "source":{{"url":"{base}/m","repo":"r"}},"sizeBytes":{},"sha256":"{}",

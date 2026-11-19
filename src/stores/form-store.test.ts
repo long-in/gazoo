@@ -201,3 +201,76 @@ describe("inpaint", () => {
     });
   });
 });
+
+describe("form-store.applyBuiltinPreset(docs/16 §5)", () => {
+  const models = {
+    checkpoints: ["NoobAI-XL-v1.1.safetensors"],
+    ggufs: [],
+    clips: [],
+    vaes: [],
+    samplers: ["euler", "euler_ancestral"],
+    schedulers: ["normal", "karras"],
+    controlnets: [],
+    faceDetectors: [],
+  } as unknown as Parameters<ReturnType<typeof useFormStore.getState>["applyBuiltinPreset"]>[1];
+
+  it("プロンプトを保ち、サイズ・ステップ・サンプラーを反映し、空のモデルは一覧から補う", async () => {
+    const { BUILTIN_PRESETS } = await import("@/lib/generation/builtin-presets");
+    useFormStore.setState({ params: { ...defaultParams("sd15"), prompt: "1girl" }, hydrated: false });
+    useFormStore.getState().applyBuiltinPreset(BUILTIN_PRESETS[0], models);
+    const { params, hydrated } = useFormStore.getState();
+    expect(hydrated).toBe(true);
+    expect(params.prompt).toBe("1girl");
+    expect(params.model.kind).toBe("sdxl");
+    expect(params.model.name).toBe("NoobAI-XL-v1.1.safetensors");
+    expect([params.width, params.height, params.steps, params.sampler]).toEqual([832, 1216, 28, "euler_ancestral"]);
+  });
+});
+
+describe("form-store: モデルの説明・AI のモデル提案(docs/18)", () => {
+  const engineModels = {
+    checkpoints: ["NoobAI-XL-v1.1.safetensors"],
+    unets: [],
+    ggufUnets: [],
+    clips: [],
+    vaes: [],
+    loras: [],
+    faceDetectors: [],
+    controlnets: [],
+    samplers: ["euler", "euler_ancestral", "dpmpp_2m"],
+    schedulers: ["normal", "karras", "simple"],
+  };
+
+  it("推奨設定の適用: プロンプトとモデルの選択は変えない", () => {
+    useFormStore.setState({
+      params: { ...defaultParams("sdxl"), prompt: "1girl", model: { kind: "sdxl", name: "NoobAI-XL-v1.1.safetensors", clip: [], vae: null } },
+    });
+    useFormStore
+      .getState()
+      .applyRecommended({ width: 832, height: 1216, steps: 28, cfg: 5.5, sampler: "euler_ancestral", scheduler: "normal" }, engineModels);
+    const { params } = useFormStore.getState();
+    expect(params.prompt).toBe("1girl");
+    expect(params.model.name).toBe("NoobAI-XL-v1.1.safetensors");
+    expect([params.width, params.height, params.steps, params.cfg]).toEqual([832, 1216, 28, 5.5]);
+    expect([params.sampler, params.scheduler]).toEqual(["euler_ancestral", "normal"]);
+  });
+
+  it("モデルの切り替え: 種別とモデル名が変わり、プロンプトとシードは引き継ぐ。使えない拡張機能は無効になる", () => {
+    useFormStore.setState({
+      params: {
+        ...defaultParams("sd15"),
+        prompt: "1girl, solo",
+        seed: 7,
+        seedRandomize: false,
+        faceDetailer: { enabled: true, detector: "bbox/face.pt", denoise: 0.4, prompt: "", confidence: 0.5 },
+      },
+    });
+    useFormStore.getState().switchModel("sdxl", "NoobAI-XL-v1.1.safetensors", engineModels);
+    const { params } = useFormStore.getState();
+    expect(params.model.kind).toBe("sdxl");
+    expect(params.model.name).toBe("NoobAI-XL-v1.1.safetensors");
+    expect(params.prompt).toBe("1girl, solo");
+    expect([params.seed, params.seedRandomize]).toEqual([7, false]);
+    expect(params.faceDetailer?.enabled).toBe(true); // SDXL は顔補正に対応
+  });
+});

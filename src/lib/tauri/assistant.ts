@@ -29,10 +29,24 @@ export interface SuggestedChanges {
   faceDetailer?: { enabled?: boolean; denoise?: number };
 }
 
+/** モデルの提案(docs/18 §6.3)。`familyId` はカタログにあるものだけ(Rust 側で検証済み)。 */
+export interface ModelSuggestion {
+  familyId: string;
+  reason: string;
+}
+
 export interface Suggestion {
   summary: string;
   changes: SuggestedChanges;
   applied: boolean;
+  /** あればモデルの提案(`changes` は空)。 */
+  model?: ModelSuggestion;
+}
+
+/** AI へ添える選択中・導入済みのモデル。ファミリー ID だけ(ファイル名・パスは送らない。docs/18 §6.2)。 */
+export interface ModelContext {
+  familyId: string | null;
+  installedFamilies: string[];
 }
 
 export interface ConversationSummary {
@@ -70,8 +84,12 @@ export const assistantClearKey = () => invoke<void>("assistant_clear_key");
 export const assistantUpdate = (patch: { model?: string; consent?: boolean; autoDelete?: boolean }) =>
   invoke<AssistantStatus>("assistant_update", { patch });
 
-export const assistantAsk = (conversationId: string | null, text: string, params: GenerationParams) =>
-  invoke<AskStarted>("assistant_ask", { conversationId, text, params });
+export const assistantAsk = (
+  conversationId: string | null,
+  text: string,
+  params: GenerationParams,
+  models?: ModelContext,
+) => invoke<AskStarted>("assistant_ask", { conversationId, text, params, models: models ?? null });
 
 export const assistantCancel = (requestId: string) => invoke<void>("assistant_cancel", { requestId });
 
