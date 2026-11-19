@@ -36,6 +36,13 @@ pub enum AppError {
         message: String,
         details: Option<serde_json::Value>,
     },
+    /// ComfyUI の起動管理(docs/15)。`code` は `ENGINE_*`(起動・停止の失敗)。
+    #[error("{message}")]
+    EngineProc {
+        code: &'static str,
+        message: String,
+        details: Option<serde_json::Value>,
+    },
     #[error("database error: {0}")]
     Db(String),
     #[error("storage error: {0}")]
@@ -79,6 +86,14 @@ impl AppError {
         }
     }
 
+    pub fn engine_proc(code: &'static str, message: impl Into<String>) -> Self {
+        Self::EngineProc {
+            code,
+            message: message.into(),
+            details: None,
+        }
+    }
+
     pub fn internal(message: impl Into<String>) -> Self {
         Self::Internal(message.into())
     }
@@ -98,6 +113,7 @@ impl AppError {
             Self::PresetNotFound(_) => "PRESET_NOT_FOUND",
             Self::Assistant { code, .. } => code,
             Self::Models { code, .. } => code,
+            Self::EngineProc { code, .. } => code,
             Self::Db(_) => "DB_ERROR",
             Self::Storage(_) => "STORAGE_ERROR",
             Self::Internal(_) => "INTERNAL",
@@ -109,7 +125,7 @@ impl Serialize for AppError {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         let details = match self {
             Self::Validation { field, .. } => Some(json!({ "field": field })),
-            Self::Models { details, .. } => details.clone(),
+            Self::Models { details, .. } | Self::EngineProc { details, .. } => details.clone(),
             _ => None,
         };
         json!({

@@ -2,7 +2,7 @@
 export interface AppError {
   code: string;
   message: string;
-  details?: { field?: string } | null;
+  details?: { field?: string; running?: number; queued?: number } | null;
 }
 
 export function isAppError(e: unknown): e is AppError {

@@ -20,6 +20,7 @@ import type { Language, Settings, Theme } from "@/lib/tauri/settings";
 import { useSettingsStore } from "@/stores/settings-store";
 
 import { AssistantSection } from "./assistant-section";
+import { EngineProcessSection } from "./engine-process-section";
 import { StorageSection } from "./storage-section";
 
 type LanguageChoice = Language | "auto";
@@ -98,6 +99,8 @@ function SettingsFormInner({ initial }: { initial: Settings }) {
           </p>
         )}
       </section>
+
+      <EngineProcessSection />
 
       <StorageSection />
 

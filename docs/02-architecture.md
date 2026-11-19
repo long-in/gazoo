@@ -132,7 +132,7 @@ pub trait GenerationEngine: Send + Sync {
 
 | 区分 | 候補 |
 |---|---|
-| Rust | tauri 2, tauri-plugin-dialog, tauri-plugin-opener, tokio, reqwest(rustls), tokio-tungstenite, rusqlite(bundled), rusqlite_migration, serde, serde_json, thiserror, tracing, uuid, image(サムネイル), async-trait, futures |
+| Rust | tauri 2, tauri-plugin-dialog, tauri-plugin-opener, tokio, reqwest(rustls), tokio-tungstenite, rusqlite(bundled), rusqlite_migration, serde, serde_json, thiserror, tracing, uuid, image(サムネイル), async-trait, futures, command-group(子プロセスの後始末。v0.7、15) |
 | Frontend | next 16, react 19, tailwindcss 4, shadcn/ui(`base-nova` スタイル = Base UI ベース), next-themes, @tauri-apps/api, zustand, @tanstack/react-virtual, lucide-react, vitest |
 
 ※ 実装時の確定事項(2026-11-18):

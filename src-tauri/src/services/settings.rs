@@ -153,6 +153,22 @@ pub fn add_model_consent(conn: &Connection, key: &str) -> AppResult<()> {
     Ok(())
 }
 
+// ComfyUI の起動管理(docs/15 §3)。`Settings` には含めず、専用コマンドで検証つきに変更する。
+const KEY_MANAGED_ENGINE: &str = "engine.comfyui.managed";
+
+pub fn get_managed_engine(
+    conn: &Connection,
+) -> AppResult<crate::services::engine_process::config::ManagedEngineConfig> {
+    Ok(parse(get_raw(conn, KEY_MANAGED_ENGINE)?).unwrap_or_default())
+}
+
+pub fn set_managed_engine(
+    conn: &Connection,
+    cfg: &crate::services::engine_process::config::ManagedEngineConfig,
+) -> AppResult<()> {
+    set_raw(conn, KEY_MANAGED_ENGINE, &serde_json::to_value(cfg)?)
+}
+
 fn validate_url(url: &str) -> AppResult<String> {
     let url = url.trim().trim_end_matches('/');
     let rest = url
