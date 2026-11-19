@@ -29,6 +29,13 @@ pub enum AppError {
     /// AI サポート(docs/11)。`code` は `ASSISTANT_*`。
     #[error("{message}")]
     Assistant { code: &'static str, message: String },
+    /// モデル取得(docs/12)。`code` は `MODELS_*`。`details` に HTTP ステータスなどを入れる。
+    #[error("{message}")]
+    Models {
+        code: &'static str,
+        message: String,
+        details: Option<serde_json::Value>,
+    },
     #[error("database error: {0}")]
     Db(String),
     #[error("storage error: {0}")]
@@ -52,6 +59,26 @@ impl AppError {
         }
     }
 
+    pub fn models(code: &'static str, message: impl Into<String>) -> Self {
+        Self::Models {
+            code,
+            message: message.into(),
+            details: None,
+        }
+    }
+
+    pub fn models_with(
+        code: &'static str,
+        message: impl Into<String>,
+        details: serde_json::Value,
+    ) -> Self {
+        Self::Models {
+            code,
+            message: message.into(),
+            details: Some(details),
+        }
+    }
+
     pub fn internal(message: impl Into<String>) -> Self {
         Self::Internal(message.into())
     }
@@ -70,6 +97,7 @@ impl AppError {
             Self::ImageNotFound(_) => "IMAGE_NOT_FOUND",
             Self::PresetNotFound(_) => "PRESET_NOT_FOUND",
             Self::Assistant { code, .. } => code,
+            Self::Models { code, .. } => code,
             Self::Db(_) => "DB_ERROR",
             Self::Storage(_) => "STORAGE_ERROR",
             Self::Internal(_) => "INTERNAL",
@@ -81,6 +109,7 @@ impl Serialize for AppError {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         let details = match self {
             Self::Validation { field, .. } => Some(json!({ "field": field })),
+            Self::Models { details, .. } => details.clone(),
             _ => None,
         };
         json!({

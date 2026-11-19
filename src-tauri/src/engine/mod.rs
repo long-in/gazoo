@@ -99,6 +99,11 @@ pub trait GenerationEngine: Send + Sync {
     /// 接続できれば `connected = true` の状態を返す。接続不能・非互換は `Err`。
     async fn health(&self) -> AppResult<EngineStatus>;
     async fn list_models(&self) -> AppResult<EngineModels>;
+    /// エンジンの起動引数(`/system_stats` の `argv`)。モデルフォルダの検出に使う(docs/12 §3)。
+    /// 取得できないエンジンは空を返す。
+    async fn launch_args(&self) -> AppResult<Vec<String>> {
+        Ok(Vec::new())
+    }
 
     /// 参照画像(PNG)をエンジンへ送り、ワークフローから参照する名前を返す(ControlNet)。
     async fn upload_input(&self, png: Vec<u8>) -> AppResult<String>;

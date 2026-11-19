@@ -12,10 +12,11 @@ const key = (k: string, over: Partial<KeyLike> = {}): KeyLike => ({
 });
 
 describe("navTargetFor", () => {
-  it("Ctrl/⌘ + 1..5 で画面を切り替える(OS ごとの修飾キー)", () => {
+  it("Ctrl/⌘ + 1..6 で画面を切り替える(OS ごとの修飾キー)", () => {
     expect(navTargetFor(key("1", { ctrlKey: true }), false)).toBe("/");
     expect(navTargetFor(key("2", { ctrlKey: true }), false)).toBe("/gallery");
-    expect(navTargetFor(key("5", { ctrlKey: true }), false)).toBe("/settings");
+    expect(navTargetFor(key("5", { ctrlKey: true }), false)).toBe("/models");
+    expect(navTargetFor(key("6", { ctrlKey: true }), false)).toBe("/settings");
     expect(navTargetFor(key("3", { metaKey: true }), true)).toBe("/queue");
   });
 
@@ -28,7 +29,7 @@ describe("navTargetFor", () => {
   });
 
   it("範囲外の数字・数字以外は無視する", () => {
-    expect(navTargetFor(key("6", { ctrlKey: true }), false)).toBeNull();
+    expect(navTargetFor(key("7", { ctrlKey: true }), false)).toBeNull();
     expect(navTargetFor(key("0", { ctrlKey: true }), false)).toBeNull();
     expect(navTargetFor(key("a", { ctrlKey: true }), false)).toBeNull();
   });

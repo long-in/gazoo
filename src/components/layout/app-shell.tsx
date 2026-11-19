@@ -1,6 +1,7 @@
 "use client";
 
 import {
+  Download,
   Images,
   ListOrdered,
   type LucideIcon,
@@ -25,6 +26,7 @@ const NAV_ITEMS: { href: string; labelKey: MessageKey; icon: LucideIcon }[] = [
   { href: "/gallery", labelKey: "nav.gallery", icon: Images },
   { href: "/queue", labelKey: "nav.queue", icon: ListOrdered },
   { href: "/presets", labelKey: "nav.presets", icon: BookmarkCheck },
+  { href: "/models", labelKey: "nav.models", icon: Download },
   { href: "/settings", labelKey: "nav.settings", icon: Settings },
 ];
 

@@ -1,0 +1,570 @@
+{
+  "schemaVersion": 1,
+  "families": [
+    {
+      "id": "checkpoint-sd15",
+      "category": "checkpoint",
+      "name": {
+        "ja": "Stable Diffusion 1.5",
+        "en": "Stable Diffusion 1.5"
+      },
+      "description": {
+        "ja": "SD 1.5 のベースモデル(約 4.3GB)。軽く、対応する ControlNet・LoRA が最も豊富です。",
+        "en": "The SD 1.5 base model (~4.3GB). Lightweight, with the widest ecosystem of ControlNets and LoRAs."
+      },
+      "usedBy": [
+        "generate"
+      ],
+      "variants": [
+        {
+          "id": "sd15-emaonly",
+          "label": {
+            "ja": "SD1.5 / EMA のみ(推奨)",
+            "en": "SD1.5 / EMA only (recommended)"
+          },
+          "baseModel": "sd15",
+          "precision": "fp16",
+          "recommended": true,
+          "source": {
+            "url": "https://huggingface.co/stable-diffusion-v1-5/stable-diffusion-v1-5/resolve/451f4fe16113bff5a5d2269ed5ad43b0592e9a14/v1-5-pruned-emaonly.safetensors",
+            "repo": "stable-diffusion-v1-5/stable-diffusion-v1-5"
+          },
+          "sizeBytes": 4265146304,
+          "sha256": "6ce0161689b3853acaa03779ec93eafe75a02f4ced659bee03f50797806fa2fa",
+          "destDir": "checkpoints",
+          "fileName": "v1-5-pruned-emaonly.safetensors",
+          "license": {
+            "name": "CreativeML OpenRAIL-M",
+            "url": "https://huggingface.co/spaces/CompVis/stable-diffusion-license",
+            "commercialUse": "see-license"
+          },
+          "requiresConsent": true
+        }
+      ]
+    },
+    {
+      "id": "checkpoint-sdxl",
+      "category": "checkpoint",
+      "name": {
+        "ja": "Stable Diffusion XL",
+        "en": "Stable Diffusion XL"
+      },
+      "description": {
+        "ja": "SDXL のベースモデル(約 6.9GB)。高解像度(1024px 前後)向けです。",
+        "en": "The SDXL base model (~6.9GB), for high resolution (around 1024px)."
+      },
+      "usedBy": [
+        "generate"
+      ],
+      "variants": [
+        {
+          "id": "sdxl-base-1.0",
+          "label": {
+            "ja": "SDXL base 1.0(推奨)",
+            "en": "SDXL base 1.0 (recommended)"
+          },
+          "baseModel": "sdxl",
+          "precision": "fp16",
+          "recommended": true,
+          "source": {
+            "url": "https://huggingface.co/stabilityai/stable-diffusion-xl-base-1.0/resolve/462165984030d82259a11f4367a4eed129e94a7b/sd_xl_base_1.0.safetensors",
+            "repo": "stabilityai/stable-diffusion-xl-base-1.0"
+          },
+          "sizeBytes": 6938078334,
+          "sha256": "31e35c80fc4829d14f90153f4c74cd59c90b779f6afe05a74cd6120b893f7e5b",
+          "destDir": "checkpoints",
+          "fileName": "sd_xl_base_1.0.safetensors",
+          "license": {
+            "name": "CreativeML OpenRAIL++-M",
+            "url": "https://huggingface.co/stabilityai/stable-diffusion-xl-base-1.0/blob/main/LICENSE.md",
+            "commercialUse": "see-license"
+          },
+          "requiresConsent": true
+        }
+      ]
+    },
+    {
+      "id": "controlnet-canny",
+      "category": "controlnet",
+      "name": {
+        "ja": "ControlNet — Canny(輪郭)",
+        "en": "ControlNet — Canny (edges)"
+      },
+      "description": {
+        "ja": "参照画像の輪郭線から構図を指定します。ベースモデル(SD1.5 / SDXL)と一致するものを選んでください。",
+        "en": "Guides composition from the edges of a reference image. Pick the one matching your base model (SD1.5 / SDXL)."
+      },
+      "usedBy": [
+        "controlnet"
+      ],
+      "variants": [
+        {
+          "id": "sdxl-xinsir",
+          "label": {
+            "ja": "SDXL 用 / xinsir 版(推奨)",
+            "en": "SDXL / xinsir (recommended)"
+          },
+          "baseModel": "sdxl",
+          "precision": "fp16",
+          "recommended": true,
+          "source": {
+            "url": "https://huggingface.co/xinsir/controlnet-canny-sdxl-1.0/resolve/1271357eda52d54b857c650cacb5b51144643ccb/diffusion_pytorch_model.safetensors",
+            "repo": "xinsir/controlnet-canny-sdxl-1.0"
+          },
+          "sizeBytes": 2502139104,
+          "sha256": "bf47cd757ceaf2572c53321329ef819ea38c09a6e3783588387913cd94dff47c",
+          "destDir": "controlnet",
+          "fileName": "controlnet-canny-sdxl-xinsir.safetensors",
+          "license": {
+            "name": "Apache-2.0",
+            "url": "https://www.apache.org/licenses/LICENSE-2.0",
+            "commercialUse": true
+          },
+          "requiresConsent": false
+        },
+        {
+          "id": "sdxl-diffusers",
+          "label": {
+            "ja": "SDXL 用 / diffusers 版",
+            "en": "SDXL / diffusers"
+          },
+          "baseModel": "sdxl",
+          "precision": "fp16",
+          "recommended": false,
+          "source": {
+            "url": "https://huggingface.co/diffusers/controlnet-canny-sdxl-1.0/resolve/eb115a19a10d14909256db740ed109532ab1483c/diffusion_pytorch_model.fp16.safetensors",
+            "repo": "diffusers/controlnet-canny-sdxl-1.0"
+          },
+          "sizeBytes": 2502139136,
+          "sha256": "b2e7d3921058a442cc80430d1ec8847f42599c705e2451c95e77cf4dcf8d6c25",
+          "destDir": "controlnet",
+          "fileName": "controlnet-canny-sdxl-1.0_fp16.safetensors",
+          "license": {
+            "name": "CreativeML OpenRAIL++-M",
+            "url": "https://huggingface.co/stabilityai/stable-diffusion-xl-base-1.0/blob/main/LICENSE.md",
+            "commercialUse": "see-license"
+          },
+          "requiresConsent": true
+        },
+        {
+          "id": "sd15",
+          "label": {
+            "ja": "SD1.5 用(推奨)",
+            "en": "SD1.5 (recommended)"
+          },
+          "baseModel": "sd15",
+          "precision": "fp16",
+          "recommended": true,
+          "source": {
+            "url": "https://huggingface.co/comfyanonymous/ControlNet-v1-1_fp16_safetensors/resolve/ab830a51c5c573a5b85bfdbaa3ae0ab7e1baf5f7/control_v11p_sd15_canny_fp16.safetensors",
+            "repo": "comfyanonymous/ControlNet-v1-1_fp16_safetensors"
+          },
+          "sizeBytes": 722601100,
+          "sha256": "8932b66e15aae835b3490dbf989f56c253104cee08a88bf21283762f557c9f10",
+          "destDir": "controlnet",
+          "fileName": "control_v11p_sd15_canny_fp16.safetensors",
+          "license": {
+            "name": "OpenRAIL(出典: lllyasviel/ControlNet-v1-1)",
+            "url": "https://huggingface.co/lllyasviel/ControlNet-v1-1",
+            "commercialUse": "see-license"
+          },
+          "requiresConsent": true
+        }
+      ]
+    },
+    {
+      "id": "controlnet-depth",
+      "category": "controlnet",
+      "name": {
+        "ja": "ControlNet — Depth(深度)",
+        "en": "ControlNet — Depth"
+      },
+      "description": {
+        "ja": "参照画像の奥行きから構図を指定します。ベースモデル(SD1.5 / SDXL)と一致するものを選んでください。",
+        "en": "Guides composition from the depth of a reference image. Pick the one matching your base model (SD1.5 / SDXL)."
+      },
+      "usedBy": [
+        "controlnet"
+      ],
+      "variants": [
+        {
+          "id": "sdxl-xinsir",
+          "label": {
+            "ja": "SDXL 用 / xinsir 版(推奨)",
+            "en": "SDXL / xinsir (recommended)"
+          },
+          "baseModel": "sdxl",
+          "precision": "fp16",
+          "recommended": true,
+          "source": {
+            "url": "https://huggingface.co/xinsir/controlnet-depth-sdxl-1.0/resolve/961552fa2913e3aa82cdfb32cb51bf182d95207c/diffusion_pytorch_model.safetensors",
+            "repo": "xinsir/controlnet-depth-sdxl-1.0"
+          },
+          "sizeBytes": 2502139104,
+          "sha256": "ea3770af4c33ea8ba8dccc0106ec5d5c5c6e504eb382119a3ccac3c9d973d344",
+          "destDir": "controlnet",
+          "fileName": "controlnet-depth-sdxl-xinsir.safetensors",
+          "license": {
+            "name": "Apache-2.0",
+            "url": "https://www.apache.org/licenses/LICENSE-2.0",
+            "commercialUse": true
+          },
+          "requiresConsent": false
+        },
+        {
+          "id": "sdxl-diffusers",
+          "label": {
+            "ja": "SDXL 用 / diffusers 版",
+            "en": "SDXL / diffusers"
+          },
+          "baseModel": "sdxl",
+          "precision": "fp16",
+          "recommended": false,
+          "source": {
+            "url": "https://huggingface.co/diffusers/controlnet-depth-sdxl-1.0/resolve/17bb97973f29801224cd66f192c5ffacf82648b4/diffusion_pytorch_model.fp16.safetensors",
+            "repo": "diffusers/controlnet-depth-sdxl-1.0"
+          },
+          "sizeBytes": 2502139134,
+          "sha256": "66a6813e6bd7270ecfe68206a59ddd605a011ae85321188376605c66e0a4f303",
+          "destDir": "controlnet",
+          "fileName": "controlnet-depth-sdxl-1.0_fp16.safetensors",
+          "license": {
+            "name": "CreativeML OpenRAIL++-M",
+            "url": "https://huggingface.co/stabilityai/stable-diffusion-xl-base-1.0/blob/main/LICENSE.md",
+            "commercialUse": "see-license"
+          },
+          "requiresConsent": true
+        },
+        {
+          "id": "sd15",
+          "label": {
+            "ja": "SD1.5 用(推奨)",
+            "en": "SD1.5 (recommended)"
+          },
+          "baseModel": "sd15",
+          "precision": "fp16",
+          "recommended": true,
+          "source": {
+            "url": "https://huggingface.co/comfyanonymous/ControlNet-v1-1_fp16_safetensors/resolve/ab830a51c5c573a5b85bfdbaa3ae0ab7e1baf5f7/control_v11f1p_sd15_depth_fp16.safetensors",
+            "repo": "comfyanonymous/ControlNet-v1-1_fp16_safetensors"
+          },
+          "sizeBytes": 722601100,
+          "sha256": "1c4a79aa52fb63f607cb9ff479ea5aa1923b6ceb21267bd14b69bd05d7b617be",
+          "destDir": "controlnet",
+          "fileName": "control_v11f1p_sd15_depth_fp16.safetensors",
+          "license": {
+            "name": "OpenRAIL(出典: lllyasviel/ControlNet-v1-1)",
+            "url": "https://huggingface.co/lllyasviel/ControlNet-v1-1",
+            "commercialUse": "see-license"
+          },
+          "requiresConsent": true
+        }
+      ]
+    },
+    {
+      "id": "controlnet-openpose",
+      "category": "controlnet",
+      "name": {
+        "ja": "ControlNet — OpenPose(ポーズ)",
+        "en": "ControlNet — OpenPose"
+      },
+      "description": {
+        "ja": "参照画像の人物のポーズから構図を指定します。ベースモデル(SD1.5 / SDXL)と一致するものを選んでください。",
+        "en": "Guides composition from the pose of people in a reference image. Pick the one matching your base model (SD1.5 / SDXL)."
+      },
+      "usedBy": [
+        "controlnet"
+      ],
+      "variants": [
+        {
+          "id": "sdxl-xinsir",
+          "label": {
+            "ja": "SDXL 用 / xinsir 版(推奨)",
+            "en": "SDXL / xinsir (recommended)"
+          },
+          "baseModel": "sdxl",
+          "precision": "fp16",
+          "recommended": true,
+          "source": {
+            "url": "https://huggingface.co/xinsir/controlnet-openpose-sdxl-1.0/resolve/23f966cd5cfdd3f7729c903e243d87152162d2b7/diffusion_pytorch_model.safetensors",
+            "repo": "xinsir/controlnet-openpose-sdxl-1.0"
+          },
+          "sizeBytes": 2502139104,
+          "sha256": "b8524e557a7df60d081f5d4a0eb109967d107df217943bf88c2d99b9ebcc06c5",
+          "destDir": "controlnet",
+          "fileName": "controlnet-openpose-sdxl-xinsir.safetensors",
+          "license": {
+            "name": "Apache-2.0",
+            "url": "https://www.apache.org/licenses/LICENSE-2.0",
+            "commercialUse": true
+          },
+          "requiresConsent": false
+        },
+        {
+          "id": "sdxl-thibaud",
+          "label": {
+            "ja": "SDXL 用 / thibaud 版",
+            "en": "SDXL / thibaud"
+          },
+          "baseModel": "sdxl",
+          "precision": "fp32",
+          "recommended": false,
+          "source": {
+            "url": "https://huggingface.co/thibaud/controlnet-openpose-sdxl-1.0/resolve/1db673ed3dad75181fcf2e24f827597fe34e97b7/OpenPoseXL2.safetensors",
+            "repo": "thibaud/controlnet-openpose-sdxl-1.0"
+          },
+          "sizeBytes": 5004167829,
+          "sha256": "5a4b928cb1e93748217900cb66d4135bf70d932d2924232f925910fad9e43a92",
+          "destDir": "controlnet",
+          "fileName": "controlnet-openpose-sdxl-1.0.safetensors",
+          "license": {
+            "name": "OpenRAIL++(配布元の表記に従う)",
+            "url": "https://huggingface.co/thibaud/controlnet-openpose-sdxl-1.0",
+            "commercialUse": "see-license"
+          },
+          "requiresConsent": true
+        },
+        {
+          "id": "sd15",
+          "label": {
+            "ja": "SD1.5 用(推奨)",
+            "en": "SD1.5 (recommended)"
+          },
+          "baseModel": "sd15",
+          "precision": "fp16",
+          "recommended": true,
+          "source": {
+            "url": "https://huggingface.co/comfyanonymous/ControlNet-v1-1_fp16_safetensors/resolve/ab830a51c5c573a5b85bfdbaa3ae0ab7e1baf5f7/control_v11p_sd15_openpose_fp16.safetensors",
+            "repo": "comfyanonymous/ControlNet-v1-1_fp16_safetensors"
+          },
+          "sizeBytes": 722601100,
+          "sha256": "4003c1da17b0e4ba444e02140e1c0d83bb24b79e4dcfd613c3a554d38f0f89c7",
+          "destDir": "controlnet",
+          "fileName": "control_v11p_sd15_openpose_fp16.safetensors",
+          "license": {
+            "name": "OpenRAIL(出典: lllyasviel/ControlNet-v1-1)",
+            "url": "https://huggingface.co/lllyasviel/ControlNet-v1-1",
+            "commercialUse": "see-license"
+          },
+          "requiresConsent": true
+        }
+      ]
+    },
+    {
+      "id": "detector-face",
+      "category": "detector",
+      "name": {
+        "ja": "顔検出モデル",
+        "en": "Face detection model"
+      },
+      "description": {
+        "ja": "顔補正で顔を見つけるためのモデルです。精度が高いほどサイズが大きくなります。",
+        "en": "Used by face fix to find faces. Higher accuracy means a larger file."
+      },
+      "usedBy": [
+        "faceDetailer"
+      ],
+      "variants": [
+        {
+          "id": "yolov9c",
+          "label": {
+            "ja": "YOLOv9c(最高精度)",
+            "en": "YOLOv9c (most accurate)"
+          },
+          "recommended": true,
+          "source": {
+            "url": "https://huggingface.co/Bingsu/adetailer/resolve/53cc19de382014514d9d4038601d261a7faa9b7b/face_yolov9c.pt",
+            "repo": "Bingsu/adetailer"
+          },
+          "sizeBytes": 51648019,
+          "sha256": "d02fe493c31e1bbc6450f4dc6f1db86a02a59322ff1f6d318da0661d72ddd084",
+          "destDir": "ultralytics/bbox",
+          "fileName": "face_yolov9c.pt",
+          "license": {
+            "name": "Apache-2.0",
+            "url": "https://www.apache.org/licenses/LICENSE-2.0",
+            "commercialUse": true
+          },
+          "requiresConsent": false,
+          "note": {
+            "ja": "pickle 形式のファイルです。固定ハッシュと一致したものだけを配置します。",
+            "en": "A pickle-format file. Only files matching the pinned hash are placed."
+          }
+        },
+        {
+          "id": "yolov8m",
+          "label": {
+            "ja": "YOLOv8m(標準)",
+            "en": "YOLOv8m (standard)"
+          },
+          "recommended": false,
+          "source": {
+            "url": "https://huggingface.co/Bingsu/adetailer/resolve/53cc19de382014514d9d4038601d261a7faa9b7b/face_yolov8m.pt",
+            "repo": "Bingsu/adetailer"
+          },
+          "sizeBytes": 52026019,
+          "sha256": "717923c19b3f4bbf5250b728f1fa6b2cb72a33aed1d236ea9caf0e21ad943e5f",
+          "destDir": "ultralytics/bbox",
+          "fileName": "face_yolov8m.pt",
+          "license": {
+            "name": "Apache-2.0",
+            "url": "https://www.apache.org/licenses/LICENSE-2.0",
+            "commercialUse": true
+          },
+          "requiresConsent": false,
+          "note": {
+            "ja": "pickle 形式のファイルです。固定ハッシュと一致したものだけを配置します。",
+            "en": "A pickle-format file. Only files matching the pinned hash are placed."
+          }
+        },
+        {
+          "id": "yolov8s",
+          "label": {
+            "ja": "YOLOv8s(軽量)",
+            "en": "YOLOv8s (light)"
+          },
+          "recommended": false,
+          "source": {
+            "url": "https://huggingface.co/Bingsu/adetailer/resolve/53cc19de382014514d9d4038601d261a7faa9b7b/face_yolov8s.pt",
+            "repo": "Bingsu/adetailer"
+          },
+          "sizeBytes": 22507707,
+          "sha256": "c7237eff25787377de196961140ceaed324d859ee8de5a775d93d33a0e3fab78",
+          "destDir": "ultralytics/bbox",
+          "fileName": "face_yolov8s.pt",
+          "license": {
+            "name": "Apache-2.0",
+            "url": "https://www.apache.org/licenses/LICENSE-2.0",
+            "commercialUse": true
+          },
+          "requiresConsent": false,
+          "note": {
+            "ja": "pickle 形式のファイルです。固定ハッシュと一致したものだけを配置します。",
+            "en": "A pickle-format file. Only files matching the pinned hash are placed."
+          }
+        },
+        {
+          "id": "yolov8n-v2",
+          "label": {
+            "ja": "YOLOv8n v2(最軽量)",
+            "en": "YOLOv8n v2 (lightest)"
+          },
+          "recommended": false,
+          "source": {
+            "url": "https://huggingface.co/Bingsu/adetailer/resolve/53cc19de382014514d9d4038601d261a7faa9b7b/face_yolov8n_v2.pt",
+            "repo": "Bingsu/adetailer"
+          },
+          "sizeBytes": 6239036,
+          "sha256": "8f5f2110f83c4e00712993fab48c771d26036e2e80ec62bd5b9cb37c29e36b36",
+          "destDir": "ultralytics/bbox",
+          "fileName": "face_yolov8n_v2.pt",
+          "license": {
+            "name": "Apache-2.0",
+            "url": "https://www.apache.org/licenses/LICENSE-2.0",
+            "commercialUse": true
+          },
+          "requiresConsent": false,
+          "note": {
+            "ja": "pickle 形式のファイルです。固定ハッシュと一致したものだけを配置します。",
+            "en": "A pickle-format file. Only files matching the pinned hash are placed."
+          }
+        }
+      ]
+    },
+    {
+      "id": "detector-hand",
+      "category": "detector",
+      "name": {
+        "ja": "手検出モデル",
+        "en": "Hand detection model"
+      },
+      "description": {
+        "ja": "顔補正で手を見つけるためのモデルです(顔補正の検出モデルに手のモデルを選ぶと手を補正できます)。",
+        "en": "Used by face fix to find hands (choose a hand model as the detector to fix hands)."
+      },
+      "usedBy": [
+        "faceDetailer"
+      ],
+      "variants": [
+        {
+          "id": "yolov9c",
+          "label": {
+            "ja": "YOLOv9c(最高精度)",
+            "en": "YOLOv9c (most accurate)"
+          },
+          "recommended": true,
+          "source": {
+            "url": "https://huggingface.co/Bingsu/adetailer/resolve/53cc19de382014514d9d4038601d261a7faa9b7b/hand_yolov9c.pt",
+            "repo": "Bingsu/adetailer"
+          },
+          "sizeBytes": 51633747,
+          "sha256": "6f116f686ef5942fa0c1d08db481b3d7622047a97847eccfb2a264f9ce9777f2",
+          "destDir": "ultralytics/bbox",
+          "fileName": "hand_yolov9c.pt",
+          "license": {
+            "name": "Apache-2.0",
+            "url": "https://www.apache.org/licenses/LICENSE-2.0",
+            "commercialUse": true
+          },
+          "requiresConsent": false,
+          "note": {
+            "ja": "pickle 形式のファイルです。固定ハッシュと一致したものだけを配置します。",
+            "en": "A pickle-format file. Only files matching the pinned hash are placed."
+          }
+        },
+        {
+          "id": "yolov8s",
+          "label": {
+            "ja": "YOLOv8s(標準)",
+            "en": "YOLOv8s (standard)"
+          },
+          "recommended": false,
+          "source": {
+            "url": "https://huggingface.co/Bingsu/adetailer/resolve/53cc19de382014514d9d4038601d261a7faa9b7b/hand_yolov8s.pt",
+            "repo": "Bingsu/adetailer"
+          },
+          "sizeBytes": 22507643,
+          "sha256": "70b540063fbc385736d8258970744a4afbc4cbf7932134bae3b24cdadeadec06",
+          "destDir": "ultralytics/bbox",
+          "fileName": "hand_yolov8s.pt",
+          "license": {
+            "name": "Apache-2.0",
+            "url": "https://www.apache.org/licenses/LICENSE-2.0",
+            "commercialUse": true
+          },
+          "requiresConsent": false,
+          "note": {
+            "ja": "pickle 形式のファイルです。固定ハッシュと一致したものだけを配置します。",
+            "en": "A pickle-format file. Only files matching the pinned hash are placed."
+          }
+        },
+        {
+          "id": "yolov8n",
+          "label": {
+            "ja": "YOLOv8n(最軽量)",
+            "en": "YOLOv8n (lightest)"
+          },
+          "recommended": false,
+          "source": {
+            "url": "https://huggingface.co/Bingsu/adetailer/resolve/53cc19de382014514d9d4038601d261a7faa9b7b/hand_yolov8n.pt",
+            "repo": "Bingsu/adetailer"
+          },
+          "sizeBytes": 6237883,
+          "sha256": "3991202eb69e9ddcb3b9ba80cdeb41e734ffaf844403d6c9f47d515cd88c6f29",
+          "destDir": "ultralytics/bbox",
+          "fileName": "hand_yolov8n.pt",
+          "license": {
+            "name": "Apache-2.0",
+            "url": "https://www.apache.org/licenses/LICENSE-2.0",
+            "commercialUse": true
+          },
+          "requiresConsent": false,
+          "note": {
+            "ja": "pickle 形式のファイルです。固定ハッシュと一致したものだけを配置します。",
+            "en": "A pickle-format file. Only files matching the pinned hash are placed."
+          }
+        }
+      ]
+    }
+  ]
+}

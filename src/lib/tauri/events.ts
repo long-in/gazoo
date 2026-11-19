@@ -4,6 +4,7 @@ import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import type { SuggestedChanges } from "./assistant";
 import type { EngineStatus } from "./engine";
 import type { ImageItem, Job, JobProgress } from "./jobs";
+import type { DownloadState } from "./models";
 
 /** Tauri イベント購読の集約先(docs/04-ipc-api.md「イベント」)。Tauri 外では何もしない。 */
 async function subscribe<T>(
@@ -48,3 +49,9 @@ export const onAssistantDone = (handler: (p: { requestId: string; cancelled: boo
 export const onAssistantError = (
   handler: (p: { requestId: string; code: string; message: string }) => void,
 ) => subscribe<{ requestId: string; code: string; message: string }>("assistant://error", handler);
+
+export const onModelsProgress = (handler: (s: DownloadState) => void) =>
+  subscribe<DownloadState>("models://progress", handler);
+
+export const onModelsDone = (handler: (s: DownloadState) => void) =>
+  subscribe<DownloadState>("models://done", handler);

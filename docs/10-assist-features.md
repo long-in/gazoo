@@ -30,8 +30,9 @@ Stable Diffusion WebUI 系の定番拡張である **ADetailer(顔補正)** と 
 | ControlNet(Depth / OpenPose) | comfyui_controlnet_aux(前処理ノード) | 同上 | 前処理ノードの有無 |
 
 - 前処理ノードの具体名は、固定した controlnet_aux のバージョン(08)で確認した次のものを使う(M7 で確定): Canny → コアの `Canny`、Depth → `DepthAnythingV2Preprocessor`(重みは `depth_anything_v2_vitl.pth`)、OpenPose → `OpenposePreprocessor`。
-- Depth / OpenPose の重みは、controlnet_aux が **ComfyUI 側で初回実行時に取得する**(アプリではなく ComfyUI の通信。アプリ自身は設定されたエンジン以外へ通信しない)。オフライン環境では事前に ComfyUI 側へ配置する必要がある。
+- Depth / OpenPose の重みは、controlnet_aux が **ComfyUI 側で初回実行時に取得する**(アプリではなく ComfyUI の通信。アプリ自身は、設定されたエンジン以外へ通信しない。例外は、ユーザーが明示的に使う AI サポート(11)とモデル取得(12)のみ)。オフライン環境では事前に ComfyUI 側へ配置する必要がある。
 - ControlNet モデルは **ベースモデル(sd15 / sdxl)と一致するものを使う必要がある**。ファイル名からの自動判別は信頼できないため、アプリは種別でのフィルタをせず、フォームに注意書きを出す(不一致時は ComfyUI の実行エラーとして表示される)。
+- ControlNet モデル・検出モデルの取得は、v0.4 のモデル取得ページ(12)から行える(それまでは手動で配置する)。
 - 検出モデル(`.pt`)は Python の pickle 形式で、信頼できない配布元のものを読み込むとコード実行のリスクがある。導入手順の案内で「信頼できる配布元のみ使う」旨を注意喚起する。
 
 ## 4. 顔補正(F-11)

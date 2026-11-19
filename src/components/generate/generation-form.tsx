@@ -4,6 +4,7 @@ import { Dices } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 
+import { ModelsLink } from "@/components/models/models-link";
 import { PresetBar } from "@/components/presets/preset-bar";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -225,7 +226,11 @@ export function GenerationForm() {
         </Field>
       </div>
       {modelNames.length === 0 && status?.connected && (
-        <p className="text-xs text-muted-foreground">{t("generate.model.none")}</p>
+        <div className="flex flex-col gap-1">
+          <p className="text-xs text-muted-foreground">{t("generate.model.none")}</p>
+          {/* Flux 系の取得は未対応(docs/12 §1)。SD 1.5 / SDXL のときだけ案内する */}
+          {(kind === "sd15" || kind === "sdxl") && <ModelsLink category="checkpoint" kind={kind} />}
+        </div>
       )}
       {kind === "flux_gguf" && status?.connected && !status.features.ggufNode && (
         <p className="rounded-lg border border-amber-500/40 bg-amber-500/10 p-2 text-sm">{t("engine.gguf.missing")}</p>

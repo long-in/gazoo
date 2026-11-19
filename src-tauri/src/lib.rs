@@ -19,6 +19,9 @@ use crate::services::events::TauriSink;
 use crate::services::images::{ImageService, OsTrash};
 use crate::services::inputs::InputService;
 use crate::services::jobs::JobService;
+use crate::services::models::ModelService;
+use crate::services::models::catalog::Catalog;
+use crate::services::models::download::DownloadPolicy;
 use crate::services::presets::PresetService;
 use crate::services::settings::Settings;
 use crate::services::storage::StorageService;
@@ -90,6 +93,17 @@ pub fn run() {
                 paths.clone(),
                 Arc::new(OsTrash),
             );
+            // モデル取得(docs/12)。ダウンロードはユーザーの操作で開始されたものだけをキューで実行する
+            let model_policy = DownloadPolicy::production();
+            let models = ModelService::new(
+                db.clone(),
+                Arc::clone(&engine),
+                Arc::new(Catalog::embedded(&model_policy)?),
+                model_policy,
+                Arc::new(TauriSink(app.handle().clone())),
+            )?;
+            tauri::async_runtime::spawn(Arc::clone(&models).run_worker());
+            app.manage(models);
             let storage = StorageService::new(db.clone(), paths.clone(), Arc::new(OsTrash));
             app.manage(Arc::new(PresetService::new(db.clone())));
             app.manage(AssistantService::new(
@@ -163,6 +177,12 @@ pub fn run() {
             commands::assistant::assistant_conversation_get,
             commands::assistant::assistant_conversation_delete,
             commands::assistant::assistant_suggestion_applied,
+            commands::models::models_catalog,
+            commands::models::models_download_start,
+            commands::models::models_download_cancel,
+            commands::models::models_download_list,
+            commands::models::models_verify,
+            commands::models::models_set_dir,
         ])
         .run(tauri::generate_context!())
         .expect("error while building tauri application");

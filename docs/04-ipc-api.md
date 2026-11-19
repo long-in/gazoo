@@ -167,6 +167,20 @@ type SettingsPatch = Partial<Settings>;
 - キーは戻り値・イベントに含めない。同意なし `ASSISTANT_NO_CONSENT`、キーなし `ASSISTANT_NO_KEY`、実行中の再送 `ASSISTANT_BUSY`。
 - 応答はイベント `assistant://delta` / `assistant://suggestion` / `assistant://done` / `assistant://error`(下記)。
 
+### モデル取得(v0.4、設計: 12 §8。レビュー待ち)
+
+| コマンド | 引数 | 戻り値 |
+|---|---|---|
+| `models_catalog` | – | `{ catalog; installed; modelsDir; modelsDirSource; freeBytes }`(外部へは通信しない。自動検出のため ComfyUI へは問い合わせる) |
+| `models_download_start` | `{ familyId; variantId; consent?: boolean }` | `{ downloadId }` |
+| `models_download_cancel` | `{ downloadId; discard?: boolean }` | – |
+| `models_download_list` | – | `DownloadState[]` |
+| `models_verify` | `{ familyId; variantId }` | `{ ok: boolean }`(導入済みファイルのハッシュ照合) |
+| `models_set_dir` | `{ path: string \| null }` | `{ modelsDir; source }`(null で自動検出) |
+
+- 型・検証・取得の仕様は 12 が正。`settings_update` は `engine.comfyui.models_dir` を受け付けない(`models_set_dir` で検証つきで変更)。
+- イベント `models://progress` / `models://done`(下記)。エラー: `MODELS_DIR_UNKNOWN` / `MODELS_NO_CONSENT` / `MODELS_HOST_NOT_ALLOWED` / `MODELS_DISK_FULL` / `MODELS_DOWNLOAD_FAILED` / `MODELS_HASH_MISMATCH` / `MODELS_ALREADY_INSTALLED` / `MODELS_NOT_FOUND`。
+
 ### 保存先の変更(Q-11)
 
 | コマンド | 引数 | 戻り値 | 説明 |
@@ -193,6 +207,8 @@ type SettingsPatch = Partial<Settings>;
 | `assistant://suggestion` | `{ requestId; index; summary; changes }` | 検証済みの設定変更の提案(v0.3) |
 | `assistant://done` | `{ requestId; cancelled }` | 回答完了 |
 | `assistant://error` | `{ requestId; code; message }` | 失敗 |
+| `models://progress` | `DownloadState`(12 §8) | モデル取得の進捗(最大 4 回/秒。v0.4) |
+| `models://done` | `DownloadState` | 取得の完了・失敗・キャンセル。完了時はフロントが `engine_list_models` を再取得する |
 
 ## エラーコード(初期)
 

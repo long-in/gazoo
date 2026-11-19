@@ -71,3 +71,12 @@ impl crate::services::assistant::AssistantSink for TauriSink {
         );
     }
 }
+
+impl crate::services::models::ModelSink for TauriSink {
+    fn progress(&self, state: &crate::services::models::DownloadState) {
+        let _ = self.0.emit("models://progress", state);
+    }
+    fn done(&self, state: &crate::services::models::DownloadState) {
+        let _ = self.0.emit("models://done", state);
+    }
+}

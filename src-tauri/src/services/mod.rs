@@ -4,6 +4,7 @@ pub mod events;
 pub mod images;
 pub mod inputs;
 pub mod jobs;
+pub mod models;
 pub mod presets;
 pub mod settings;
 pub mod storage;
