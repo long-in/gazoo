@@ -1,5 +1,6 @@
 pub mod assistant;
 pub mod engine;
+pub mod engine_install;
 pub mod engine_process;
 pub mod images;
 pub mod inputs;

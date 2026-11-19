@@ -135,6 +135,12 @@ pub fn run() {
                 Some(log_dir.join("comfyui.log")),
             );
             app.manage(Arc::clone(&engine_proc));
+            // ComfyUI のアプリ内インストール(docs/23)。利用者の操作で開始されたときだけ動く
+            app.manage(services::engine_install::EngineInstaller::new(
+                paths.data_dir.join("comfyui"),
+                services::engine_install::manifest::Manifest::embedded()?,
+                Arc::new(TauriSink(app.handle().clone())),
+            ));
             {
                 let db = db.clone();
                 tauri::async_runtime::spawn(async move {
@@ -175,6 +181,12 @@ pub fn run() {
             commands::engine_process::engine_process_stop,
             commands::engine_process::engine_process_restart,
             commands::engine_process::engine_process_logs,
+            commands::engine_install::engine_install_status,
+            commands::engine_install::engine_install_preflight,
+            commands::engine_install::engine_install_start,
+            commands::engine_install::engine_install_cancel,
+            commands::engine_install::engine_install_remove,
+            commands::engine_install::engine_install_logs,
             commands::jobs::job_enqueue,
             commands::jobs::job_list,
             commands::jobs::job_cancel,

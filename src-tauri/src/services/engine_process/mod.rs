@@ -4,6 +4,7 @@
 //! 子プロセスは Windows では Job Object、Unix ではプロセスグループに入れ、アプリの終了時に残らないようにする。
 
 pub mod config;
+pub mod known;
 
 use std::collections::VecDeque;
 use std::io::Write;
