@@ -59,7 +59,7 @@ jobs:
           tauriScript: npm run tauri
           args: --bundles ${{ matrix.bundles }}
           tagName: ${{ github.ref_name }}
-          releaseName: gazoo ${{ github.ref_name }}
+          releaseName: gazooo ${{ github.ref_name }}
           releaseBody: |
             ## 注意
             - このインストーラは **コード署名・公証をしていません**。

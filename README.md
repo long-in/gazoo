@@ -1,4 +1,4 @@
-# gazoo
+# gazooo
 
 ローカルで動く画像生成デスクトップアプリ(Windows / macOS)。画像生成エンジンには [ComfyUI](https://github.com/comfyanonymous/ComfyUI) を使い、Stable Diffusion(SD1.5 / SDXL)と Flux.1(通常 / GGUF)で生成できます。
 生成した画像・プロンプト・パラメータはローカルの SQLite で管理され、ギャラリーから検索・再現・書き出しができます。外部への送信はありません(接続先は、設定した ComfyUI だけです)。
@@ -15,7 +15,7 @@
      npm run comfyui:start   # 127.0.0.1:8188 で起動
      ```
 2. **モデルを配置します**(`models/checkpoints`、Flux なら `models/unet`・`clip`・`vae`)。モデルのライセンス(特に Flux.1 dev は非商用)は、各自でご確認ください。
-3. gazoo を起動します。サイドバーの接続バッジが緑になれば、生成できます。
+3. gazooo を起動します。サイドバーの接続バッジが緑になれば、生成できます。
 
 ### 推奨環境
 
@@ -67,8 +67,8 @@ ComfyUI が必要なテストは通常は実行されません。ComfyUI を起�
 
 | | Windows | macOS |
 |---|---|---|
-| データベース・画像 | `%APPDATA%\dev.gazoo.desktop\` | `~/Library/Application Support/dev.gazoo.desktop/` |
-| ログ | `%LOCALAPPDATA%\dev.gazoo.desktop\logs\` | `~/Library/Logs/dev.gazoo.desktop/` |
+| データベース・画像 | `%APPDATA%\dev.gazooo.desktop\` | `~/Library/Application Support/dev.gazooo.desktop/` |
+| ログ | `%LOCALAPPDATA%\dev.gazooo.desktop\logs\` | `~/Library/Logs/dev.gazooo.desktop/` |
 
 画像の保存先は、設定画面で変更できます(既存の画像を移動するかを選べます)。アンインストールしてもデータは残ります。
 

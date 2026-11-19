@@ -9,6 +9,7 @@ import { ModelsLink } from "@/components/models/models-link";
 import { PresetBar } from "@/components/presets/preset-bar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
@@ -18,6 +19,7 @@ import {
   MAX_SEED,
   MODEL_KINDS,
   clipsForKind,
+  defaultNegative,
   installedKinds,
   modelsForKind,
   vaesForKind,
@@ -115,6 +117,7 @@ export function GenerationForm() {
 
   const [submitting, setSubmitting] = useState(false);
   const [fieldError, setFieldError] = useState<AppError | null>(null);
+  const [resetOpen, setResetOpen] = useState(false);
 
   // モデルの説明・絞り込みに使うカタログ。取得ページと同じものを読む(docs/18、20)
   const catalog = useModelsStore((s) => s.view?.catalog);
@@ -221,6 +224,17 @@ export function GenerationForm() {
     }
   }
 
+  // プロンプトのクリアは確認なし。直前の内容はトーストから戻せる(docs/21 §2.2)
+  function clearPrompt() {
+    const previous = params.prompt;
+    if (previous === "") return;
+    patch({ prompt: "" });
+    toast(t("generate.reset.prompt.done"), {
+      duration: 8000,
+      action: { label: t("generate.reset.undo"), onClick: () => useFormStore.getState().patch({ prompt: previous }) },
+    });
+  }
+
   return (
     <form
       className="flex flex-col gap-4"
@@ -237,13 +251,26 @@ export function GenerationForm() {
     >
       <PresetBar />
 
-      <div className="-mb-2 flex justify-end">
+      <div className="-mb-2 flex justify-end gap-2">
+        <Button type="button" size="xs" variant="outline" onClick={() => setResetOpen(true)}>
+          {t("generate.reset.all")}
+        </Button>
         <Button type="button" size="xs" variant="outline" onClick={() => useAssistantStore.getState().setPanelOpen(true)}>
           {t("assistant.open")}
         </Button>
       </div>
 
-      <Field label={t("generate.prompt")} htmlFor="prompt" error={err("prompt")}>
+      <Field
+        label={t("generate.prompt")}
+        htmlFor="prompt"
+        error={err("prompt")}
+        help={t("help.prompt")}
+        action={
+          <Button type="button" size="xs" variant="ghost" disabled={params.prompt === ""} onClick={clearPrompt}>
+            {t("generate.reset.prompt")}
+          </Button>
+        }
+      >
         <Textarea
           id="prompt"
           rows={4}
@@ -259,7 +286,22 @@ export function GenerationForm() {
       ) : !usesNegative(kind) ? (
         <p className="rounded-lg border bg-muted/40 p-2 text-xs text-muted-foreground">{t("generate.noNegativeHint")}</p>
       ) : (
-        <Field label={t("generate.negative")} htmlFor="negative">
+        <Field
+          label={t("generate.negative")}
+          htmlFor="negative"
+          help={t("help.negative")}
+          action={
+            <Button
+              type="button"
+              size="xs"
+              variant="ghost"
+              disabled={params.negativePrompt === defaultNegative(kind)}
+              onClick={() => useFormStore.getState().resetNegative()}
+            >
+              {t("generate.reset.negative")}
+            </Button>
+          }
+        >
           <Textarea
             id="negative"
             rows={2}
@@ -270,7 +312,7 @@ export function GenerationForm() {
       )}
 
       <div className="grid grid-cols-2 gap-3">
-        <Field label={t("generate.kind")} htmlFor="kind">
+        <Field label={t("generate.kind")} htmlFor="kind" help={t("help.kind")}>
           <Choice
             id="kind"
             value={kind}
@@ -278,7 +320,7 @@ export function GenerationForm() {
             onChange={(v) => setKind(v as ModelKind)}
           />
         </Field>
-        <Field label={t("generate.model")} htmlFor="model" error={err("model")}>
+        <Field label={t("generate.model")} htmlFor="model" error={err("model")} help={t("help.model")}>
           <Choice
             id="model"
             value={params.model.name}
@@ -361,7 +403,7 @@ export function GenerationForm() {
         </Field>
       )}
 
-      <Field label={t("generate.size")} error={err("width") ?? err("height")}>
+      <Field label={t("generate.size")} error={err("width") ?? err("height")} help={t("help.size")}>
         <div className="flex items-center gap-2">
           <NumberInput
             id="width"
@@ -403,30 +445,30 @@ export function GenerationForm() {
         </div>
       </Field>
 
-      <Field label={t("generate.steps")} htmlFor="steps" error={err("steps")}>
+      <Field label={t("generate.steps")} htmlFor="steps" error={err("steps")} help={t("help.steps")}>
         <SliderNumber id="steps" value={params.steps} min={1} max={60} step={1} invalid={!!err("steps")} onChange={(n) => patch({ steps: n })} />
       </Field>
 
       {flux ? (
-        <Field label={t("generate.guidance")} htmlFor="guidance" error={err("guidance")}>
+        <Field label={t("generate.guidance")} htmlFor="guidance" error={err("guidance")} help={t("help.guidance")}>
           <SliderNumber id="guidance" value={params.guidance} min={0} max={10} step={0.1} onChange={(n) => patch({ guidance: Math.round(n * 10) / 10 })} />
         </Field>
       ) : (
-        <Field label={t("generate.cfg")} htmlFor="cfg" error={err("cfg")}>
+        <Field label={t("generate.cfg")} htmlFor="cfg" error={err("cfg")} help={t("help.cfg")}>
           <SliderNumber id="cfg" value={params.cfg} min={1} max={20} step={0.5} onChange={(n) => patch({ cfg: n })} />
         </Field>
       )}
 
       <div className="grid grid-cols-2 gap-3">
-        <Field label={t("generate.sampler")} htmlFor="sampler" error={err("sampler")}>
+        <Field label={t("generate.sampler")} htmlFor="sampler" error={err("sampler")} help={t("help.sampler")}>
           <Choice id="sampler" value={params.sampler} options={asOptions(models?.samplers ?? [params.sampler])} onChange={(v) => patch({ sampler: v })} />
         </Field>
-        <Field label={t("generate.scheduler")} htmlFor="scheduler" error={err("scheduler")}>
+        <Field label={t("generate.scheduler")} htmlFor="scheduler" error={err("scheduler")} help={t("help.scheduler")}>
           <Choice id="scheduler" value={params.scheduler} options={asOptions(models?.schedulers ?? [params.scheduler])} onChange={(v) => patch({ scheduler: v })} />
         </Field>
       </div>
 
-      <Field label={t("generate.seed")} htmlFor="seed" error={err("seed")}>
+      <Field label={t("generate.seed")} htmlFor="seed" error={err("seed")} help={t("help.seed")}>
         <div className="flex items-center gap-2">
           <NumberInput
             id="seed"
@@ -471,7 +513,7 @@ export function GenerationForm() {
       <details className="rounded-lg border p-3">
         <summary className="cursor-pointer text-sm font-medium">{t("generate.advanced")}</summary>
         <div className="mt-3">
-          <Field label={t("generate.batch")} htmlFor="batch" error={err("batchSize")}>
+          <Field label={t("generate.batch")} htmlFor="batch" error={err("batchSize")} help={t("help.batch")}>
             <NumberInput id="batch" value={params.batchSize} min={1} max={8} step={1} invalid={!!err("batchSize")} onChange={(n) => patch({ batchSize: Math.trunc(n) })} />
           </Field>
         </div>
@@ -479,7 +521,7 @@ export function GenerationForm() {
 
       <div className="sticky bottom-0 -mx-1 flex items-end gap-3 border-t bg-background/95 px-1 pb-1 pt-3 backdrop-blur">
         <div className="w-24 shrink-0">
-          <Field label={t("generate.count")} htmlFor="count" error={err("count")}>
+          <Field label={t("generate.count")} htmlFor="count" error={err("count")} help={t("help.count")}>
             <NumberInput
               id="count"
               value={count}
@@ -506,6 +548,19 @@ export function GenerationForm() {
         </p>
       )}
       <p className={cn("-mt-2 text-xs text-muted-foreground")}>{t("generate.shortcut")}</p>
+
+      <ConfirmDialog
+        open={resetOpen}
+        title={t("generate.reset.all.title")}
+        description={t("generate.reset.all.desc")}
+        confirmLabel={t("generate.reset.all.confirm")}
+        cancelLabel={t("generate.reset.all.cancel")}
+        onOpenChange={setResetOpen}
+        onConfirm={() => {
+          useFormStore.getState().resetAll();
+          toast.success(t("generate.reset.all.done"));
+        }}
+      />
     </form>
   );
 }

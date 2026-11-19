@@ -615,14 +615,14 @@ mod tests {
     #[test]
     fn all_kinds_are_well_formed() {
         for kind in ALL {
-            let wf = build(&sample(kind), "gazoo", &[]);
+            let wf = build(&sample(kind), "gazooo", &[]);
             assert_well_formed(&wf);
         }
     }
 
     #[test]
     fn sd_uses_checkpoint_and_both_prompts() {
-        let wf = build(&sample(ModelKind::Sdxl), "gazoo", &[]);
+        let wf = build(&sample(ModelKind::Sdxl), "gazooo", &[]);
         assert_eq!(class_of(&wf, "1"), "CheckpointLoaderSimple");
         assert_eq!(wf["1"]["inputs"]["ckpt_name"], "model.safetensors");
         assert_eq!(wf["2"]["inputs"]["text"], "a cat");
@@ -638,7 +638,7 @@ mod tests {
     fn sd_with_explicit_vae_uses_vae_loader() {
         let mut p = sample(ModelKind::Sd15);
         p.model.vae = Some("custom.safetensors".into());
-        let wf = build(&p, "gazoo", &[]);
+        let wf = build(&p, "gazooo", &[]);
         assert_well_formed(&wf);
         assert_eq!(wf["6"]["inputs"]["vae"], json!(["7", 0]));
         assert_eq!(wf["7"]["inputs"]["vae_name"], "custom.safetensors");
@@ -659,7 +659,7 @@ mod tests {
     #[test]
     fn face_detailer_sits_between_decode_and_save() {
         for kind in [ModelKind::Sd15, ModelKind::Sdxl] {
-            let wf = build(&face_params(kind, ""), "gazoo", &[]);
+            let wf = build(&face_params(kind, ""), "gazooo", &[]);
             assert_well_formed(&wf);
             assert_eq!(class_of(&wf, FACE_DETAILER_NODE), "FaceDetailer");
             assert_eq!(class_of(&wf, "20"), "UltralyticsDetectorProvider");
@@ -682,7 +682,11 @@ mod tests {
 
     #[test]
     fn face_detailer_prompt_override_adds_encoder() {
-        let wf = build(&face_params(ModelKind::Sd15, "detailed eyes"), "gazoo", &[]);
+        let wf = build(
+            &face_params(ModelKind::Sd15, "detailed eyes"),
+            "gazooo",
+            &[],
+        );
         assert_well_formed(&wf);
         assert_eq!(wf["21"]["inputs"]["text"], "detailed eyes");
         assert_eq!(
@@ -691,7 +695,7 @@ mod tests {
         );
 
         // 空(空白のみ)なら本体のプロンプトを使い、エンコーダは増やさない
-        let wf = build(&face_params(ModelKind::Sd15, "  "), "gazoo", &[]);
+        let wf = build(&face_params(ModelKind::Sd15, "  "), "gazooo", &[]);
         assert!(wf.get("21").is_none());
         assert_eq!(
             wf[FACE_DETAILER_NODE]["inputs"]["positive"],
@@ -703,21 +707,21 @@ mod tests {
     fn face_detailer_uses_explicit_vae_and_sdxl_sizes() {
         let mut p = face_params(ModelKind::Sdxl, "");
         p.model.vae = Some("custom.safetensors".into());
-        let wf = build(&p, "gazoo", &[]);
+        let wf = build(&p, "gazooo", &[]);
         assert_well_formed(&wf);
         assert_eq!(wf[FACE_DETAILER_NODE]["inputs"]["vae"], json!(["7", 0]));
         assert_eq!(wf[FACE_DETAILER_NODE]["inputs"]["guide_size"], 1024);
-        let wf = build(&face_params(ModelKind::Sd15, ""), "gazoo", &[]);
+        let wf = build(&face_params(ModelKind::Sd15, ""), "gazooo", &[]);
         assert_eq!(wf[FACE_DETAILER_NODE]["inputs"]["guide_size"], 512);
         assert_eq!(wf[FACE_DETAILER_NODE]["inputs"]["vae"], json!(["1", 2]));
     }
 
     #[test]
     fn disabled_face_detailer_leaves_workflow_unchanged() {
-        let plain = build(&sample(ModelKind::Sd15), "gazoo", &[]);
+        let plain = build(&sample(ModelKind::Sd15), "gazooo", &[]);
         let mut p = face_params(ModelKind::Sd15, "x");
         p.face_detailer.as_mut().unwrap().enabled = false;
-        assert_eq!(build(&p, "gazoo", &[]), plain);
+        assert_eq!(build(&p, "gazooo", &[]), plain);
         assert!(!classes(&plain).contains(&"FaceDetailer"));
     }
 
@@ -739,19 +743,19 @@ mod tests {
         p
     }
 
-    const IMG: [&str; 1] = ["gazoo-1.png"];
+    const IMG: [&str; 1] = ["gazooo-1.png"];
 
     #[test]
     fn controlnet_conditions_the_sampler_with_scaled_preprocessed_image() {
         for kind in [ModelKind::Sd15, ModelKind::Sdxl] {
             let wf = build(
                 &cn_params(kind, Preprocessor::Canny),
-                "gazoo",
+                "gazooo",
                 &IMG.map(String::from),
             );
             assert_well_formed(&wf);
             assert_eq!(class_of(&wf, "30"), "LoadImage");
-            assert_eq!(wf["30"]["inputs"]["image"], "gazoo-1.png");
+            assert_eq!(wf["30"]["inputs"]["image"], "gazooo-1.png");
             // 生成サイズへ中央クロップ
             assert_eq!(class_of(&wf, "31"), "ImageScale");
             assert_eq!(wf["31"]["inputs"]["width"], 768);
@@ -810,7 +814,7 @@ mod tests {
     fn controlnet_and_face_detailer_coexist_and_face_keeps_plain_conditioning() {
         let mut p = cn_params(ModelKind::Sd15, Preprocessor::Canny);
         p.face_detailer = face_params(ModelKind::Sd15, "").face_detailer;
-        let wf = build(&p, "gazoo", &IMG.map(String::from));
+        let wf = build(&p, "gazooo", &IMG.map(String::from));
         assert_well_formed(&wf);
         assert_eq!(wf["5"]["inputs"]["positive"], json!(["34", 0]));
         // 顔補正は ControlNet 適用前の conditioning を使う(構図条件は顔の切り出しに合わない)
@@ -822,12 +826,12 @@ mod tests {
 
     #[test]
     fn disabled_controlnet_leaves_workflow_unchanged() {
-        let plain = build(&sample(ModelKind::Sd15), "gazoo", &[]);
+        let plain = build(&sample(ModelKind::Sd15), "gazooo", &[]);
         let mut p = cn_params(ModelKind::Sd15, Preprocessor::Canny);
         p.controlnet.as_mut().unwrap().enabled = false;
         p.width = 512;
         p.height = 512;
-        assert_eq!(build(&p, "gazoo", &[]), plain);
+        assert_eq!(build(&p, "gazooo", &[]), plain);
         assert!(!classes(&plain).contains(&"ControlNetApplyAdvanced"));
     }
 
@@ -850,7 +854,7 @@ mod tests {
     #[test]
     fn inpaint_resamples_only_the_masked_latent_and_composites_back() {
         for kind in [ModelKind::Sd15, ModelKind::Sdxl] {
-            let wf = build(&inpaint_params(kind), "gazoo", &INP.map(String::from));
+            let wf = build(&inpaint_params(kind), "gazooo", &INP.map(String::from));
             assert_well_formed(&wf);
             assert_eq!(wf["60"]["inputs"]["image"], "img.png");
             assert_eq!(wf["64"]["inputs"]["image"], "mask.png");
@@ -881,7 +885,7 @@ mod tests {
         ip.grow_mask = 0;
         ip.feather = 0;
         ip.composite_back = false;
-        let wf = build(&p, "gazoo", &INP.map(String::from));
+        let wf = build(&p, "gazooo", &INP.map(String::from));
         assert_well_formed(&wf);
         for id in ["68", "69", "70", "71", "73", "74"] {
             assert!(wf.get(id).is_none(), "{id}");
@@ -895,7 +899,7 @@ mod tests {
     fn inpaint_repeats_latent_and_destination_for_batches() {
         let mut p = inpaint_params(ModelKind::Sd15);
         p.batch_size = 3;
-        let wf = build(&p, "gazoo", &INP.map(String::from));
+        let wf = build(&p, "gazooo", &INP.map(String::from));
         assert_well_formed(&wf);
         assert_eq!(wf["63"]["inputs"]["amount"], 3);
         assert_eq!(wf["72"]["inputs"]["samples"], json!(["63", 0]));
@@ -908,7 +912,7 @@ mod tests {
         let mut p = cn_params(ModelKind::Sd15, Preprocessor::Canny);
         p.inpaint = inpaint_params(ModelKind::Sd15).inpaint;
         let imgs = ["cn.png", "img.png", "mask.png"].map(String::from);
-        let wf = build(&p, "gazoo", &imgs);
+        let wf = build(&p, "gazooo", &imgs);
         assert_well_formed(&wf);
         assert_eq!(wf["30"]["inputs"]["image"], "cn.png");
         assert_eq!(wf["60"]["inputs"]["image"], "img.png");
@@ -933,7 +937,7 @@ mod tests {
             let mut p = img2img_params(kind);
             p.width = 768;
             p.height = 512;
-            let wf = build(&p, "gazoo", &["src.png".to_string()]);
+            let wf = build(&p, "gazooo", &["src.png".to_string()]);
             assert_well_formed(&wf);
             assert_eq!(class_of(&wf, "80"), "LoadImage");
             assert_eq!(wf["80"]["inputs"]["image"], "src.png");
@@ -954,7 +958,7 @@ mod tests {
         p.img2img = img2img_params(ModelKind::Sd15).img2img;
         p.model.vae = Some("v.safetensors".into());
         p.batch_size = 2;
-        let wf = build(&p, "gazoo", &["cn.png".to_string(), "src.png".to_string()]);
+        let wf = build(&p, "gazooo", &["cn.png".to_string(), "src.png".to_string()]);
         assert_well_formed(&wf);
         assert_eq!(wf["30"]["inputs"]["image"], "cn.png");
         assert_eq!(wf["80"]["inputs"]["image"], "src.png");
@@ -975,22 +979,22 @@ mod tests {
             prompt: String::new(),
             confidence: 0.5,
         });
-        let wf = build(&p, "gazoo", &["src.png".to_string()]);
+        let wf = build(&p, "gazooo", &["src.png".to_string()]);
         assert_well_formed(&wf);
         assert_eq!(class_of(&wf, "22"), "FaceDetailer");
 
-        let plain = build(&sample(ModelKind::Sd15), "gazoo", &[]);
+        let plain = build(&sample(ModelKind::Sd15), "gazooo", &[]);
         let mut off = img2img_params(ModelKind::Sd15);
         off.img2img.as_mut().unwrap().enabled = false;
-        assert_eq!(build(&off, "gazoo", &[]), plain);
+        assert_eq!(build(&off, "gazooo", &[]), plain);
     }
 
     #[test]
     fn disabled_inpaint_leaves_workflow_unchanged() {
-        let plain = build(&sample(ModelKind::Sd15), "gazoo", &[]);
+        let plain = build(&sample(ModelKind::Sd15), "gazooo", &[]);
         let mut p = inpaint_params(ModelKind::Sd15);
         p.inpaint.as_mut().unwrap().enabled = false;
-        assert_eq!(build(&p, "gazoo", &[]), plain);
+        assert_eq!(build(&p, "gazooo", &[]), plain);
     }
 
     fn split(kind: ModelKind) -> Value {
@@ -1000,7 +1004,7 @@ mod tests {
         p.model.vae = Some("vae.safetensors".into());
         p.cfg = 4.0;
         p.steps = 30;
-        build(&p, "gazoo", &[])
+        build(&p, "gazooo", &[])
     }
 
     #[test]
@@ -1097,7 +1101,7 @@ mod tests {
 
     #[test]
     fn flux_uses_unet_dual_clip_and_guidance() {
-        let wf = build(&sample(ModelKind::Flux), "gazoo", &[]);
+        let wf = build(&sample(ModelKind::Flux), "gazooo", &[]);
         assert_eq!(class_of(&wf, "1"), "UNETLoader");
         assert_eq!(class_of(&wf, "2"), "DualCLIPLoader");
         assert_eq!(wf["2"]["inputs"]["clip_name1"], "t5xxl.safetensors");
@@ -1112,7 +1116,7 @@ mod tests {
 
     #[test]
     fn flux_gguf_uses_gguf_loader() {
-        let wf = build(&sample(ModelKind::FluxGguf), "gazoo", &[]);
+        let wf = build(&sample(ModelKind::FluxGguf), "gazooo", &[]);
         assert_eq!(class_of(&wf, "1"), "UnetLoaderGGUF");
         assert_eq!(class_of(&wf, "2"), "DualCLIPLoader");
         assert!(wf["1"]["inputs"].get("weight_dtype").is_none());
@@ -1122,7 +1126,7 @@ mod tests {
     fn gguf_text_encoder_switches_clip_loader() {
         let mut p = sample(ModelKind::FluxGguf);
         p.model.clip[0] = "t5-v1_1-xxl-Q4_K_M.gguf".into();
-        let wf = build(&p, "gazoo", &[]);
+        let wf = build(&p, "gazooo", &[]);
         assert_eq!(class_of(&wf, "2"), "DualCLIPLoaderGGUF");
         assert_well_formed(&wf);
     }

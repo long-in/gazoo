@@ -5,8 +5,10 @@ import {
   defaultControlnet,
   defaultControlnetUnit,
   defaultFaceDetailer,
+  defaultNegative,
   defaultParams,
   pickControlnetModel,
+  resetParams,
   restoreParams,
   supportsControlnet,
   switchKind,
@@ -70,6 +72,10 @@ interface FormState {
     image: { path: string; width: number; height: number },
     ctx: { catalog: ModelCatalog | null | undefined; models: EngineModels | null; cannyAvailable: boolean },
   ) => { outcome: AnimeStartOutcome; compositionLocked: boolean };
+  /** ネガティブを種別の既定値に戻す(docs/21 §2.1)。 */
+  resetNegative: () => void;
+  /** プロンプト・サイズ等を推奨値に戻し、拡張機能を外す。モデルの選択は保持する(docs/21 §2.2)。 */
+  resetAll: () => void;
   setKind: (kind: ModelKind) => void;
   setCount: (count: number) => void;
   /** ギャラリーの「この設定で生成」: 画像のパラメータをフォームに読み込む(シードは固定して再現する)。 */
@@ -172,6 +178,10 @@ export const useFormStore = create<FormState>((set, get) => ({
         },
       };
     }),
+
+  resetNegative: () => set((s) => ({ params: { ...s.params, negativePrompt: defaultNegative(s.params.model.kind) } })),
+
+  resetAll: () => set((s) => ({ params: resetParams(s.params), count: 1, suggestionUndo: null })),
 
   setKind: (kind) => set((s) => ({ params: switchKind(s.params, kind) })),
 

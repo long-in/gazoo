@@ -6,7 +6,7 @@ const ok = { packageJson: "0.1.0", cargo: "0.1.0", tauriConf: "0.1.0" };
 
 describe("cargoPackageVersion", () => {
   it("[package] の version を取り出し、依存の version には惑わされない", () => {
-    const toml = `[package]\nname = "gazoo"\nversion = "1.2.3"\nedition = "2024"\n\n[dependencies]\nserde = { version = "=1.0.0" }\n`;
+    const toml = `[package]\nname = "gazooo"\nversion = "1.2.3"\nedition = "2024"\n\n[dependencies]\nserde = { version = "=1.0.0" }\n`;
     expect(cargoPackageVersion(toml)).toBe("1.2.3");
   });
 

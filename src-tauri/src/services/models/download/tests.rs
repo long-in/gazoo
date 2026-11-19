@@ -20,7 +20,7 @@ struct Dir(PathBuf);
 
 impl Dir {
     fn new() -> Self {
-        let p = std::env::temp_dir().join(format!("gazoo-dl-{}", uuid::Uuid::now_v7()));
+        let p = std::env::temp_dir().join(format!("gazooo-dl-{}", uuid::Uuid::now_v7()));
         std::fs::create_dir_all(&p).unwrap();
         Self(p)
     }

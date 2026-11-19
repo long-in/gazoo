@@ -1,5 +1,5 @@
 export const ja = {
-  "app.name": "gazoo",
+  "app.name": "gazooo",
   "nav.generate": "生成",
   "nav.gallery": "ギャラリー",
   "nav.queue": "キュー",
@@ -345,6 +345,44 @@ export const ja = {
   "generate.kind.krea2": "Krea 2",
   "generate.clip.single": "テキストエンコーダ",
   "generate.noNegativeHint": "このモデルはネガティブプロンプトを使いません。",
+  "help.aria": "の説明",
+  "generate.reset.prompt": "クリア",
+  "generate.reset.prompt.done": "プロンプトをクリアしました",
+  "generate.reset.undo": "元に戻す",
+  "generate.reset.negative": "初期値に戻す",
+  "generate.reset.all": "すべて初期化",
+  "generate.reset.all.title": "フォームを初期化しますか?",
+  "generate.reset.all.desc":
+    "プロンプト・ネガティブ・サイズなどを推奨値に戻し、拡張機能(画像から生成・Inpaint・ControlNet・顔補正)を無効にします。モデルの選択は保持します。投入済みのジョブには影響しません。",
+  "generate.reset.all.confirm": "初期化する",
+  "generate.reset.all.cancel": "キャンセル",
+  "generate.reset.all.done": "フォームを初期化しました",
+  "help.prompt":
+    "描きたい内容を言葉で書く欄です。被写体・場所・雰囲気・画風の順に、具体的に書くと安定します。\nSD 1.5 / SDXL は英単語のカンマ区切り、Flux / Qwen-Image などは文章でも書けます。アニメ系のモデルは Danbooru タグ形式(モデルの説明に従う)です。",
+  "help.negative":
+    "「描いてほしくないもの」を書く欄です(例: lowres, blurry, extra fingers)。入れすぎると絵が崩れるので、まずは短く。Flux・Krea 2 では使われません。",
+  "help.kind":
+    "モデルの系統(SD 1.5・SDXL・Flux など)です。種別ごとに使える機能と推奨設定が違います。",
+  "help.model": "種別に合うファイルだけが選べます。取得ページで追加できます。",
+  "help.size":
+    "生成する画像の幅×高さ(px)です。モデルが学習した大きさから離れると破綻しやすく、大きいほど時間とメモリを使います。種別の推奨サイズから選べます。",
+  "help.steps":
+    "画像を整える反復回数です。多いほど細かくなりますが、ある程度から先は変わらず遅くなるだけです。種別の推奨値が目安です。",
+  "help.cfg":
+    "プロンプトにどれだけ忠実かの強さです。高すぎると色が濃く不自然に、低すぎるとプロンプトを無視します。種別の推奨値が目安です。",
+  "help.guidance": "Flux 用の CFG 相当の値です。3.5 前後が目安です。",
+  "help.sampler":
+    "画像を整える計算方法です。迷ったら種別の推奨値のままにしてください。変えると絵の雰囲気が少し変わります。",
+  "help.scheduler": "サンプラーと組み合わせて、ノイズを減らす進め方を決めます。迷ったら推奨値のままにしてください。",
+  "help.seed":
+    "乱数の元です。同じシード・同じ設定なら、ほぼ同じ絵になります。固定すると、他の設定だけを変えて比較できます。",
+  "help.count": "1 回の投入で作る枚数です(シードは枚数分ずつ変わります)。",
+  "help.batch": "1 つのジョブで同時に作る枚数です。多いほどメモリを使います。",
+  "help.img2img.denoise":
+    "元画像からどれだけ離れるかです。小さいと元画像に近く、大きいと別の絵になります。",
+  "help.inpaint.denoise": "マスクした部分をどれだけ描き直すかです。0.6〜0.8 が目安です。",
+  "help.face.denoise": "検出した顔をどれだけ描き直すかです。大きいほど顔が変わります。",
+  "help.cn.strength": "参照画像の構図などを、どれだけ強く守るかです。強すぎるとプロンプトが効きにくくなります。",
   "models.tab.anima": "Anima",
   "models.tab.qwen_image": "Qwen-Image 2.1",
   "models.tab.krea2": "Krea 2",

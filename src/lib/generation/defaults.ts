@@ -148,6 +148,17 @@ export function switchKind(current: GenerationParams, kind: ModelKind): Generati
   };
 }
 
+/** ネガティブプロンプトの既定値(種別ごと。docs/21 §2.1)。既定が無い種別では空。 */
+export const defaultNegative = (kind: ModelKind): string => defaultParams(kind).negativePrompt;
+
+/**
+ * 「すべて初期化」(docs/21 §2.2): プロンプト・サイズ・ステップ等を種別の推奨値に戻す。
+ * モデル種別・モデル・CLIP・VAE の選択は保持し、拡張機能は設定ごと外す(参照画像も捨てる)。
+ */
+export function resetParams(current: GenerationParams): GenerationParams {
+  return { ...defaultParams(current.model.kind), model: current.model };
+}
+
 /** 種別に対応するモデル一覧。 */
 export function modelsFor(kind: ModelKind, models: EngineModels | null): string[] {
   if (!models) return [];

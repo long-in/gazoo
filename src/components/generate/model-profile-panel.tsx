@@ -13,7 +13,7 @@ import { useEngineStore } from "@/stores/engine-store";
 import { useFormStore } from "@/stores/form-store";
 import { useModelsStore } from "@/stores/models-store";
 
-const OPEN_KEY = "gazoo.modelProfile.open";
+const OPEN_KEY = "gazooo.modelProfile.open";
 
 // 開閉は端末に記憶する(読めない環境では、展開したまま)
 function readOpen(): boolean {

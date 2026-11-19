@@ -76,7 +76,7 @@ export function ImageDetailSheet({ id, onClose }: { id: string | null; onClose: 
     if (!image) return;
     const ext = image.filePath.split(".").pop() ?? "png";
     const dest = await save({
-      defaultPath: `gazoo-${image.seed}.${ext}`,
+      defaultPath: `gazooo-${image.seed}.${ext}`,
       filters: [{ name: ext.toUpperCase(), extensions: [ext] }],
     });
     if (dest) await run(() => imageExport(image.id, dest), "gallery.exported");

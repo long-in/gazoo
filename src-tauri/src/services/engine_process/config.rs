@@ -212,7 +212,7 @@ mod tests {
     use super::*;
 
     fn tmp(name: &str) -> PathBuf {
-        let d = std::env::temp_dir().join(format!("gazoo-cfg-{name}-{}", uuid::Uuid::now_v7()));
+        let d = std::env::temp_dir().join(format!("gazooo-cfg-{name}-{}", uuid::Uuid::now_v7()));
         std::fs::create_dir_all(&d).unwrap();
         d
     }
@@ -338,7 +338,7 @@ mod tests {
             .join("src-tauri")
             .join("target")
             .join("release")
-            .join("gazoo.exe");
+            .join("gazooo.exe");
         let s = detect(&[start]);
         assert_eq!(s.main_py.as_deref(), Some(main.to_string_lossy().as_ref()));
         assert!(s.base_directory.is_some());

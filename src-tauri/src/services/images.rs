@@ -323,7 +323,7 @@ mod tests {
     }
 
     fn harness(trash_fails: bool) -> Harness {
-        let dir = std::env::temp_dir().join(format!("gazoo-images-{}", uuid::Uuid::now_v7()));
+        let dir = std::env::temp_dir().join(format!("gazooo-images-{}", uuid::Uuid::now_v7()));
         let db = Db::open_in_memory().unwrap();
         let trash = Arc::new(FakeTrash {
             fail: trash_fails,
@@ -571,9 +571,9 @@ mod tests {
     #[test]
     #[ignore = "moves a temp file into the real OS trash"]
     fn real_os_trash_moves_file() {
-        let dir = std::env::temp_dir().join(format!("gazoo-trash-{}", uuid::Uuid::now_v7()));
+        let dir = std::env::temp_dir().join(format!("gazooo-trash-{}", uuid::Uuid::now_v7()));
         std::fs::create_dir_all(&dir).unwrap();
-        let file = dir.join("gazoo-trash-test.txt");
+        let file = dir.join("gazooo-trash-test.txt");
         std::fs::write(&file, "safe to delete").unwrap();
 
         OsTrash.trash(&file).expect("trash");

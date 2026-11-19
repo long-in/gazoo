@@ -336,8 +336,8 @@ mod tests {
             "status": {"status_str": "success", "completed": true},
             "outputs": {
                 "8": {"images": [
-                    {"filename": "gazoo_00001_.png", "subfolder": "", "type": "output"},
-                    {"filename": "gazoo_00002_.png", "subfolder": "sub", "type": "output"}
+                    {"filename": "gazooo_00001_.png", "subfolder": "", "type": "output"},
+                    {"filename": "gazooo_00002_.png", "subfolder": "sub", "type": "output"}
                 ]},
                 "9": {"images": [{"filename": "tmp.png", "subfolder": "", "type": "temp"}]}
             }
@@ -347,7 +347,7 @@ mod tests {
         };
         assert_eq!(images.len(), 2);
         assert_eq!(images[1].subfolder, "sub");
-        assert_eq!(images[0].filename, "gazoo_00001_.png");
+        assert_eq!(images[0].filename, "gazooo_00001_.png");
     }
 
     #[test]
@@ -436,8 +436,8 @@ mod tests {
             Some("a.png".into())
         );
         assert_eq!(
-            parse_upload_name(&json!({"name": "a.png", "subfolder": "gazoo"})),
-            Some("gazoo/a.png".into())
+            parse_upload_name(&json!({"name": "a.png", "subfolder": "gazooo"})),
+            Some("gazooo/a.png".into())
         );
         assert_eq!(parse_upload_name(&json!({"name": ""})), None);
         assert_eq!(parse_upload_name(&json!({"error": "x"})), None);

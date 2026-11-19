@@ -154,7 +154,7 @@ async fn refuses_to_start_when_the_port_is_taken_without_touching_the_owner() {
 async fn launch_failure_is_reported() {
     let (svc, _) = service(probe_always(true), Duration::from_secs(5));
     let spec = LaunchSpec {
-        program: PathBuf::from("gazoo-definitely-missing-program"),
+        program: PathBuf::from("gazooo-definitely-missing-program"),
         args: vec![],
         cwd: None,
     };

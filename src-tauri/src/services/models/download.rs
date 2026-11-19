@@ -102,7 +102,7 @@ pub fn build_client(policy: &DownloadPolicy) -> AppResult<reqwest::Client> {
         .read_timeout(READ_TIMEOUT)
         .redirect(redirect)
         // 識別情報を含めない(アプリ名とバージョンのみ)
-        .user_agent(concat!("gazoo/", env!("CARGO_PKG_VERSION")))
+        .user_agent(concat!("gazooo/", env!("CARGO_PKG_VERSION")))
         .build()
         .map_err(|e| AppError::internal(e.to_string()))
 }
