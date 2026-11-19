@@ -198,6 +198,18 @@ type SettingsPatch = Partial<Settings>;
 - 次の場合は実行しない: 新しい保存先が相対パス / 現在の保存先と入れ子(内側・外側)/ 書き込めない(`VALIDATION`、`details.field = "newDir"`)、生成ジョブが実行中(`JOB_INVALID_STATE`)。現在の保存先と同じなら何もしない(`moved = 0`)。
 - 成功時、新しい保存先を asset プロトコルのスコープに追加する。
 - 大量の画像では時間がかかる(進捗イベントは未提供。UI は処理中表示のみ)。
+### ComfyUI の起動管理(v0.7、設計: 15 §7。承認済み)
+
+| コマンド | 引数 | 戻り値 |
+|---|---|---|
+| `engine_managed_get` | – | `{ config; state; suggestions? }`(設定・状態・パスの候補) |
+| `engine_managed_set` | `{ config }` | `{ config }`(絶対パス・存在・ポート範囲を検証。有効化で接続先 URL を同期) |
+| `engine_process_start` / `engine_process_stop` | – | `EngineProcState` |
+| `engine_process_restart` | `{ force?: boolean }` | `EngineProcState`(実行中のジョブがあり `force` でなければ `ENGINE_BUSY`) |
+| `engine_process_logs` | `{ lines?: number }` | `{ lines: string[] }` |
+
+- 型は 15 が正。イベント `engine://proc-state` / `engine://log`。エラー: `ENGINE_PORT_IN_USE` / `ENGINE_LAUNCH_FAILED` / `ENGINE_START_TIMEOUT` / `ENGINE_BUSY` / `ENGINE_NOT_MANAGED`。
+
 
 ## イベント(Rust → フロント)
 
