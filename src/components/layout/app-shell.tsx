@@ -19,6 +19,7 @@ import { type MessageKey } from "@/lib/i18n";
 import { useT } from "@/lib/i18n/use-t";
 import { detectMac, modifierLabel } from "@/lib/shortcuts";
 
+import { JobStatusBar } from "./job-status-bar";
 import { useGlobalShortcuts } from "./use-global-shortcuts";
 
 const NAV_ITEMS: { href: string; labelKey: MessageKey; icon: LucideIcon }[] = [
@@ -71,7 +72,10 @@ export function AppShell({ children }: { children: ReactNode }) {
         })}
         <EngineStatusBadge />
       </nav>
-      <main className="min-w-0 flex-1 overflow-y-auto">{children}</main>
+      <div className="flex min-w-0 flex-1 flex-col">
+        <JobStatusBar />
+        <main className="min-h-0 flex-1 overflow-y-auto">{children}</main>
+      </div>
     </div>
   );
 }

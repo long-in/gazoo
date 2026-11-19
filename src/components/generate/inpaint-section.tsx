@@ -16,7 +16,7 @@ import { useFormStore } from "@/stores/form-store";
 
 import { Field, NumberInput, SliderNumber } from "./fields";
 import { MaskEditor } from "./mask-editor";
-import { imageSrc } from "./result-panel";
+import { imageSrc } from "@/lib/image-src";
 
 /**
  * Inpaint(F-15。docs/13 §3)。参照画像にマスクを描き、塗った範囲だけを描き直す。
@@ -28,6 +28,7 @@ export function InpaintSection({ error }: { error: (field: string) => string | n
   const kind = useFormStore((s) => s.params.model.kind);
   const stored = useFormStore((s) => s.params.inpaint);
   const faceOn = useFormStore((s) => s.params.faceDetailer?.enabled === true);
+  const img2imgOn = useFormStore((s) => s.params.img2img?.enabled === true);
   const { setInpaintEnabled, patchInpaint, setInpaintImage } = useFormStore.getState();
   const status = useEngineStore((s) => s.status);
 
@@ -36,6 +37,7 @@ export function InpaintSection({ error }: { error: (field: string) => string | n
   let reason: MessageKey | null = null;
   if (!supportsInpaint(kind)) reason = "generate.inpaint.unsupported";
   else if (connected && !status.features.inpaint) reason = "generate.inpaint.nodeMissing";
+  else if (img2imgOn && !ip.enabled) reason = "generate.inpaint.img2imgOn";
   else if (faceOn && !ip.enabled) reason = "generate.face.inpaint";
   const on = ip.enabled && reason === null;
 

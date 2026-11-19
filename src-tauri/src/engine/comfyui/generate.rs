@@ -797,6 +797,85 @@ mod tests {
         }
     }
 
+    /// 実機: 画像から生成(img2img。docs/19)が完了し、構図の固定(ControlNet Canny)と併用できること。
+    /// `COMFYUI_IMG2IMG_SRC`(元画像の PNG)、`COMFYUI_SDXL_MODEL`(既定 sd_xl_base_1.0.safetensors)、
+    /// `COMFYUI_CONTROLNET_SDXL`(既定 controlnet-canny-sdxl-1.0_fp16.safetensors)を使う。
+    /// `COMFYUI_SAVE_PNG` に出力先を指定すると、生成した PNG を保存する。
+    #[tokio::test]
+    #[ignore = "requires a running ComfyUI with an SDXL checkpoint, an SDXL Canny ControlNet and COMFYUI_IMG2IMG_SRC"]
+    async fn real_comfyui_img2img_with_composition_lock() {
+        use crate::domain::params::{
+            ControlnetParams, ControlnetUnit, Img2imgParams, Preprocessor,
+        };
+        let c = ComfyUiClient::new(&real_url()).unwrap();
+        let src_path = std::env::var("COMFYUI_IMG2IMG_SRC").expect("COMFYUI_IMG2IMG_SRC");
+        let src_bytes = std::fs::read(&src_path).expect("read source");
+        let source = image::load_from_memory(&src_bytes).expect("decode source");
+        let (w, h) = (1024u32, 576u32);
+        let name = c
+            .upload_input(src_bytes.clone())
+            .await
+            .expect("upload (control)");
+        let name2 = c.upload_input(src_bytes).await.expect("upload (source)");
+
+        let mut p = sample(ModelKind::Sdxl);
+        p.model.name = std::env::var("COMFYUI_SDXL_MODEL")
+            .unwrap_or_else(|_| "sd_xl_base_1.0.safetensors".into());
+        p.prompt = "anime style, masterpiece, a small cafe on a rainy street at dusk, warm lights, cel shading, flat colors"
+            .into();
+        p.negative_prompt = "photo, realistic, blurry, low quality".into();
+        p.width = w;
+        p.height = h;
+        p.steps = 25;
+        p.cfg = 6.0;
+        p.sampler = "euler".into();
+        p.scheduler = "normal".into();
+        p.seed = 20_261_119;
+        p.img2img = Some(Img2imgParams {
+            enabled: true,
+            image: "inputs/src.png".into(),
+            denoise: 0.65,
+        });
+        p.controlnet = Some(ControlnetParams {
+            enabled: true,
+            units: vec![ControlnetUnit {
+                image: "inputs/src.png".into(),
+                model: std::env::var("COMFYUI_CONTROLNET_SDXL")
+                    .unwrap_or_else(|_| "controlnet-canny-sdxl-1.0_fp16.safetensors".into()),
+                preprocessor: Preprocessor::Canny,
+                strength: 0.8,
+                start_percent: 0.0,
+                end_percent: 0.8,
+            }],
+        });
+        // 画像の並び: ControlNet のユニット、img2img の元画像
+        let id = c.submit(&p, &[name, name2]).await.expect("submit");
+        let images = c.wait(&id, &|_| {}).await.expect("wait");
+
+        assert_eq!(images.len(), 1);
+        assert_eq!(&images[0].bytes[..8], &PNG_MAGIC, "PNG として取得できる");
+        let got = image::load_from_memory(&images[0].bytes).expect("decodable");
+        assert_eq!((got.width(), got.height()), (w, h));
+        // 元画像そのままではない(描き直されている)
+        let resized = source
+            .resize_exact(w, h, image::imageops::FilterType::Triangle)
+            .to_rgb8();
+        let diff: u64 = got
+            .to_rgb8()
+            .pixels()
+            .zip(resized.pixels())
+            .filter(|(a, b)| a != b)
+            .count() as u64;
+        assert!(
+            diff > u64::from(w * h) / 2,
+            "元画像から描き直されている: {diff}"
+        );
+        if let Ok(path) = std::env::var("COMFYUI_SAVE_PNG") {
+            std::fs::write(&path, &images[0].bytes).expect("save png");
+            println!("saved {path}");
+        }
+    }
+
     /// 実機: 同じパラメータ・同じシードなら同じ画像になること(ギャラリーの「この設定で生成」の前提)。
     #[tokio::test]
     #[ignore = "requires a running ComfyUI with an SD 1.5 checkpoint"]

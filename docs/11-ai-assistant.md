@@ -174,3 +174,7 @@ DB の `settings` に追加:
 ## 追記(v0.10・承認済み): モデルの提案
 
 - AI がモデルの特徴を把握し、依頼に合うモデルを理由つきで提案する。提案の種類に `suggest_model`(`{ familyId, reason }`。カタログにある ID のみ。反映はユーザーのクリックのみ)を追加し、スナップショットに `model` と `installedFamilies`(ファミリー ID のみ。ファイル名・パスは送らない)を加える。同意ダイアログに一文追記する。詳細は [18-model-profiles.md](18-model-profiles.md) §6。
+
+## 追記(v0.11・承認済み): img2img
+
+- 機能カタログに F-18 を追記し、スナップショットに `img2img: { enabled, denoise, hasImage }` を加える(画像のパスは送らない)。`suggest_params` に `img2img.denoise` を加える。画像そのものは送らない。詳細は [19-image-to-anime.md](19-image-to-anime.md) §8。

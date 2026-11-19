@@ -25,6 +25,9 @@ export const onJobUpdated = (handler: (job: Job) => void) =>
 export const onJobProgress = (handler: (p: JobProgress) => void) =>
   subscribe<JobProgress>("job://progress", handler);
 
+export const onQueueState = (handler: (payload: { paused: boolean }) => void) =>
+  subscribe<{ paused: boolean }>("queue://state", handler);
+
 export const onImageCreated = (handler: (image: ImageItem) => void) =>
   subscribe<ImageItem>("image://created", handler);
 

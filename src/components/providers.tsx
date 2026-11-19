@@ -20,6 +20,7 @@ import {
   onJobUpdated,
   onModelsDone,
   onModelsProgress,
+  onQueueState,
 } from "@/lib/tauri/events";
 import { toAppError } from "@/lib/tauri/errors";
 import { useAssistantStore } from "@/stores/assistant-store";
@@ -86,7 +87,7 @@ function PresetBootstrap() {
 
 /** ジョブ・進捗・生成画像のイベント購読と、初期のジョブ一覧の取得。 */
 function JobBootstrap() {
-  const { load, applyUpdated, applyProgress, applyImage } = useJobStore.getState();
+  const { load, applyUpdated, applyProgress } = useJobStore.getState();
 
   useEffect(() => {
     let cancelled = false;
@@ -95,25 +96,21 @@ function JobBootstrap() {
     void Promise.all([
       onJobUpdated(applyUpdated),
       onJobProgress(applyProgress),
-      // 生成画像: 「直近の結果」とギャラリーの両方に反映する
-      onImageCreated((image) => {
-        applyImage(image);
-        useGalleryStore.getState().applyCreated(image);
-      }),
-      onImageDeleted(({ ids }) => {
-        useGalleryStore.getState().applyDeleted(ids);
-        useJobStore.getState().removeImages(ids);
-      }),
+      onQueueState(({ paused }) => useJobStore.getState().applyQueueState(paused)),
+      // 生成画像: ギャラリーに反映する
+      onImageCreated((image) => useGalleryStore.getState().applyCreated(image)),
+      onImageDeleted(({ ids }) => useGalleryStore.getState().applyDeleted(ids)),
     ]).then((fns) => {
       if (cancelled) fns.forEach((fn) => fn());
       else unlisteners.push(...fns);
     });
     void load();
+    void useJobStore.getState().loadQueueState();
     return () => {
       cancelled = true;
       unlisteners.forEach((fn) => fn());
     };
-  }, [load, applyUpdated, applyProgress, applyImage]);
+  }, [load, applyUpdated, applyProgress]);
 
   return null;
 }

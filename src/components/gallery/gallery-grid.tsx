@@ -4,7 +4,7 @@ import { useVirtualizer } from "@tanstack/react-virtual";
 import { Check, Star } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
-import { imageSrc } from "@/components/generate/result-panel";
+import { imageSrc } from "@/lib/image-src";
 import type { ImageItem } from "@/lib/tauri/jobs";
 import { cn } from "@/lib/utils";
 

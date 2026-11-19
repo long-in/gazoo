@@ -15,6 +15,8 @@ export interface EngineStatus {
     controlnetPreprocessors: ("canny" | "depth" | "openpose")[];
     /** Inpaint に必要なコアノードがそろっているか。 */
     inpaint: boolean;
+    /** 画像から生成(img2img)に必要なコアノードがそろっているか。 */
+    img2img: boolean;
   };
   error?: "unreachable" | "bad_response";
 }

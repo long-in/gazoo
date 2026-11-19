@@ -231,6 +231,41 @@ pub fn clear_finished(conn: &mut Connection) -> AppResult<usize> {
     Ok(deleted + hidden)
 }
 
+/// 指定した終了済みジョブを履歴から外す。画像を持たないものは削除、持つものはキュー画面から隠す。
+/// 実行中・待機中のジョブ、存在しない ID が含まれていたら何もせず `VALIDATION`。
+pub fn remove_finished(conn: &mut Connection, ids: &[String]) -> AppResult<usize> {
+    let tx = conn.transaction()?;
+    for id in ids {
+        let status: Option<String> = tx
+            .query_row("SELECT status FROM jobs WHERE id = ?1", [id], |r| r.get(0))
+            .optional()?;
+        match status.as_deref() {
+            Some("completed" | "failed" | "cancelled") => {}
+            _ => {
+                return Err(AppError::validation(
+                    "ids",
+                    "実行中・待機中のジョブや、存在しないジョブは履歴から外せません",
+                ));
+            }
+        }
+    }
+    let mut n = 0;
+    for id in ids {
+        let deleted = tx.execute(
+            "DELETE FROM jobs WHERE id = ?1
+               AND NOT EXISTS (SELECT 1 FROM images WHERE images.job_id = jobs.id)",
+            [id],
+        )?;
+        n += if deleted > 0 {
+            deleted
+        } else {
+            tx.execute("UPDATE jobs SET queue_hidden = 1 WHERE id = ?1", [id])?
+        };
+    }
+    tx.commit()?;
+    Ok(n)
+}
+
 pub fn image_ids(conn: &Connection, job_id: &str) -> AppResult<Vec<String>> {
     let mut stmt =
         conn.prepare("SELECT id FROM images WHERE job_id = ?1 ORDER BY created_at ASC, rowid ASC")?;
@@ -366,6 +401,34 @@ mod tests {
             assert_eq!(r.status, JobStatus::Failed);
             assert_eq!(r.error_code.as_deref(), Some("INTERRUPTED"));
             assert_eq!(status(c, "q"), JobStatus::Queued);
+            Ok(())
+        })
+        .await
+        .unwrap();
+    }
+
+    #[tokio::test]
+    async fn remove_finished_deletes_or_hides_and_rejects_active_jobs() {
+        let db = Db::open_in_memory().unwrap();
+        db.call(|c| {
+            for id in ["with_img", "failed", "queued"] {
+                add(c, id, 0);
+            }
+            finish(c, "with_img", JobStatus::Completed, None, 1)?;
+            insert_image(c, &image("with_img", "img1"))?;
+            finish(c, "failed", JobStatus::Failed, Some(("X", "y")), 1)?;
+
+            // 待機中や存在しない ID が混ざっていたら、何も変えずに断る
+            let ids = |v: &[&str]| v.iter().map(|s| (*s).to_owned()).collect::<Vec<_>>();
+            assert!(remove_finished(c, &ids(&["failed", "queued"])).is_err());
+            assert!(remove_finished(c, &ids(&["failed", "nope"])).is_err());
+            assert!(get(c, "failed")?.is_some());
+
+            assert_eq!(remove_finished(c, &ids(&["with_img", "failed"]))?, 2);
+            assert!(get(c, "failed")?.is_none());
+            assert_eq!(image_ids(c, "with_img")?, ["img1"]);
+            let visible: Vec<_> = list(c, &[], 10, 0)?.into_iter().map(|j| j.id).collect();
+            assert_eq!(visible, ["queued"]);
             Ok(())
         })
         .await

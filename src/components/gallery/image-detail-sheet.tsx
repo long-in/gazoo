@@ -1,12 +1,12 @@
 "use client";
 
 import { save } from "@tauri-apps/plugin-dialog";
-import { Brush, Copy, Download, FolderOpen, ImagePlus, Sparkles, Star, Trash2 } from "lucide-react";
+import { Brush, Copy, Download, FolderOpen, ImagePlus, Sparkles, Star, Trash2, Wand2 } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
 
-import { imageSrc } from "@/components/generate/result-panel";
+import { imageSrc } from "@/lib/image-src";
 import { Button } from "@/components/ui/button";
 import {
   Sheet,
@@ -15,7 +15,7 @@ import {
   SheetHeader,
   SheetTitle,
 } from "@/components/ui/sheet";
-import { supportsInpaint } from "@/lib/generation/defaults";
+import { supportsImg2img, supportsInpaint } from "@/lib/generation/defaults";
 import { useErrorMessage, useT } from "@/lib/i18n/use-t";
 import { toAppError } from "@/lib/tauri/errors";
 import { type ImageDetail, imageExport, imageGet, imageReveal } from "@/lib/tauri/images";
@@ -23,6 +23,7 @@ import { inputImageFromGallery } from "@/lib/tauri/inputs";
 import { useEngineStore } from "@/stores/engine-store";
 import { useFormStore } from "@/stores/form-store";
 import { useGalleryStore } from "@/stores/gallery-store";
+import { useModelsStore } from "@/stores/models-store";
 
 import { DeleteConfirm } from "./delete-confirm";
 
@@ -122,6 +123,45 @@ export function ImageDetailSheet({ id, onClose }: { id: string | null; onClose: 
     }
   }
 
+  /** この画像を img2img の元画像として生成画面に設定する。anime が true なら、アニメ系のモデルと推奨値も設定する。 */
+  async function setAsImg2img(anime: boolean) {
+    if (!image) return;
+    try {
+      const input = await inputImageFromGallery(image.id);
+      const form = useFormStore.getState();
+      if (anime) {
+        const models = useModelsStore.getState();
+        if (!models.view) await models.load();
+        const engine = useEngineStore.getState();
+        const { outcome, compositionLocked } = form.startAnime(
+          { path: input.path, width: input.width, height: input.height },
+          {
+            catalog: useModelsStore.getState().view?.catalog,
+            models: engine.models,
+            cannyAvailable: (engine.status?.features.controlnetPreprocessors ?? []).includes("canny"),
+          },
+        );
+        if (outcome === "noAnimeModel") {
+          toast.warning(t("generate.img2img.anime.noModel"));
+          router.push("/models?purpose=anime");
+          return;
+        }
+        toast.success(t(compositionLocked ? "generate.img2img.anime.done" : "generate.img2img.anime.doneNoLock"));
+      } else {
+        form.setImg2imgImage(input.path, input.width, input.height);
+        if (supportsImg2img(form.params.model.kind)) {
+          form.setImg2imgEnabled(true);
+          toast.success(t("gallery.img2imgSet"));
+        } else {
+          toast.info(t("gallery.img2imgFlux"));
+        }
+      }
+      router.push("/");
+    } catch (e) {
+      toast.error(errorMessage(toAppError(e)));
+    }
+  }
+
   return (
     <>
       <Sheet open={id !== null} onOpenChange={(open) => !open && onClose()}>
@@ -151,6 +191,14 @@ export function ImageDetailSheet({ id, onClose }: { id: string | null; onClose: 
                 <Button type="button" variant="outline" onClick={() => void setAsReference()}>
                   <ImagePlus />
                   {t("gallery.useAsReference")}
+                </Button>
+                <Button type="button" variant="outline" onClick={() => void setAsImg2img(true)}>
+                  <Wand2 />
+                  {t("gallery.useAsAnime")}
+                </Button>
+                <Button type="button" variant="outline" onClick={() => void setAsImg2img(false)}>
+                  <ImagePlus />
+                  {t("gallery.useAsImg2img")}
                 </Button>
                 <Button type="button" variant="outline" onClick={() => void setAsInpaint()}>
                   <Brush />
@@ -215,6 +263,12 @@ export function ImageDetailSheet({ id, onClose }: { id: string | null; onClose: 
                       {params.controlnet.units[0].preprocessor} · {params.controlnet.units[0].model} ·{" "}
                       {params.controlnet.units[0].strength}
                     </dd>
+                  </>
+                )}
+                {params.img2img?.enabled && (
+                  <>
+                    <dt className="text-muted-foreground">{t("gallery.params.img2img")}</dt>
+                    <dd>denoise {params.img2img.denoise}</dd>
                   </>
                 )}
                 {params.inpaint?.enabled && (

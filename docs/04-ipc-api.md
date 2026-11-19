@@ -251,3 +251,11 @@ type SettingsPatch = Partial<Settings>;
 | `ASSISTANT_BUSY` | 別の相談が実行中 | 完了または停止を待つ |
 | `ASSISTANT_CONVERSATION_NOT_FOUND` | 会話が存在しない | 一覧を更新 |
 | `INTERNAL` | 想定外 | 詳細ログ参照案内 |
+
+## 追記(v0.11・承認済み): img2img
+
+- `job_enqueue` の `params.img2img`(`{ enabled, image, denoise }`)を追加する。新しいコマンドは無し(元画像は既存の `input_image_*`)。`engine_status.features` に `img2img` を加える。Inpaint が有効なときは `VALIDATION`。詳細は [19-image-to-anime.md](19-image-to-anime.md) §4・§7。
+
+## 追記(v0.12・承認済み): キュー管理
+
+- `job_remove { ids }`(終了済みジョブを履歴から外す)、`queue_pause` / `queue_resume` / `queue_state`、イベント `queue://state` を追加する。`job_enqueue` は、カタログで種別が分かるモデル・エンコーダ・VAE が選択した種別と合わないとき `VALIDATION`(`details.field` は `model` / `clip` / `vae`)で断る。詳細は [20-ui-refresh.md](20-ui-refresh.md) §2.4・§3.4。

@@ -1,7 +1,7 @@
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { defaultParams } from "@/lib/generation/defaults";
-import type { ImageItem, Job } from "@/lib/tauri/jobs";
+import type { Job } from "@/lib/tauri/jobs";
 
 import { sortJobs, useJobStore } from "./job-store";
 
@@ -15,20 +15,8 @@ const job = (id: string, over: Partial<Job> = {}): Job => ({
   ...over,
 });
 
-const image = (id: string): ImageItem => ({
-  id,
-  jobId: "j",
-  width: 1,
-  height: 1,
-  seed: 1,
-  isFavorite: false,
-  createdAt: 0,
-  filePath: `/x/${id}.png`,
-  thumbPath: `/x/${id}.png`,
-});
-
 beforeEach(() => {
-  useJobStore.setState({ jobs: [], progress: {}, recentImages: [], loaded: false });
+  useJobStore.setState({ jobs: [], progress: {}, loaded: false });
 });
 
 describe("sortJobs", () => {
@@ -64,24 +52,62 @@ describe("job-store", () => {
     s.applyUpdated(job("a", { status: "completed" }));
     expect(useJobStore.getState().progress.a).toBeUndefined();
   });
-
-  it("直近の画像は新しい順で、重複せず、上限がある", () => {
-    const { applyImage } = useJobStore.getState();
-    for (let i = 0; i < 30; i++) applyImage(image(`i${i}`));
-    applyImage(image("i29")); // 重複
-    const recent = useJobStore.getState().recentImages;
-    expect(recent).toHaveLength(24);
-    expect(recent[0].id).toBe("i29");
-    expect(new Set(recent.map((i) => i.id)).size).toBe(24);
-  });
 });
 
-describe("job-store removeImages", () => {
-  it("削除された画像を直近の結果から外す", () => {
-    const s = useJobStore.getState();
-    s.applyImage(image("x"));
-    s.applyImage(image("y"));
-    s.removeImages(["x"]);
-    expect(useJobStore.getState().recentImages.map((i) => i.id)).toEqual(["y"]);
+const api = vi.hoisted(() => ({
+  jobList: vi.fn(),
+  jobRemove: vi.fn(),
+  queuePause: vi.fn(),
+  queueResume: vi.fn(),
+  queueState: vi.fn(),
+}));
+vi.mock("@/lib/tauri/jobs", async (orig) => ({ ...(await orig<typeof import("@/lib/tauri/jobs")>()), ...api }));
+
+describe("job-store(キュー管理。docs/20 §3)", () => {
+  beforeEach(() => {
+    Object.values(api).forEach((m) => m.mockReset());
+    useJobStore.setState({ jobs: [], progress: {}, loaded: false, paused: false, nextCursor: null, loadingMore: false });
+  });
+
+  it("履歴は cursor で続きを読み込み、重複は畳み込む", async () => {
+    api.jobList
+      .mockResolvedValueOnce({ items: [job("a", { status: "completed", createdAt: 9 })], nextCursor: "c1" })
+      .mockResolvedValueOnce({
+        items: [job("a", { status: "completed", createdAt: 9 }), job("b", { status: "completed", createdAt: 1 })],
+      });
+    await useJobStore.getState().load();
+    expect(useJobStore.getState().nextCursor).toBe("c1");
+    await useJobStore.getState().loadMore();
+    expect(useJobStore.getState().jobs.map((j) => j.id)).toEqual(["a", "b"]);
+    expect(useJobStore.getState().nextCursor).toBeNull();
+    expect(api.jobList).toHaveBeenLastCalledWith({ limit: 200, cursor: "c1" });
+    // これ以上は読み込まない
+    await useJobStore.getState().loadMore();
+    expect(api.jobList).toHaveBeenCalledTimes(2);
+  });
+
+  it("一時停止・再開は IPC を呼び、状態を保つ。イベントでも更新される", async () => {
+    await useJobStore.getState().setPaused(true);
+    expect(api.queuePause).toHaveBeenCalled();
+    expect(useJobStore.getState().paused).toBe(true);
+    await useJobStore.getState().setPaused(false);
+    expect(api.queueResume).toHaveBeenCalled();
+    expect(useJobStore.getState().paused).toBe(false);
+    useJobStore.getState().applyQueueState(true);
+    expect(useJobStore.getState().paused).toBe(true);
+    api.queueState.mockResolvedValueOnce({ paused: false });
+    await useJobStore.getState().loadQueueState();
+    expect(useJobStore.getState().paused).toBe(false);
+  });
+
+  it("履歴から外すと、一覧からも消える。失敗したときは一覧を変えない", async () => {
+    useJobStore.setState({ jobs: [job("a", { status: "completed" }), job("b", { status: "failed" })] });
+    api.jobRemove.mockResolvedValueOnce(1);
+    await useJobStore.getState().remove(["a"]);
+    expect(api.jobRemove).toHaveBeenCalledWith(["a"]);
+    expect(useJobStore.getState().jobs.map((j) => j.id)).toEqual(["b"]);
+    api.jobRemove.mockRejectedValueOnce({ code: "VALIDATION", message: "x" });
+    await expect(useJobStore.getState().remove(["b"])).rejects.toBeDefined();
+    expect(useJobStore.getState().jobs.map((j) => j.id)).toEqual(["b"]);
   });
 });

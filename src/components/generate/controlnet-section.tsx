@@ -17,7 +17,7 @@ import { useEngineStore } from "@/stores/engine-store";
 import { useFormStore } from "@/stores/form-store";
 
 import { Field, NumberInput, SliderNumber } from "./fields";
-import { imageSrc } from "./result-panel";
+import { imageSrc } from "@/lib/image-src";
 
 const ASPECT_TOLERANCE = 0.02;
 const NO_NAMES: string[] = [];

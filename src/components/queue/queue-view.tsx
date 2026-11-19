@@ -1,186 +1,268 @@
 "use client";
 
-import { ArrowDown, ArrowUp, RotateCcw, X } from "lucide-react";
+import { Pause, Play, Search } from "lucide-react";
+import { useMemo, useState } from "react";
 import { toast } from "sonner";
 
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Progress } from "@/components/ui/progress";
+import { ConfirmDialog } from "@/components/ui/confirm-dialog";
+import { Input } from "@/components/ui/input";
 import type { MessageKey } from "@/lib/i18n";
 import { useErrorMessage, useT } from "@/lib/i18n/use-t";
-import { isOutOfMemory, toAppError } from "@/lib/tauri/errors";
-import type { Job, JobStatus } from "@/lib/tauri/jobs";
+import { countByTab, filterJobs, isActiveJob, QUEUE_TABS, type QueueTab } from "@/lib/queue";
+import { toAppError } from "@/lib/tauri/errors";
+import { cn } from "@/lib/utils";
 import { useJobStore } from "@/stores/job-store";
 
-const STATUS_VARIANT: Record<JobStatus, "default" | "secondary" | "destructive" | "outline"> = {
-  queued: "secondary",
-  running: "default",
-  completed: "outline",
-  failed: "destructive",
-  cancelled: "outline",
-};
+import { JobRow } from "./job-row";
+import { RunningSummary } from "./running-summary";
 
+type Confirm = "cancelQueued" | "retryFailed" | "removeSelected" | "clear" | null;
+
+/**
+ * キュー画面(docs/20 §3)。フィルタ・検索・サムネイル・詳細・一括操作・一時停止。
+ * 実行中の進捗は、ここと画面共通のヘッダで確認する(生成画面には出さない)。
+ */
 export function QueueView() {
   const t = useT();
   const errorMessage = useErrorMessage();
   const jobs = useJobStore((s) => s.jobs);
-  const clearFinished = useJobStore((s) => s.clearFinished);
+  const paused = useJobStore((s) => s.paused);
+  const nextCursor = useJobStore((s) => s.nextCursor);
+  const loadingMore = useJobStore((s) => s.loadingMore);
 
-  const active = jobs.filter((j) => j.status === "running" || j.status === "queued");
-  const history = jobs.filter((j) => j.status !== "running" && j.status !== "queued");
+  const [tab, setTab] = useState<QueueTab>("all");
+  const [query, setQuery] = useState("");
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [confirm, setConfirm] = useState<Confirm>(null);
 
-  async function onClear() {
+  const counts = useMemo(() => countByTab(jobs), [jobs]);
+  const visible = useMemo(() => filterJobs(jobs, tab, query), [jobs, tab, query]);
+  const queued = useMemo(() => jobs.filter((j) => j.status === "queued"), [jobs]);
+  const failed = useMemo(() => jobs.filter((j) => j.status === "failed" || j.status === "cancelled"), [jobs]);
+
+  // 存在しなくなったジョブは選択から外す
+  const selectedJobs = useMemo(() => jobs.filter((j) => selected.has(j.id)), [jobs, selected]);
+  const selActive = selectedJobs.filter(isActiveJob);
+  const selRetry = selectedJobs.filter((j) => j.status === "failed" || j.status === "cancelled");
+  const selFinished = selectedJobs.filter((j) => !isActiveJob(j));
+
+  async function run(action: () => Promise<unknown>, success?: string) {
     try {
-      await clearFinished();
-      toast.success(t("queue.cleared"));
+      await action();
+      if (success) toast.success(success);
     } catch (e) {
       toast.error(errorMessage(toAppError(e)));
     }
   }
 
-  return (
-    <div className="mx-auto flex max-w-3xl flex-col gap-8 p-8">
-      <h1 className="text-2xl font-semibold">{t("queue.title")}</h1>
+  const { cancel, retry, remove, clearFinished, setPaused, loadMore } = useJobStore.getState();
 
-      <section className="flex flex-col gap-3">
-        <h2 className="text-lg font-medium">{t("queue.active")}</h2>
-        {active.length === 0 ? (
-          <p className="text-sm text-muted-foreground">{t("queue.empty")}</p>
-        ) : (
-          <ul className="flex flex-col gap-2">
-            {active.map((job, i) => (
-              <JobRow
-                key={job.id}
-                job={job}
-                // 待機中ジョブ内の位置(実行中は並べ替え対象外)
-                queueIndex={job.status === "queued" ? active.filter((j) => j.status === "queued").indexOf(job) : -1}
-                queuedCount={active.filter((j) => j.status === "queued").length}
-                isFirst={i === 0}
-              />
-            ))}
-          </ul>
-        )}
-      </section>
+  const toggle = (id: string) =>
+    setSelected((s) => {
+      const next = new Set(s);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  const allVisibleSelected = visible.length > 0 && visible.every((j) => selected.has(j.id));
+  const toggleAll = () =>
+    setSelected(allVisibleSelected ? new Set() : new Set(visible.map((j) => j.id)));
 
-      <section className="flex flex-col gap-3">
-        <div className="flex items-center justify-between">
-          <h2 className="text-lg font-medium">{t("queue.history")}</h2>
-          <Button type="button" variant="outline" size="sm" disabled={history.length === 0} onClick={() => void onClear()}>
-            {t("queue.clear")}
-          </Button>
-        </div>
-        {history.length === 0 ? (
-          <p className="text-sm text-muted-foreground">{t("queue.empty")}</p>
-        ) : (
-          <ul className="flex flex-col gap-2">
-            {history.map((job) => (
-              <JobRow key={job.id} job={job} queueIndex={-1} queuedCount={0} isFirst={false} />
-            ))}
-          </ul>
-        )}
-      </section>
-    </div>
-  );
-}
-
-/** 失敗の理由。コードに対応する説明を主に、エンジンの原文を小さく併記する。 */
-function JobErrorNote({ code, message }: { code: string; message: string }) {
-  const t = useT();
-  const key = `error.${code}` as MessageKey;
-  const friendly = t(key); // 未知のコードは undefined(原文のみ表示)
-  return (
-    <div role="alert" className="flex flex-col gap-1 text-xs">
-      {friendly && <p className="font-medium text-destructive">{friendly}</p>}
-      {isOutOfMemory(message) && <p className="text-amber-600 dark:text-amber-400">{t("error.hint.oom")}</p>}
-      <p className="break-words font-mono text-muted-foreground">{message}</p>
-    </div>
-  );
-}
-
-function JobRow({
-  job,
-  queueIndex,
-  queuedCount,
-}: {
-  job: Job;
-  queueIndex: number;
-  queuedCount: number;
-  isFirst: boolean;
-}) {
-  const t = useT();
-  const errorMessage = useErrorMessage();
-  const progress = useJobStore((s) => s.progress[job.id]);
-  const { cancel, reorder, retry } = useJobStore.getState();
-
-  const run = async (action: () => Promise<unknown>, successKey?: MessageKey) => {
-    try {
-      await action();
-      if (successKey) toast.success(t(successKey));
-    } catch (e) {
-      toast.error(errorMessage(toAppError(e)));
+  /** 確認後の一括処理。 */
+  async function onConfirm() {
+    const which = confirm;
+    setConfirm(null);
+    if (which === "cancelQueued") {
+      await run(async () => {
+        for (const j of queued) await cancel(j.id);
+      }, t("queue.bulk.cancelled"));
+    } else if (which === "retryFailed") {
+      await run(async () => {
+        for (const j of failed) await retry(j.id);
+      }, t("queue.bulk.retried"));
+    } else if (which === "removeSelected") {
+      await run(async () => {
+        await remove(selFinished.map((j) => j.id));
+        setSelected(new Set());
+      }, t("queue.bulk.removed"));
+    } else if (which === "clear") {
+      await run(async () => {
+        await clearFinished();
+        setSelected(new Set());
+      }, t("queue.cleared"));
     }
-  };
+  }
 
-  const percent =
-    progress && progress.totalSteps > 0 ? Math.round((progress.step / progress.totalSteps) * 100) : null;
-  const { params } = job;
+  const confirmText: Record<Exclude<Confirm, null>, { title: MessageKey; desc: MessageKey; ok: MessageKey }> = {
+    cancelQueued: { title: "queue.confirm.cancelQueued.title", desc: "queue.confirm.cancelQueued.desc", ok: "queue.cancelQueued" },
+    retryFailed: { title: "queue.confirm.retryFailed.title", desc: "queue.confirm.retryFailed.desc", ok: "queue.retryFailed" },
+    removeSelected: { title: "queue.confirm.remove.title", desc: "queue.confirm.remove.desc", ok: "queue.remove" },
+    clear: { title: "queue.confirm.clear.title", desc: "queue.confirm.clear.desc", ok: "queue.clear" },
+  };
+  const ct = confirm ? confirmText[confirm] : null;
 
   return (
-    <li className="flex flex-col gap-2 rounded-xl border p-3">
-      <div className="flex items-start gap-3">
-        <div className="min-w-0 flex-1">
-          <p className="line-clamp-2 text-sm">{params.prompt}</p>
-          <p className="mt-1 text-xs text-muted-foreground">
-            {params.model.name} · {params.width}×{params.height} · {params.steps} steps · seed {params.seed}
-            {job.imageIds.length > 0 && ` · ${job.imageIds.length} ${t("queue.images")}`}
-          </p>
-        </div>
-        <Badge variant={STATUS_VARIANT[job.status]}>{t(`status.${job.status}` as MessageKey)}</Badge>
+    <div className="mx-auto flex max-w-4xl flex-col gap-5 p-8">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <h1 className="text-2xl font-semibold">{t("queue.title")}</h1>
+        <Button
+          type="button"
+          variant={paused ? "default" : "outline"}
+          onClick={() => void run(() => setPaused(!paused))}
+        >
+          {paused ? <Play /> : <Pause />}
+          {paused ? t("queue.resume") : t("queue.pause")}
+        </Button>
       </div>
 
-      {job.status === "running" && <Progress value={percent} />}
-      {job.error && <JobErrorNote code={job.error.code} message={job.error.message} />}
+      {paused && (
+        <p role="status" className="rounded-lg border border-amber-500/40 bg-amber-500/10 p-2 text-sm">
+          {t("queue.paused")}
+        </p>
+      )}
 
-      <div className="flex justify-end gap-1">
-        {job.status === "queued" && (
+      <RunningSummary counts={counts} />
+
+      <div className="flex flex-wrap items-center gap-2">
+        <div role="tablist" aria-label={t("queue.title")} className="flex flex-wrap gap-1">
+          {QUEUE_TABS.map((k) => (
+            <Button
+              key={k}
+              type="button"
+              role="tab"
+              aria-selected={tab === k}
+              size="sm"
+              variant={tab === k ? "default" : "outline"}
+              onClick={() => setTab(k)}
+            >
+              {t(`queue.tab.${k}` as MessageKey)}
+              <span className={cn("ml-1 text-xs", tab === k ? "opacity-80" : "text-muted-foreground")}>{counts[k]}</span>
+            </Button>
+          ))}
+        </div>
+        <div className="relative ml-auto w-full max-w-xs">
+          <Search className="pointer-events-none absolute left-2 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+          <Input
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder={t("queue.search")}
+            aria-label={t("queue.search")}
+            className="pl-8"
+          />
+        </div>
+      </div>
+
+      <div className="flex flex-wrap items-center gap-2 text-sm">
+        <label className="flex items-center gap-2">
+          <input
+            type="checkbox"
+            className="size-4 accent-primary"
+            checked={allVisibleSelected}
+            disabled={visible.length === 0}
+            onChange={toggleAll}
+          />
+          {selected.size > 0 ? t("queue.selected").replace("{n}", String(selectedJobs.length)) : t("queue.selectAll")}
+        </label>
+        {selectedJobs.length > 0 && (
           <>
             <Button
               type="button"
-              variant="ghost"
-              size="icon-sm"
-              aria-label={t("queue.moveUp")}
-              title={t("queue.moveUp")}
-              disabled={queueIndex <= 0}
-              onClick={() => void run(() => reorder(job.id, queueIndex - 1))}
+              size="sm"
+              variant="outline"
+              disabled={selActive.length === 0}
+              onClick={() =>
+                void run(async () => {
+                  for (const j of selActive) await cancel(j.id);
+                  setSelected(new Set());
+                })
+              }
             >
-              <ArrowUp />
+              {t("queue.cancel")}
             </Button>
             <Button
               type="button"
-              variant="ghost"
-              size="icon-sm"
-              aria-label={t("queue.moveDown")}
-              title={t("queue.moveDown")}
-              disabled={queueIndex < 0 || queueIndex >= queuedCount - 1}
-              onClick={() => void run(() => reorder(job.id, queueIndex + 1))}
+              size="sm"
+              variant="outline"
+              disabled={selRetry.length === 0}
+              onClick={() =>
+                void run(async () => {
+                  for (const j of selRetry) await retry(j.id);
+                  setSelected(new Set());
+                }, t("queue.retried"))
+              }
             >
-              <ArrowDown />
+              {t("queue.retry")}
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              disabled={selFinished.length === 0}
+              onClick={() => setConfirm("removeSelected")}
+            >
+              {t("queue.remove")}
             </Button>
           </>
         )}
-        {(job.status === "queued" || job.status === "running") && (
-          <Button type="button" variant="outline" size="sm" onClick={() => void run(() => cancel(job.id))}>
-            <X />
-            {t("queue.cancel")}
+        <span className="ml-auto flex flex-wrap gap-2">
+          <Button type="button" size="sm" variant="outline" disabled={queued.length === 0} onClick={() => setConfirm("cancelQueued")}>
+            {t("queue.cancelQueued")}
           </Button>
-        )}
-        {(job.status === "failed" || job.status === "cancelled") && (
-          <Button type="button" variant="outline" size="sm" onClick={() => void run(() => retry(job.id), "queue.retried")}>
-            <RotateCcw />
-            {t("queue.retry")}
+          <Button type="button" size="sm" variant="outline" disabled={failed.length === 0} onClick={() => setConfirm("retryFailed")}>
+            {t("queue.retryFailed")}
           </Button>
-        )}
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            disabled={counts.all - counts.active === 0}
+            onClick={() => setConfirm("clear")}
+          >
+            {t("queue.clear")}
+          </Button>
+        </span>
       </div>
-    </li>
+
+      {visible.length === 0 ? (
+        <p className="rounded-xl border border-dashed p-8 text-center text-sm text-muted-foreground">
+          {jobs.length === 0 ? t("queue.empty") : t("queue.noMatch")}
+        </p>
+      ) : (
+        <ul className="flex flex-col gap-2">
+          {visible.map((job) => (
+            <JobRow
+              key={job.id}
+              job={job}
+              selected={selected.has(job.id)}
+              onToggle={() => toggle(job.id)}
+              queueIndex={job.status === "queued" ? queued.indexOf(job) : -1}
+              queuedCount={queued.length}
+            />
+          ))}
+        </ul>
+      )}
+
+      {nextCursor && (
+        <div className="flex justify-center">
+          <Button type="button" variant="outline" disabled={loadingMore} onClick={() => void loadMore()}>
+            {t("queue.loadMore")}
+          </Button>
+        </div>
+      )}
+
+      {ct && (
+        <ConfirmDialog
+          open
+          title={t(ct.title)}
+          description={t(ct.desc)}
+          confirmLabel={t(ct.ok)}
+          cancelLabel={t("common.cancel")}
+          destructive={confirm !== "retryFailed"}
+          onOpenChange={(o) => !o && setConfirm(null)}
+          onConfirm={() => void onConfirm()}
+        />
+      )}
+    </div>
   );
 }

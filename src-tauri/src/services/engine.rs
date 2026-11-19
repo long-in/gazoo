@@ -139,6 +139,7 @@ mod tests {
                 face_detailer: true,
                 controlnet_preprocessors: vec![Preprocessor::Canny],
                 inpaint: true,
+                img2img: true,
             },
             error: None,
         }

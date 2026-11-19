@@ -30,6 +30,8 @@ pub struct EngineFeatures {
     pub controlnet_preprocessors: Vec<Preprocessor>,
     /// Inpaint に必要なコアノードがすべて使えるか(docs/13 §3.3)。
     pub inpaint: bool,
+    /// 画像から生成(img2img)に必要なコアノードがすべて使えるか(docs/19 §5)。
+    pub img2img: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]

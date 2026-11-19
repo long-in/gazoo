@@ -5,6 +5,7 @@
 //! - 起動時、前回 running のまま残っていたジョブは failed(`INTERRUPTED`)にする。
 
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -17,9 +18,11 @@ use crate::domain::job::{ImageItem, Job, JobError, JobStatus, Page, ProgressEven
 use crate::domain::params::{GenerationParams, MAX_SEED};
 use crate::engine::{ImageData, Progress};
 use crate::error::{AppError, AppResult};
+use crate::services::assistant::capabilities::catalog;
 use crate::services::engine::EngineService;
 use crate::services::events::EventSink;
 use crate::services::inputs::{check_inpaint, input_abs, read_input};
+use crate::services::models::compat::check_params;
 use crate::services::settings;
 use crate::services::thumbs::{make_thumbnail, thumb_rel_path};
 use crate::util::{now_ms, year_month};
@@ -52,6 +55,8 @@ pub struct JobService {
     paths: AppPaths,
     wake: Notify,
     active: Mutex<Option<Active>>,
+    /// 一時停止中は、次のジョブを始めない(実行中のものは完了まで続く。docs/20 §3.3)。アプリ起動中のみ保持。
+    paused: AtomicBool,
 }
 
 impl JobService {
@@ -68,6 +73,7 @@ impl JobService {
             paths,
             wake: Notify::new(),
             active: Mutex::new(None),
+            paused: AtomicBool::new(false),
         })
     }
 
@@ -88,6 +94,10 @@ impl JobService {
 
     pub async fn enqueue(&self, params: GenerationParams, count: u32) -> AppResult<Vec<Job>> {
         params.validate()?;
+        // カタログで用途が分かるモデル・エンコーダ・VAE が、種別と合っているか(docs/20 §2.4)
+        if let Some(catalog) = catalog() {
+            check_params(catalog, &params)?;
+        }
         if !(1..=MAX_ENQUEUE_COUNT).contains(&count) {
             return Err(AppError::validation(
                 "count",
@@ -110,6 +120,15 @@ impl JobService {
         if let Some(ip) = params.active_inpaint() {
             let root = self.images_root().await?;
             check_inpaint(root, &ip.image, &ip.mask).await?;
+        }
+        if let Some(i2i) = params.active_img2img() {
+            let root = self.images_root().await?;
+            if !input_abs(&root, &i2i.image)?.is_file() {
+                return Err(AppError::ImageNotFound(format!(
+                    "元画像がありません: {}",
+                    i2i.image
+                )));
+            }
         }
         let mut jobs = Vec::with_capacity(count as usize);
         for i in 0..count {
@@ -236,11 +255,38 @@ impl JobService {
         self.db.call(repo::clear_finished).await
     }
 
+    /// 指定した終了済みジョブを履歴から外す(docs/20 §3.4)。
+    pub async fn remove(&self, ids: Vec<String>) -> AppResult<usize> {
+        self.db.call(move |c| repo::remove_finished(c, &ids)).await
+    }
+
+    pub fn is_paused(&self) -> bool {
+        self.paused.load(Ordering::SeqCst)
+    }
+
+    /// 次のジョブを始めるのを止める。実行中のジョブは完了まで続く。
+    pub fn pause(&self) {
+        if !self.paused.swap(true, Ordering::SeqCst) {
+            self.sink.queue_state(true);
+        }
+    }
+
+    pub fn resume(&self) {
+        if self.paused.swap(false, Ordering::SeqCst) {
+            self.sink.queue_state(false);
+        }
+        self.wake.notify_one();
+    }
+
     // ---- ワーカー --------------------------------------------------------------------
 
     /// 待機中ジョブを順に実行し続ける(アプリの寿命と同じ)。
     pub async fn run_worker(self: Arc<Self>) {
         loop {
+            if self.is_paused() {
+                self.wake.notified().await;
+                continue;
+            }
             match self.db.call(|c| repo::next_queued(c)).await {
                 Ok(Some(row)) => self.execute(row).await,
                 Ok(None) => self.wake.notified().await,
@@ -338,6 +384,12 @@ impl JobService {
                 let bytes = read_input(root, rel.clone()).await?;
                 uploaded.push(engine.upload_input(bytes).await?);
             }
+        }
+        // img2img の元画像(Inpaint とは排他。ControlNet の後ろ)
+        if let Some(i2i) = params.active_img2img() {
+            let root = self.images_root().await?;
+            let bytes = read_input(root, i2i.image.clone()).await?;
+            uploaded.push(engine.upload_input(bytes).await?);
         }
         let remote = engine.submit(&params, &uploaded).await?;
         self.db
@@ -967,6 +1019,58 @@ mod tests {
             h.svc.cancel("nope").await.unwrap_err().code(),
             "JOB_NOT_FOUND"
         );
+    }
+
+    #[tokio::test]
+    async fn pause_holds_the_next_job_until_resumed() {
+        let h = harness();
+        tokio::spawn(h.svc.clone().run_worker());
+        h.svc.pause();
+        assert!(h.svc.is_paused());
+        let id = h.svc.enqueue(params("held"), 1).await.unwrap()[0]
+            .id
+            .clone();
+        tokio::time::sleep(Duration::from_millis(150)).await;
+        // 一時停止中は、待機中のまま(エンジンへ送られない)
+        assert_eq!(status_of(&h, &id).await, JobStatus::Queued);
+        assert!(h.engine.submitted.lock().unwrap().is_empty());
+
+        h.svc.resume();
+        assert!(!h.svc.is_paused());
+        wait_for_status(&h, &id, JobStatus::Completed).await;
+    }
+
+    #[tokio::test]
+    async fn remove_only_takes_finished_jobs() {
+        let h = harness();
+        let id = h.svc.enqueue(params("x"), 1).await.unwrap()[0].id.clone();
+        // 待機中は外せない
+        assert_eq!(
+            h.svc.remove(vec![id.clone()]).await.unwrap_err().code(),
+            "VALIDATION"
+        );
+        h.svc.cancel(&id).await.unwrap();
+        assert_eq!(h.svc.remove(vec![id.clone()]).await.unwrap(), 1);
+        assert!(
+            h.svc
+                .list(vec![], None, None)
+                .await
+                .unwrap()
+                .items
+                .is_empty()
+        );
+    }
+
+    #[tokio::test]
+    async fn enqueue_rejects_known_models_of_another_kind() {
+        let h = harness();
+        let mut p = params("mismatch"); // SD 1.5
+        p.model.name = "sd_xl_base_1.0.safetensors".into(); // SDXL のファイル
+        assert_eq!(h.svc.enqueue(p, 1).await.unwrap_err().code(), "VALIDATION");
+        // 手動配置のファイルは断らない
+        let mut ok = params("own");
+        ok.model.name = "my-own-merge.safetensors".into();
+        assert!(h.svc.enqueue(ok, 1).await.is_ok());
     }
 
     #[tokio::test]

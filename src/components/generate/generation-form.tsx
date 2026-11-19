@@ -2,6 +2,7 @@
 
 import { Dices } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 
 import { ModelsLink } from "@/components/models/models-link";
@@ -16,14 +17,19 @@ import {
   isSplit,
   MAX_SEED,
   MODEL_KINDS,
-  modelsFor,
+  clipsForKind,
+  installedKinds,
+  modelsForKind,
+  vaesForKind,
   needsExternalVae,
   randomSeed,
   sizePresets,
   supportsControlnet,
+  supportsImg2img,
   supportsInpaint,
   usesNegative,
 } from "@/lib/generation/defaults";
+import { img2imgReady } from "@/lib/generation/img2img";
 import { inpaintReady } from "@/lib/generation/inpaint";
 import type { MessageKey } from "@/lib/i18n";
 import { useErrorMessage, useT } from "@/lib/i18n/use-t";
@@ -40,8 +46,8 @@ import { useSettingsStore } from "@/stores/settings-store";
 
 import { ControlnetSection } from "./controlnet-section";
 import { FaceDetailerSection } from "./face-detailer-section";
+import { Img2imgSection } from "./img2img-section";
 import { InpaintSection } from "./inpaint-section";
-import { ModelProfilePanel } from "./model-profile-panel";
 import { Field, NumberInput, SliderNumber } from "./fields";
 
 const BUILTIN_VAE = "__builtin__";
@@ -58,7 +64,7 @@ function Choice({
 }: {
   id?: string;
   value: string;
-  options: { value: string; label: string; badges?: CandidateBadge[] }[];
+  options: { value: string; label: string; badges?: CandidateBadge[]; disabled?: boolean }[];
   placeholder?: string;
   onChange: (v: string) => void;
   disabled?: boolean;
@@ -77,7 +83,7 @@ function Choice({
       </SelectTrigger>
       <SelectContent>
         {options.map((o) => (
-          <SelectItem key={o.value} value={o.value}>
+          <SelectItem key={o.value} value={o.value} disabled={o.disabled}>
             {o.label}
             {o.badges?.map((b) => (
               <Badge key={b} variant="secondary" className="ml-1.5">
@@ -95,6 +101,7 @@ const asOptions = (names: string[]) => names.map((n) => ({ value: n, label: n })
 
 export function GenerationForm() {
   const t = useT();
+  const router = useRouter();
   const errorMessage = useErrorMessage();
 
   const { params, count, hydrated } = useFormStore();
@@ -108,6 +115,12 @@ export function GenerationForm() {
 
   const [submitting, setSubmitting] = useState(false);
   const [fieldError, setFieldError] = useState<AppError | null>(null);
+
+  // モデルの説明・絞り込みに使うカタログ。取得ページと同じものを読む(docs/18、20)
+  const catalog = useModelsStore((s) => s.view?.catalog);
+  useEffect(() => {
+    if (!useModelsStore.getState().view) void useModelsStore.getState().load();
+  }, []);
 
   const kind = params.model.kind;
   const flux = isFlux(kind);
@@ -125,7 +138,7 @@ export function GenerationForm() {
   // モデル一覧に合わせて未選択の項目を埋める
   useEffect(() => {
     if (hydrated) applyModels(models);
-  }, [hydrated, models, kind, applyModels]);
+  }, [hydrated, models, kind, catalog, applyModels]);
 
   // 下書きを DB へ自動保存(入力が止まって 0.8 秒後)
   const firstSave = useRef(true);
@@ -141,20 +154,28 @@ export function GenerationForm() {
     return () => clearTimeout(timer);
   }, [params, hydrated]);
 
-  const modelNames = useMemo(() => modelsFor(kind, models), [kind, models]);
-  // モデルの説明(カタログ)。候補のバッジと説明パネルに使う。カタログは取得ページと同じものを読む(docs/18)
-  const catalog = useModelsStore((s) => s.view?.catalog);
-  useEffect(() => {
-    if (!useModelsStore.getState().view) void useModelsStore.getState().load();
-  }, []);
+  // 種別に合うモデル・エンコーダ・VAE だけを選択肢にする(docs/20 §2)
+  const modelNames = useMemo(() => modelsForKind(kind, models, catalog), [kind, models, catalog]);
+  const clipNames = useMemo(() => clipsForKind(kind, models, catalog), [kind, models, catalog]);
+  const vaeNames = useMemo(() => vaesForKind(kind, models, catalog), [kind, models, catalog]);
+  const installed = useMemo(() => installedKinds(models, catalog), [models, catalog]);
+  const kindOptions = useMemo(
+    () =>
+      MODEL_KINDS.map((k) => {
+        const missing = !installed.has(k) && k !== kind && models !== null;
+        const label = t(`generate.kind.${k}` as MessageKey);
+        return { value: k, label: missing ? `${label}(${t("generate.kind.notInstalled")})` : label, disabled: missing };
+      }),
+    [installed, kind, models, t],
+  );
   const modelOptions = useMemo(
     () => modelNames.map((n) => ({ value: n, label: n, badges: candidateBadges(catalog, n) })),
     [modelNames, catalog],
   );
   const vaeOptions = useMemo(() => {
-    const list = asOptions(models?.vaes ?? []);
+    const list = asOptions(vaeNames);
     return externalVae ? list : [{ value: BUILTIN_VAE, label: t("generate.vae.builtin") }, ...list];
-  }, [models, externalVae, t]);
+  }, [vaeNames, externalVae, t]);
 
   // ControlNet を有効にしている間は参照画像が必要
   const cnParams = params.controlnet;
@@ -165,10 +186,16 @@ export function GenerationForm() {
   const inpaintOn = params.inpaint?.enabled === true && supportsInpaint(kind);
   const needsInpaintInput = inpaintOn && !inpaintReady(params.inpaint);
 
+  // 画像から生成を有効にしている間は、元画像が必要(生成サイズも元画像から決まる)
+  const img2imgOn = params.img2img?.enabled === true && supportsImg2img(kind);
+  const needsImg2imgInput = img2imgOn && !img2imgReady(params.img2img);
+  const sizeLocked = inpaintOn || img2imgOn;
+
   const ready =
     status?.connected === true &&
     !needsReference &&
     !needsInpaintInput &&
+    !needsImg2imgInput &&
     params.prompt.trim() !== "" &&
     params.model.name !== "" &&
     (!flux || (params.model.clip.length === 2 && params.model.clip.every(Boolean) && !!params.model.vae)) &&
@@ -180,7 +207,9 @@ export function GenerationForm() {
     setFieldError(null);
     try {
       await enqueue(params, count);
-      toast.success(t("generate.enqueued"));
+      toast.success(t("generate.enqueued"), {
+        action: { label: t("nav.queue"), onClick: () => router.push("/queue") },
+      });
     } catch (e) {
       const appError = toAppError(e);
       setFieldError(appError);
@@ -245,7 +274,7 @@ export function GenerationForm() {
           <Choice
             id="kind"
             value={kind}
-            options={MODEL_KINDS.map((k) => ({ value: k, label: t(`generate.kind.${k}` as MessageKey) }))}
+            options={kindOptions}
             onChange={(v) => setKind(v as ModelKind)}
           />
         </Field>
@@ -261,7 +290,6 @@ export function GenerationForm() {
           />
         </Field>
       </div>
-      <ModelProfilePanel />
       {modelNames.length === 0 && status?.connected && (
         <div className="flex flex-col gap-1">
           <p className="text-xs text-muted-foreground">{t("generate.model.none")}</p>
@@ -281,7 +309,7 @@ export function GenerationForm() {
             <Choice
               id="clip-t5"
               value={params.model.clip[0] ?? ""}
-              options={asOptions(models?.clips ?? [])}
+              options={asOptions(clipNames)}
               placeholder={t("generate.model.placeholder")}
               onChange={(v) => patchModel({ clip: [v, params.model.clip[1] ?? ""] })}
             />
@@ -290,7 +318,7 @@ export function GenerationForm() {
             <Choice
               id="clip-l"
               value={params.model.clip[1] ?? ""}
-              options={asOptions(models?.clips ?? [])}
+              options={asOptions(clipNames)}
               placeholder={t("generate.model.placeholder")}
               onChange={(v) => patchModel({ clip: [params.model.clip[0] ?? "", v] })}
             />
@@ -303,7 +331,7 @@ export function GenerationForm() {
           <Choice
             id="clip-te"
             value={params.model.clip[0] ?? ""}
-            options={asOptions(models?.clips ?? [])}
+            options={asOptions(clipNames)}
             placeholder={t("generate.model.placeholder")}
             invalid={!!err("clip")}
             onChange={(v) => patchModel({ clip: [v] })}
@@ -314,10 +342,10 @@ export function GenerationForm() {
       {/* テキストエンコーダ・VAE が無いときも、取得ページへ案内する */}
       {isSplit(kind) &&
         status?.connected &&
-        ((models?.clips.length ?? 0) === 0 || (models?.vaes.length ?? 0) === 0) && <ModelsLink category={kind} />}
+        (clipNames.length === 0 || vaeNames.length === 0) && <ModelsLink category={kind} />}
       {kind === "flux_gguf" &&
         status?.connected &&
-        ((models?.clips.length ?? 0) < 2 || (models?.vaes.length ?? 0) === 0) && (
+        (clipNames.length < 2 || vaeNames.length === 0) && (
           <ModelsLink category="flux" />
         )}
 
@@ -342,7 +370,7 @@ export function GenerationForm() {
             max={2048}
             step={64}
             invalid={!!err("width")}
-            disabled={inpaintOn}
+            disabled={sizeLocked}
             onChange={(n) => patch({ width: n })}
           />
           <span aria-hidden>×</span>
@@ -353,11 +381,11 @@ export function GenerationForm() {
             max={2048}
             step={64}
             invalid={!!err("height")}
-            disabled={inpaintOn}
+            disabled={sizeLocked}
             onChange={(n) => patch({ height: n })}
           />
         </div>
-        <div className="flex flex-wrap gap-1.5" hidden={inpaintOn}>
+        <div className="flex flex-wrap gap-1.5" hidden={sizeLocked}>
           {sizePresets(kind).map(({ w, h }) => {
             const active = params.width === w && params.height === h;
             return (
@@ -428,11 +456,17 @@ export function GenerationForm() {
         </label>
       </Field>
 
-      <InpaintSection error={err} />
+      {/* 拡張機能(画像から生成・Inpaint・ControlNet・顔補正)。畳んで、フォームの縦の長さを抑えられる(docs/20 §4.2) */}
+      <details open className="group flex flex-col gap-4 [&[open]>summary]:mb-4">
+        <summary className="cursor-pointer text-sm font-medium">{t("generate.extras")}</summary>
+        <Img2imgSection error={err} />
 
-      <ControlnetSection error={err} />
+        <InpaintSection error={err} />
 
-      <FaceDetailerSection error={err} />
+        <ControlnetSection error={err} />
+
+        <FaceDetailerSection error={err} />
+      </details>
 
       <details className="rounded-lg border p-3">
         <summary className="cursor-pointer text-sm font-medium">{t("generate.advanced")}</summary>
@@ -460,11 +494,13 @@ export function GenerationForm() {
           {submitting ? t("generate.submitting") : t("generate.submit")}
         </Button>
       </div>
-      {(needsReference || needsInpaintInput) && (
+      {(needsReference || needsInpaintInput || needsImg2imgInput) && (
         <p role="status" className="-mt-2 text-xs text-amber-600 dark:text-amber-400">
           {needsReference
             ? t("generate.cn.needImage")
-            : params.inpaint?.image
+            : needsImg2imgInput
+              ? t("generate.img2img.needImage")
+              : params.inpaint?.image
               ? t("generate.inpaint.needMask")
               : t("generate.inpaint.needImage")}
         </p>

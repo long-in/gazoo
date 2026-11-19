@@ -10,6 +10,8 @@ pub trait EventSink: Send + Sync {
     fn job_progress(&self, progress: &ProgressEvent);
     fn image_created(&self, image: &ImageItem);
     fn image_deleted(&self, ids: &[String]);
+    /// キューの一時停止・再開(docs/20 §3.3)。通知先が無いテスト用の実装は何もしなくてよい。
+    fn queue_state(&self, _paused: bool) {}
 }
 
 pub struct TauriSink(pub AppHandle);
@@ -28,6 +30,11 @@ impl EventSink for TauriSink {
         let _ = self
             .0
             .emit("image://deleted", serde_json::json!({ "ids": ids }));
+    }
+    fn queue_state(&self, paused: bool) {
+        let _ = self
+            .0
+            .emit("queue://state", serde_json::json!({ "paused": paused }));
     }
 }
 

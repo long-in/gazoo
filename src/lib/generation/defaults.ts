@@ -1,14 +1,18 @@
 import type { EngineModels } from "@/lib/tauri/engine";
+import type { ModelCatalog } from "@/lib/tauri/models";
 import type {
   ControlnetParams,
   ControlnetUnit,
   FaceDetailerParams,
   GenerationParams,
+  Img2imgParams,
   InpaintParams,
   ModelKind,
   Preprocessor,
 } from "@/lib/tauri/jobs";
 
+import { type FileKinds, fileKinds, filterForKind } from "./compat";
+import { defaultImg2img } from "./img2img-defaults";
 import { defaultInpaint } from "./inpaint";
 
 export const MODEL_KINDS: ModelKind[] = ["sd15", "sdxl", "flux", "flux_gguf", "anima", "qwen_image", "krea2"];
@@ -89,6 +93,9 @@ export function defaultControlnet(): ControlnetParams {
 /** ControlNet に対応するモデル種別(SD 1.5 / SDXL)。 */
 export const supportsControlnet = (kind: ModelKind) => supportsExtras(kind);
 
+/** 画像から生成(img2img)に対応するモデル種別(SD 1.5 / SDXL)。 */
+export const supportsImg2img = (kind: ModelKind) => supportsExtras(kind);
+
 /** Inpaint に対応するモデル種別(SD 1.5 / SDXL)。 */
 export const supportsInpaint = (kind: ModelKind) => supportsExtras(kind);
 
@@ -130,6 +137,10 @@ export function switchKind(current: GenerationParams, kind: ModelKind): Generati
     ...(current.controlnet && {
       controlnet: { ...current.controlnet, enabled: current.controlnet.enabled && supportsControlnet(kind) },
     }),
+    // 画像から生成も同様(元画像は残し、非対応の種別では無効にする)
+    ...(current.img2img && {
+      img2img: { ...current.img2img, enabled: current.img2img.enabled && supportsImg2img(kind) },
+    }),
     // Inpaint も同様(参照画像・マスクは残し、非対応の種別では無効にする)
     ...(current.inpaint && {
       inpaint: { ...current.inpaint, enabled: current.inpaint.enabled && supportsInpaint(kind) },
@@ -154,6 +165,29 @@ export function modelsFor(kind: ModelKind, models: EngineModels | null): string[
   }
 }
 
+/** カタログから作るファイル → 種別の索引(カタログが無ければ空 = 絞り込まない)。 */
+const indexOf = (catalog: ModelCatalog | null | undefined): FileKinds => fileKinds(catalog);
+
+/** 種別に合う本体の一覧(カタログで他の種別のものと分かるファイルは除く。docs/20 §2)。 */
+export function modelsForKind(kind: ModelKind, models: EngineModels | null, catalog?: ModelCatalog | null): string[] {
+  return filterForKind(modelsFor(kind, models), kind, indexOf(catalog));
+}
+
+/** 種別に合うテキストエンコーダの一覧。 */
+export function clipsForKind(kind: ModelKind, models: EngineModels | null, catalog?: ModelCatalog | null): string[] {
+  return filterForKind(models?.clips ?? [], kind, indexOf(catalog));
+}
+
+/** 種別に合う VAE の一覧。 */
+export function vaesForKind(kind: ModelKind, models: EngineModels | null, catalog?: ModelCatalog | null): string[] {
+  return filterForKind(models?.vaes ?? [], kind, indexOf(catalog));
+}
+
+/** 導入済みのモデルがある種別(生成画面の種別の選択肢に使う。docs/20 §2.3)。 */
+export function installedKinds(models: EngineModels | null, catalog?: ModelCatalog | null): Set<ModelKind> {
+  return new Set(MODEL_KINDS.filter((k) => modelsForKind(k, models, catalog).length > 0));
+}
+
 /** Anima / Qwen-Image 2.1 / Krea 2 の、テキストエンコーダと VAE を一覧から選ぶときの目印(docs/17 §2)。 */
 const SPLIT_FILES: Record<"anima" | "qwen_image" | "krea2", { clip: RegExp; vae: RegExp }> = {
   anima: { clip: /qwen_3_06b|qwen3_0\.6b/i, vae: /^qwen_image_vae\b/i },
@@ -168,29 +202,36 @@ const first = (list: string[], pattern?: RegExp) =>
  * エンジンのモデル一覧に合わせて、未選択・存在しないモデルを埋める。
  * 既に有効な選択はそのまま保つ。一覧が未取得(null)なら何も変えない。
  */
-export function autofill(params: GenerationParams, models: EngineModels | null): GenerationParams {
+export function autofill(
+  params: GenerationParams,
+  models: EngineModels | null,
+  catalog?: ModelCatalog | null,
+): GenerationParams {
   if (!models) return params;
   const { kind } = params.model;
-  const list = modelsFor(kind, models);
+  // 種別に合うものだけを候補にする(カタログが無ければ全件)
+  const list = modelsForKind(kind, models, catalog);
+  const clips = clipsForKind(kind, models, catalog);
+  const vaes = vaesForKind(kind, models, catalog);
   const name = list.includes(params.model.name) ? params.model.name : (list[0] ?? "");
 
   let clip = params.model.clip;
   let vae = params.model.vae;
   if (isFlux(kind)) {
-    const t5 = models.clips.includes(clip[0]) ? clip[0] : first(models.clips, /t5/i);
-    const clipL = models.clips.includes(clip[1]) ? clip[1] : first(models.clips, /clip_l|clip-l/i);
+    const t5 = clips.includes(clip[0]) ? clip[0] : first(clips, /t5/i);
+    const clipL = clips.includes(clip[1]) ? clip[1] : first(clips, /clip_l|clip-l/i);
     clip = [t5, clipL];
-    vae = vae && models.vaes.includes(vae) ? vae : first(models.vaes, /^ae\b|ae\.|flux/i) || null;
+    vae = vae && vaes.includes(vae) ? vae : first(vaes, /^ae\b|ae\.|flux/i) || null;
   } else if (kind === "anima" || kind === "qwen_image" || kind === "krea2") {
     // テキストエンコーダは 1 つ。種別に合うものを優先して選ぶ(有効な選択は保つ)
     const hint = SPLIT_FILES[kind];
-    const te = models.clips.includes(clip[0]) ? clip[0] : first(models.clips, hint.clip);
+    const te = clips.includes(clip[0]) ? clip[0] : first(clips, hint.clip);
     clip = [te];
-    vae = vae && models.vaes.includes(vae) ? vae : first(models.vaes, hint.vae) || null;
+    vae = vae && vaes.includes(vae) ? vae : first(vaes, hint.vae) || null;
   } else {
     clip = [];
     // SD 系の VAE は任意(null = チェックポイント内蔵)。存在しない指定だけ外す。
-    vae = vae && models.vaes.includes(vae) ? vae : null;
+    vae = vae && vaes.includes(vae) ? vae : null;
   }
 
   const sampler = models.samplers.includes(params.sampler) ? params.sampler : (models.samplers[0] ?? params.sampler);
@@ -242,6 +283,7 @@ export function restoreParams(saved: Partial<GenerationParams> | null | undefine
       },
     }),
     ...(saved.inpaint && { inpaint: { ...defaultInpaint(), ...saved.inpaint } satisfies InpaintParams }),
+    ...(saved.img2img && { img2img: { ...defaultImg2img(), ...saved.img2img } satisfies Img2imgParams }),
   };
 }
 

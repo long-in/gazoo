@@ -2,6 +2,7 @@ import {
   modelsFor,
   supportsControlnet,
   supportsFaceDetailer,
+  supportsImg2img,
   supportsInpaint,
   usesNegative,
 } from "@/lib/generation/defaults";
@@ -72,6 +73,7 @@ export function featuresFor(kind: ModelKind) {
     faceDetailer: supportsFaceDetailer(kind),
     controlnet: supportsControlnet(kind),
     inpaint: supportsInpaint(kind),
+    img2img: supportsImg2img(kind),
   };
 }
 

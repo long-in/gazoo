@@ -61,6 +61,15 @@ export interface InpaintParams {
   compositeBack: boolean;
 }
 
+/** 画像から生成(img2img。docs/19 §4)。SD 1.5 / SDXL のみ。Inpaint とは同時に使えない。 */
+export interface Img2imgParams {
+  enabled: boolean;
+  /** 元画像("inputs/<uuid>.png")。 */
+  image: string;
+  /** 0.05〜1 */
+  denoise: number;
+}
+
 /** docs/03-data-model.md の params_json と同一。 */
 export interface GenerationParams {
   schemaVersion: number;
@@ -83,6 +92,8 @@ export interface GenerationParams {
   controlnet?: ControlnetParams;
   /** 無ければ Inpaint は無効。 */
   inpaint?: InpaintParams;
+  /** 無ければ画像から生成は無効。 */
+  img2img?: Img2imgParams;
 }
 
 export type JobStatus = "queued" | "running" | "completed" | "failed" | "cancelled";
@@ -142,3 +153,10 @@ export const jobReorder = (id: string, newPosition: number) =>
 export const jobRetry = (id: string) => invoke<Job>("job_retry", { id });
 
 export const jobClearFinished = () => invoke<number>("job_clear_finished");
+
+/** 終了済みジョブを履歴から外す(docs/20 §3.4)。 */
+export const jobRemove = (ids: string[]) => invoke<number>("job_remove", { ids });
+
+export const queuePause = () => invoke<void>("queue_pause");
+export const queueResume = () => invoke<void>("queue_resume");
+export const queueState = () => invoke<{ paused: boolean }>("queue_state");

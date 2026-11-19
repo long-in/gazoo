@@ -19,7 +19,6 @@ import { useErrorMessage, useT } from "@/lib/i18n/use-t";
 import { toAppError } from "@/lib/tauri/errors";
 import { storageChangeImagesDir } from "@/lib/tauri/storage";
 import { useGalleryStore } from "@/stores/gallery-store";
-import { useJobStore } from "@/stores/job-store";
 import { useSettingsStore } from "@/stores/settings-store";
 
 /**
@@ -56,7 +55,6 @@ export function StorageSection() {
       const report = await storageChangeImagesDir(pending.dir, moveExisting);
       await useSettingsStore.getState().load();
       // 画像の絶対パスが変わるため、表示中の一覧を取り直す
-      useJobStore.setState({ recentImages: [] });
       void useGalleryStore.getState().reload();
       setPending(null);
       const detail = moveExisting

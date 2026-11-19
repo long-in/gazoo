@@ -139,6 +139,23 @@ pub struct InpaintParams {
     pub composite_back: bool,
 }
 
+/// 画像から生成(img2img。docs/19 §4)。SD 1.5 / SDXL のみ。元画像を出発点に、denoise の分だけ描き直す。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Img2imgParams {
+    #[serde(default)]
+    pub enabled: bool,
+    /// 元画像(`inputs/<uuid>.png`)。
+    #[serde(default)]
+    pub image: String,
+    #[serde(default = "default_img2img_denoise")]
+    pub denoise: f64,
+}
+
+fn default_img2img_denoise() -> f64 {
+    0.6
+}
+
 fn default_inpaint_denoise() -> f64 {
     0.7
 }
@@ -229,15 +246,24 @@ pub struct GenerationParams {
     /// Inpaint。無ければ無効。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub inpaint: Option<InpaintParams>,
+    /// 画像から生成(img2img)。無ければ無効。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub img2img: Option<Img2imgParams>,
 }
 
 impl GenerationParams {
+    /// 有効な img2img の設定(無効・未指定なら `None`)。
+    pub fn active_img2img(&self) -> Option<&Img2imgParams> {
+        self.img2img.as_ref().filter(|i| i.enabled)
+    }
+
     /// 有効な Inpaint の設定(無効・未指定なら `None`)。
     pub fn active_inpaint(&self) -> Option<&InpaintParams> {
         self.inpaint.as_ref().filter(|i| i.enabled)
     }
 
-    /// エンジンへ送る画像の数。順序は ControlNet の各ユニット、Inpaint の画像、Inpaint のマスク。
+    /// エンジンへ送る画像の数。順序は ControlNet の各ユニット、Inpaint の画像、Inpaint のマスク、
+    /// img2img の元画像(Inpaint と img2img は排他)。
     pub fn upload_count(&self) -> usize {
         self.active_controlnet_units().len()
             + if self.active_inpaint().is_some() {
@@ -245,6 +271,7 @@ impl GenerationParams {
             } else {
                 0
             }
+            + usize::from(self.active_img2img().is_some())
     }
 
     /// 有効な ControlNet のユニット(無効・未指定・ユニットなしなら空)。
@@ -338,6 +365,26 @@ impl GenerationParams {
         }
         if let Some(ip) = self.active_inpaint() {
             self.validate_inpaint(ip)?;
+        }
+        if let Some(i2i) = self.active_img2img() {
+            self.validate_img2img(i2i)?;
+        }
+        Ok(())
+    }
+
+    fn validate_img2img(&self, i2i: &Img2imgParams) -> AppResult<()> {
+        let bad = |field: &str, msg: &str| Err(AppError::validation(field, msg));
+        if !self.model.kind.supports_extras() {
+            return bad("img2img", "画像から生成は SD 1.5 / SDXL のみ対応です");
+        }
+        if self.active_inpaint().is_some() {
+            return bad("img2img", "画像から生成と Inpaint は同時に使えません");
+        }
+        if !is_valid_input_path(&i2i.image) {
+            return bad("img2img.image", "元画像を選択してください");
+        }
+        if !(0.05..=1.0).contains(&i2i.denoise) || !i2i.denoise.is_finite() {
+            return bad("img2img.denoise", "強さは 0.05〜1.0 で指定してください");
         }
         Ok(())
     }
@@ -452,6 +499,7 @@ pub fn sample(kind: ModelKind) -> GenerationParams {
         face_detailer: None,
         controlnet: None,
         inpaint: None,
+        img2img: None,
     }
 }
 
@@ -725,6 +773,58 @@ mod tests {
             f(p.inpaint.as_mut().unwrap());
             assert_eq!(field_of(p.validate()), field);
         }
+    }
+
+    fn with_img2img(kind: ModelKind) -> GenerationParams {
+        let mut p = sample(kind);
+        p.img2img = Some(Img2imgParams {
+            enabled: true,
+            image: "inputs/a.png".into(),
+            denoise: 0.6,
+        });
+        p
+    }
+
+    #[test]
+    fn img2img_valid_for_sd_and_rejected_for_other_kinds_or_with_inpaint() {
+        for k in [ModelKind::Sd15, ModelKind::Sdxl] {
+            assert!(with_img2img(k).validate().is_ok());
+        }
+        for k in NON_SD {
+            assert_eq!(field_of(with_img2img(k).validate()), "img2img");
+        }
+        // 顔補正・ControlNet とは併用できる。Inpaint とは排他
+        let mut p = with_img2img(ModelKind::Sd15);
+        p.face_detailer = Some(FaceDetailerParams {
+            enabled: true,
+            detector: "bbox/face_yolov8m.pt".into(),
+            denoise: 0.4,
+            prompt: String::new(),
+            confidence: 0.5,
+        });
+        assert!(p.validate().is_ok());
+        p.face_detailer = None;
+        p.inpaint = with_inpaint(ModelKind::Sd15).inpaint;
+        assert_eq!(field_of(p.validate()), "img2img");
+        // 無効なら、他の種別でも検証しない
+        let mut off = with_img2img(ModelKind::Flux);
+        off.img2img.as_mut().unwrap().enabled = false;
+        assert!(off.validate().is_ok());
+    }
+
+    #[test]
+    fn img2img_rejects_bad_values_and_counts_one_upload() {
+        let mut p = with_img2img(ModelKind::Sd15);
+        assert_eq!(p.upload_count(), 1);
+        p.img2img.as_mut().unwrap().image = "../x.png".into();
+        assert_eq!(field_of(p.validate()), "img2img.image");
+        for d in [0.0, 1.01, f64::NAN] {
+            let mut p = with_img2img(ModelKind::Sd15);
+            p.img2img.as_mut().unwrap().denoise = d;
+            assert_eq!(field_of(p.validate()), "img2img.denoise");
+        }
+        let i: Img2imgParams = serde_json::from_str(r#"{"enabled":true}"#).unwrap();
+        assert_eq!(i.denoise, 0.6);
     }
 
     #[test]

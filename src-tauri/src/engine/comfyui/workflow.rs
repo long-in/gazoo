@@ -4,7 +4,8 @@
 use serde_json::{Value, json};
 
 use crate::domain::params::{
-    ControlnetUnit, FaceDetailerParams, GenerationParams, InpaintParams, ModelKind, Preprocessor,
+    ControlnetUnit, FaceDetailerParams, GenerationParams, Img2imgParams, InpaintParams, ModelKind,
+    Preprocessor,
 };
 
 /// 顔補正(`FaceDetailer`)のノード ID。進捗の段階判定(generate.rs)でも使う。
@@ -94,10 +95,55 @@ fn build_sd(p: &GenerationParams, prefix: &str, control_images: &[String]) -> Va
         let name = |i: usize| control_images.get(n + i).cloned().unwrap_or_default();
         add_inpaint(&mut wf, p, ip, &vae_link, &name(0), &name(1));
     }
+    if let Some(i2i) = p.active_img2img() {
+        // 画像の並びは ControlNet のユニットの後ろ(Inpaint とは排他なので同じ位置)
+        let n = p.active_controlnet_units().len();
+        let image = control_images.get(n).cloned().unwrap_or_default();
+        add_img2img(&mut wf, p, i2i, &vae_link, &image);
+    }
     if let Some(fd) = p.active_face_detailer() {
         add_face_detailer(&mut wf, p, fd, &vae_link);
     }
     wf
+}
+
+/// img2img の最初のノード ID(顔補正 20〜、ControlNet 30〜、Inpaint 60〜 と重ならない)。
+const IMG2IMG_BASE: usize = 80;
+
+/// 元画像を生成サイズへ合わせて VAE エンコードし、空の潜在の代わりにサンプリングする(docs/19 §5)。
+fn add_img2img(
+    wf: &mut Value,
+    p: &GenerationParams,
+    i2i: &Img2imgParams,
+    vae: &Value,
+    image: &str,
+) {
+    let id = |k: usize| (IMG2IMG_BASE + k).to_string();
+    wf[id(0)] = node("LoadImage", json!({ "image": image }));
+    wf[id(1)] = node(
+        "ImageScale",
+        json!({
+            "image": link(&id(0), 0),
+            "upscale_method": "lanczos",
+            "width": p.width,
+            "height": p.height,
+            "crop": "disabled",
+        }),
+    );
+    wf[id(2)] = node(
+        "VAEEncode",
+        json!({ "pixels": link(&id(1), 0), "vae": vae }),
+    );
+    let mut latent = link(&id(2), 0);
+    if p.batch_size > 1 {
+        wf[id(3)] = node(
+            "RepeatLatentBatch",
+            json!({ "samples": latent, "amount": p.batch_size }),
+        );
+        latent = link(&id(3), 0);
+    }
+    wf["5"]["inputs"]["latent_image"] = latent;
+    wf["5"]["inputs"]["denoise"] = json!(i2i.denoise);
 }
 
 /// Inpaint の最初のノード ID(ControlNet の 30〜、顔補正の 20〜22 と重ならない)。
@@ -869,6 +915,74 @@ mod tests {
         assert_eq!(wf["64"]["inputs"]["image"], "mask.png");
         // ControlNet の条件付けと両立する
         assert_eq!(wf["5"]["inputs"]["positive"], json!(["34", 0]));
+    }
+
+    fn img2img_params(kind: ModelKind) -> GenerationParams {
+        let mut p = sample(kind);
+        p.img2img = Some(Img2imgParams {
+            enabled: true,
+            image: "inputs/a.png".into(),
+            denoise: 0.55,
+        });
+        p
+    }
+
+    #[test]
+    fn img2img_replaces_the_empty_latent_with_the_encoded_image() {
+        for kind in [ModelKind::Sd15, ModelKind::Sdxl] {
+            let mut p = img2img_params(kind);
+            p.width = 768;
+            p.height = 512;
+            let wf = build(&p, "gazoo", &["src.png".to_string()]);
+            assert_well_formed(&wf);
+            assert_eq!(class_of(&wf, "80"), "LoadImage");
+            assert_eq!(wf["80"]["inputs"]["image"], "src.png");
+            assert_eq!(wf["81"]["inputs"]["width"], 768);
+            assert_eq!(wf["81"]["inputs"]["height"], 512);
+            assert_eq!(class_of(&wf, "82"), "VAEEncode");
+            assert_eq!(wf["82"]["inputs"]["vae"], json!(["1", 2]));
+            let ks = &wf["5"]["inputs"];
+            assert_eq!(ks["latent_image"], json!(["82", 0]));
+            assert_eq!(ks["denoise"], 0.55);
+            assert!(wf.get("83").is_none());
+        }
+    }
+
+    #[test]
+    fn img2img_uses_explicit_vae_repeats_for_batches_and_follows_controlnet_images() {
+        let mut p = cn_params(ModelKind::Sd15, Preprocessor::Canny);
+        p.img2img = img2img_params(ModelKind::Sd15).img2img;
+        p.model.vae = Some("v.safetensors".into());
+        p.batch_size = 2;
+        let wf = build(&p, "gazoo", &["cn.png".to_string(), "src.png".to_string()]);
+        assert_well_formed(&wf);
+        assert_eq!(wf["30"]["inputs"]["image"], "cn.png");
+        assert_eq!(wf["80"]["inputs"]["image"], "src.png");
+        assert_eq!(wf["82"]["inputs"]["vae"], json!(["7", 0]));
+        assert_eq!(wf["83"]["inputs"]["amount"], 2);
+        assert_eq!(wf["5"]["inputs"]["latent_image"], json!(["83", 0]));
+        // ControlNet の条件付けと両立する
+        assert_eq!(wf["5"]["inputs"]["positive"], json!(["34", 0]));
+    }
+
+    #[test]
+    fn img2img_coexists_with_face_detailer_and_disabled_leaves_workflow_unchanged() {
+        let mut p = img2img_params(ModelKind::Sd15);
+        p.face_detailer = Some(FaceDetailerParams {
+            enabled: true,
+            detector: "bbox/face_yolov8m.pt".into(),
+            denoise: 0.4,
+            prompt: String::new(),
+            confidence: 0.5,
+        });
+        let wf = build(&p, "gazoo", &["src.png".to_string()]);
+        assert_well_formed(&wf);
+        assert_eq!(class_of(&wf, "22"), "FaceDetailer");
+
+        let plain = build(&sample(ModelKind::Sd15), "gazoo", &[]);
+        let mut off = img2img_params(ModelKind::Sd15);
+        off.img2img.as_mut().unwrap().enabled = false;
+        assert_eq!(build(&off, "gazoo", &[]), plain);
     }
 
     #[test]

@@ -2,19 +2,22 @@ import { create } from "zustand";
 
 import {
   type GenerationParams,
-  type ImageItem,
   type Job,
   type JobProgress,
   jobCancel,
   jobClearFinished,
   jobEnqueue,
   jobList,
+  jobRemove,
   jobReorder,
   jobRetry,
+  queuePause,
+  queueResume,
+  queueState,
 } from "@/lib/tauri/jobs";
 
-/** 直近の生成画像として保持する最大数(セッション内)。 */
-const MAX_RECENT_IMAGES = 24;
+/** 履歴を一度に読み込む件数(docs/20 Q-95)。 */
+const PAGE_SIZE = 200;
 
 const rank = (j: Job) => (j.status === "running" ? 0 : j.status === "queued" ? 1 : 2);
 
@@ -32,15 +35,24 @@ interface JobState {
   /** 常に `sortJobs` 済み(セレクタが毎回新しい配列を返さないよう、保持する)。 */
   jobs: Job[];
   progress: Record<string, JobProgress>;
-  recentImages: ImageItem[];
   loaded: boolean;
+  /** 一時停止中(次のジョブを始めない。docs/20 §3.3)。 */
+  paused: boolean;
+  /** 履歴の続きを取得するためのカーソル(無ければ最後まで読み込み済み)。 */
+  nextCursor: string | null;
+  loadingMore: boolean;
 
   load: () => Promise<void>;
+  /** 履歴の続きを読み込む。 */
+  loadMore: () => Promise<void>;
+  applyQueueState: (paused: boolean) => void;
+  loadQueueState: () => Promise<void>;
+  /** 一時停止・再開(失敗時は `AppError` を throw)。 */
+  setPaused: (paused: boolean) => Promise<void>;
+  /** 終了済みジョブを履歴から外す(失敗時は `AppError` を throw)。 */
+  remove: (ids: string[]) => Promise<number>;
   applyUpdated: (job: Job) => void;
   applyProgress: (p: JobProgress) => void;
-  applyImage: (image: ImageItem) => void;
-  /** ギャラリーで削除された画像を「直近の結果」からも外す。 */
-  removeImages: (ids: string[]) => void;
 
   /** 以下は失敗時に `AppError` を throw する(呼び出し側で表示)。 */
   enqueue: (params: GenerationParams, count: number) => Promise<Job[]>;
@@ -53,16 +65,59 @@ interface JobState {
 export const useJobStore = create<JobState>((set, get) => ({
   jobs: [],
   progress: {},
-  recentImages: [],
   loaded: false,
+  paused: false,
+  nextCursor: null,
+  loadingMore: false,
 
   load: async () => {
     try {
-      const page = await jobList({ limit: 200 });
-      set({ jobs: sortJobs(page.items), loaded: true });
+      const page = await jobList({ limit: PAGE_SIZE });
+      set({ jobs: sortJobs(page.items), loaded: true, nextCursor: page.nextCursor ?? null });
     } catch {
       set({ loaded: true });
     }
+  },
+
+  loadMore: async () => {
+    const cursor = get().nextCursor;
+    if (!cursor || get().loadingMore) return;
+    set({ loadingMore: true });
+    try {
+      const page = await jobList({ limit: PAGE_SIZE, cursor });
+      set((s) => {
+        const have = new Set(s.jobs.map((j) => j.id));
+        return {
+          jobs: sortJobs([...s.jobs, ...page.items.filter((j) => !have.has(j.id))]),
+          nextCursor: page.nextCursor ?? null,
+          loadingMore: false,
+        };
+      });
+    } catch {
+      set({ loadingMore: false });
+    }
+  },
+
+  applyQueueState: (paused) => set({ paused }),
+
+  loadQueueState: async () => {
+    try {
+      set({ paused: (await queueState()).paused });
+    } catch {
+      /* 取得できなくても画面は動く */
+    }
+  },
+
+  setPaused: async (paused) => {
+    await (paused ? queuePause() : queueResume());
+    set({ paused });
+  },
+
+  remove: async (ids) => {
+    const n = await jobRemove(ids);
+    const gone = new Set(ids);
+    set((s) => ({ jobs: s.jobs.filter((j) => !gone.has(j.id)) }));
+    return n;
   },
 
   applyUpdated: (job) =>
@@ -74,17 +129,6 @@ export const useJobStore = create<JobState>((set, get) => ({
     }),
 
   applyProgress: (p) => set((s) => ({ progress: { ...s.progress, [p.jobId]: p } })),
-
-  applyImage: (image) =>
-    set((s) => ({
-      recentImages: [image, ...s.recentImages.filter((i) => i.id !== image.id)].slice(0, MAX_RECENT_IMAGES),
-    })),
-
-  removeImages: (ids) =>
-    set((s) => {
-      const gone = new Set(ids);
-      return { recentImages: s.recentImages.filter((i) => !gone.has(i.id)) };
-    }),
 
   // 投入結果は `job://updated` でも届くが、重複しても `applyUpdated` が id で畳み込む
   enqueue: async (params, count) => {
