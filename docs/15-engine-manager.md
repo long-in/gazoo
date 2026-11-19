@@ -178,3 +178,4 @@ interface EngineProcState {
 - 起動確認(`/system_stats`)は外部クレートを使わない最小の HTTP で行う。ログの ANSI 色指定は取り除いて保持する。
 - 起動の途中で停止が要求された場合は、起動した直後に終了させる(競合対策)。
 - 検証: Rust のユニットテスト(設定・引数・状態遷移・ポート使用中・タイムアウト・再起動・競合・ログ)、実機の ComfyUI での起動 → 再起動 → 停止(`cargo test -- --ignored real_comfyui_process`。停止後にポートが解放されることまで確認)。画面の目視確認と macOS は未実施(09)。
+- **初期値の自動入力(追加)**: 設定値がわからないユーザー向けに、未設定の `main.py` / Python / base-directory は、候補(§3)を初期値として画面に入れて返す(保存はユーザーが有効化して「保存」したとき)。起動中の ComfyUI がない場合は、実行ファイルの場所とカレントディレクトリから親方向に最大 8 階層、`comfyui/ComfyUI/main.py` または `ComfyUI/main.py`(08 のレイアウト)を探す。Python は `venv`、base-directory は `data` があるときだけ入れる。見つからなければ空欄のまま(従来どおり手入力)。ポートの既定は 8188。

@@ -175,6 +175,38 @@ pub fn suggest(argv: &[String]) -> Suggestions {
     out
 }
 
+/// docs/08 のレイアウト(`<root>/ComfyUI/main.py`、`<root>/venv`、`<root>/data`)から候補を求める。
+fn suggest_from_root(root: &Path, main: &Path) -> Suggestions {
+    let py = if cfg!(windows) {
+        root.join("venv").join("Scripts").join("python.exe")
+    } else {
+        root.join("venv").join("bin").join("python")
+    };
+    let data = root.join("data");
+    Suggestions {
+        main_py: Some(main.to_string_lossy().into_owned()),
+        python: py.is_file().then(|| py.to_string_lossy().into_owned()),
+        base_directory: data.is_dir().then(|| data.to_string_lossy().into_owned()),
+    }
+}
+
+/// 起動中でないときの初期値用に、既知の場所から ComfyUI を探す(docs/15 §9)。
+/// `starts` の各パスとその親ディレクトリ(最大 8 階層)で、`comfyui/ComfyUI/main.py` と
+/// `ComfyUI/main.py` を探す。最初に見つかったものを返す。
+pub fn detect(starts: &[PathBuf]) -> Suggestions {
+    for start in starts {
+        for dir in start.ancestors().take(8) {
+            for root in [dir.join("comfyui"), dir.to_path_buf()] {
+                let main = root.join("ComfyUI").join("main.py");
+                if main.is_file() {
+                    return suggest_from_root(&root, &main);
+                }
+            }
+        }
+    }
+    Suggestions::default()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -293,5 +325,23 @@ mod tests {
         let s = suggest(&["main.py".to_string(), "--base-directory=data".to_string()]);
         assert_eq!(s, Suggestions::default());
         assert_eq!(suggest(&[]), Suggestions::default());
+    }
+
+    #[test]
+    fn detect_finds_the_08_layout_from_a_nested_start() {
+        let root = tmp("detect");
+        let main = root.join("comfyui").join("ComfyUI").join("main.py");
+        std::fs::create_dir_all(main.parent().unwrap()).unwrap();
+        std::fs::write(&main, "").unwrap();
+        std::fs::create_dir_all(root.join("comfyui").join("data")).unwrap();
+        let start = root
+            .join("src-tauri")
+            .join("target")
+            .join("release")
+            .join("gazoo.exe");
+        let s = detect(&[start]);
+        assert_eq!(s.main_py.as_deref(), Some(main.to_string_lossy().as_ref()));
+        assert!(s.base_directory.is_some());
+        assert_eq!(detect(&[tmp("detect-empty")]), Suggestions::default());
     }
 }

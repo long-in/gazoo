@@ -10,7 +10,7 @@ export const metadata: Metadata = {
   description: "Local image generation desktop app",
 };
 
-export default function RootLayout({ children }: LayoutProps<"/">) {
+export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="ja" className="h-full antialiased font-sans" suppressHydrationWarning>
       <body className="h-full">
