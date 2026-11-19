@@ -8,7 +8,7 @@ use tauri::{AppHandle, Manager, State};
 use crate::db::Db;
 use crate::error::{AppError, AppResult};
 use crate::services::engine::EngineService;
-use crate::services::engine_process::config::{ManagedEngineConfig, Suggestions, suggest};
+use crate::services::engine_process::config::{ManagedEngineConfig, Suggestions, detect, suggest};
 use crate::services::engine_process::{EngineProcState, EngineProcess};
 use crate::services::jobs::JobService;
 use crate::services::models::is_local_engine;
@@ -30,9 +30,9 @@ async fn load_config(db: &Db) -> AppResult<ManagedEngineConfig> {
 }
 
 async fn view(db: &Db, engine: &EngineService, proc: &EngineProcess) -> AppResult<ManagedView> {
-    let config = load_config(db).await?;
+    let mut config = load_config(db).await?;
     let engine = engine.engine()?;
-    let suggestions = if is_local_engine(&engine.url()) {
+    let from_running = if is_local_engine(&engine.url()) {
         engine
             .launch_args()
             .await
@@ -41,11 +41,38 @@ async fn view(db: &Db, engine: &EngineService, proc: &EngineProcess) -> AppResul
     } else {
         Suggestions::default()
     };
+    let suggestions = if from_running.main_py.is_some() {
+        from_running
+    } else {
+        detect(&search_starts())
+    };
+    // 未設定の項目は、見つかった候補を初期値として入れる(docs/15 §9。保存はユーザーの操作で行う)
+    if config.main_py.is_empty() {
+        config.main_py = suggestions.main_py.clone().unwrap_or_default();
+    }
+    if config.python.is_empty() {
+        config.python = suggestions.python.clone().unwrap_or_default();
+    }
+    if config.base_directory.is_none() {
+        config.base_directory = suggestions.base_directory.clone();
+    }
     Ok(ManagedView {
         config,
         state: proc.state(),
         suggestions,
     })
+}
+
+/// 既定の探索の起点(実行ファイルの場所と、カレントディレクトリ)。
+fn search_starts() -> Vec<std::path::PathBuf> {
+    let mut v = Vec::new();
+    if let Ok(exe) = std::env::current_exe() {
+        v.push(exe);
+    }
+    if let Ok(cwd) = std::env::current_dir() {
+        v.push(cwd);
+    }
+    v
 }
 
 #[tauri::command]
