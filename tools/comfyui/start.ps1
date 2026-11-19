@@ -1,4 +1,4 @@
-# ローカル ComfyUI の起動(Windows)。docs/08-local-comfyui.md 参照。
+﻿# ローカル ComfyUI の起動(Windows)。docs/08-local-comfyui.md 参照。
 #Requires -Version 5.1
 $ErrorActionPreference = 'Stop'
 

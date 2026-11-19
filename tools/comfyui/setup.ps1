@@ -1,4 +1,4 @@
-# ローカル ComfyUI のセットアップ(Windows / NVIDIA)。冪等。docs/08-local-comfyui.md 参照。
+﻿# ローカル ComfyUI のセットアップ(Windows / NVIDIA)。冪等。docs/08-local-comfyui.md 参照。
 #Requires -Version 5.1
 $ErrorActionPreference = 'Stop'
 
@@ -7,7 +7,7 @@ $Root = (Resolve-Path (Join-Path $Here '..\..')).Path
 
 # versions.env を読み込む(KEY=VALUE、# 始まりはコメント)
 $V = @{}
-Get-Content (Join-Path $Here 'versions.env') | ForEach-Object {
+Get-Content -Encoding UTF8 (Join-Path $Here 'versions.env') |ForEach-Object {
   if ($_ -match '^\s*([A-Z_]+)\s*=\s*(.+?)\s*$') { $V[$Matches[1]] = $Matches[2] }
 }
 
