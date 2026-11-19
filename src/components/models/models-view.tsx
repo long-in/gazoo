@@ -5,6 +5,7 @@ import { useSearchParams } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 
+import { RestartEngineButton } from "@/components/engine/restart-engine-button";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -22,6 +23,7 @@ import type { MessageKey } from "@/lib/i18n";
 import { useErrorMessage, useLanguage, useT } from "@/lib/i18n/use-t";
 import { toAppError } from "@/lib/tauri/errors";
 import { type ModelFamily, type ModelVariant, pickModelsDir } from "@/lib/tauri/models";
+import { useEngineProcessStore } from "@/stores/engine-process-store";
 import { useModelsStore } from "@/stores/models-store";
 
 import { ConsentDialog } from "./consent-dialog";
@@ -71,6 +73,8 @@ export function ModelsView() {
   );
   const dirKnown = view?.modelsDir != null;
   const engineDir = useModelsStore((s) => s.engineDir);
+  // 起動管理が有効で ComfyUI が稼働中なら、反映のあとにその場で再起動できる(docs/15 §9)
+  const managedRunning = useEngineProcessStore((s) => s.view?.config.enabled === true && s.state?.status === "running");
 
   async function startDownload(family: ModelFamily, variant: ModelVariant, agreed = false) {
     try {
@@ -172,10 +176,11 @@ export function ModelsView() {
             {engineDir.applied ? (
               <>
                 <p className="text-xs">{t("models.engine.applied.note")}</p>
-                <div>
+                <div className="flex flex-wrap gap-2">
                   <Button variant="outline" size="sm" onClick={() => void applyToEngine(true)}>
                     {t("models.engine.clear")}
                   </Button>
+                  {managedRunning && <RestartEngineButton variant="default" label={t("engine.proc.restartNow")} />}
                 </div>
               </>
             ) : engineDir.mismatch ? (

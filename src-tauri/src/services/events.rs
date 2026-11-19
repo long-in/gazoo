@@ -80,3 +80,14 @@ impl crate::services::models::ModelSink for TauriSink {
         let _ = self.0.emit("models://done", state);
     }
 }
+
+impl crate::services::engine_process::ProcSink for TauriSink {
+    fn state(&self, state: &crate::services::engine_process::EngineProcState) {
+        let _ = self.0.emit("engine://proc-state", state);
+    }
+    fn log(&self, line: &str) {
+        let _ = self
+            .0
+            .emit("engine://log", serde_json::json!({ "line": line }));
+    }
+}

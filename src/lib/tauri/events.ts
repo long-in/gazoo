@@ -3,6 +3,7 @@ import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 
 import type { SuggestedChanges } from "./assistant";
 import type { EngineStatus } from "./engine";
+import type { EngineProcState } from "./engine-process";
 import type { ImageItem, Job, JobProgress } from "./jobs";
 import type { DownloadState } from "./models";
 
@@ -55,3 +56,9 @@ export const onModelsProgress = (handler: (s: DownloadState) => void) =>
 
 export const onModelsDone = (handler: (s: DownloadState) => void) =>
   subscribe<DownloadState>("models://done", handler);
+
+export const onEngineProcState = (handler: (s: EngineProcState) => void) =>
+  subscribe<EngineProcState>("engine://proc-state", handler);
+
+export const onEngineLog = (handler: (p: { line: string }) => void) =>
+  subscribe<{ line: string }>("engine://log", handler);

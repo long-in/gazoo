@@ -15,6 +15,7 @@ use crate::db::Db;
 use crate::services::assistant::AssistantService;
 use crate::services::assistant::anthropic::AnthropicClient;
 use crate::services::engine::EngineService;
+use crate::services::engine_process::EngineProcess;
 use crate::services::events::TauriSink;
 use crate::services::images::{ImageService, OsTrash};
 use crate::services::inputs::InputService;
@@ -128,6 +129,26 @@ pub fn run() {
                     Err(e) => tracing::warn!(error = %e, "thumbnail backfill failed"),
                 }
             });
+            // ComfyUI の起動管理(docs/15)。アプリが起動した子プロセスだけを管理し、終了時に停止する
+            let engine_proc = EngineProcess::new(
+                Arc::new(TauriSink(app.handle().clone())),
+                Some(log_dir.join("comfyui.log")),
+            );
+            app.manage(Arc::clone(&engine_proc));
+            {
+                let db = db.clone();
+                tauri::async_runtime::spawn(async move {
+                    match db.call(|c| services::settings::get_managed_engine(c)).await {
+                        Ok(cfg) if cfg.enabled && cfg.auto_start => {
+                            if let Err(e) = engine_proc.start(&cfg).await {
+                                tracing::warn!(error = %e, "comfyui auto start failed");
+                            }
+                        }
+                        Ok(_) => {}
+                        Err(e) => tracing::warn!(error = %e, "managed engine config unreadable"),
+                    }
+                });
+            }
             tauri::async_runtime::spawn(services::engine::monitor(app.handle().clone()));
             // 前回の実行中ジョブを復旧(失敗扱い)してから、待機中ジョブの実行を再開する
             tauri::async_runtime::spawn(async move {
@@ -148,6 +169,12 @@ pub fn run() {
             commands::engine::engine_status,
             commands::engine::engine_list_models,
             commands::engine::engine_reconnect,
+            commands::engine_process::engine_managed_get,
+            commands::engine_process::engine_managed_set,
+            commands::engine_process::engine_process_start,
+            commands::engine_process::engine_process_stop,
+            commands::engine_process::engine_process_restart,
+            commands::engine_process::engine_process_logs,
             commands::jobs::job_enqueue,
             commands::jobs::job_list,
             commands::jobs::job_cancel,
@@ -187,6 +214,18 @@ pub fn run() {
             commands::models::models_engine_dir_status,
             commands::models::models_apply_dir_to_engine,
         ])
-        .run(tauri::generate_context!())
-        .expect("error while building tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application")
+        .run(|app, event| {
+            // アプリが起動した ComfyUI は、終了時に確実に止める(異常終了時は Job Object / プロセスグループが止める)
+            if let tauri::RunEvent::Exit = event
+                && let Some(proc) = app.try_state::<Arc<EngineProcess>>()
+            {
+                let proc = Arc::clone(&proc);
+                tauri::async_runtime::block_on(async move {
+                    let _ =
+                        tokio::time::timeout(std::time::Duration::from_secs(15), proc.stop()).await;
+                });
+            }
+        });
 }

@@ -1,24 +1,49 @@
 "use client";
 
-import { RefreshCw } from "lucide-react";
+import { Play, RefreshCw } from "lucide-react";
+import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
-import { useT } from "@/lib/i18n/use-t";
+import type { MessageKey } from "@/lib/i18n";
+import { useErrorMessage, useT } from "@/lib/i18n/use-t";
+import { toAppError } from "@/lib/tauri/errors";
 import { cn } from "@/lib/utils";
+import { useEngineProcessStore } from "@/stores/engine-process-store";
 import { useEngineStore } from "@/stores/engine-store";
 
-/** サイドナビ下部の ComfyUI 接続状態表示(docs/05-ui-design.md §2)。 */
+/** サイドナビ下部の ComfyUI 接続状態表示(docs/05-ui-design.md §2)。起動管理が有効なら、起動の状態も示す(docs/15 §9)。 */
 export function EngineStatusBadge() {
   const t = useT();
+  const errorMessage = useErrorMessage();
   const status = useEngineStore((s) => s.status);
   const reconnecting = useEngineStore((s) => s.reconnecting);
   const reconnect = useEngineStore((s) => s.reconnect);
+  const managed = useEngineProcessStore((s) => s.view?.config.enabled === true);
+  const proc = useEngineProcessStore((s) => s.state);
+  const procBusy = useEngineProcessStore((s) => s.busy);
 
-  const label = !status
-    ? t("engine.checking")
-    : status.connected
-      ? t("engine.connected")
-      : t("engine.disconnected");
+  // 起動・停止の途中や異常終了は、接続状態より優先して示す
+  const procLabel: MessageKey | null =
+    managed && proc && (proc.status === "starting" || proc.status === "stopping" || proc.status === "crashed")
+      ? (`engine.proc.status.${proc.status}` as MessageKey)
+      : null;
+  const canStart = managed && !status?.connected && (proc?.status === "stopped" || proc?.status === "crashed");
+
+  const label = procLabel
+    ? t(procLabel)
+    : !status
+      ? t("engine.checking")
+      : status.connected
+        ? t("engine.connected")
+        : t("engine.disconnected");
+
+  async function start() {
+    try {
+      await useEngineProcessStore.getState().start();
+    } catch (e) {
+      toast.error(errorMessage(toAppError(e)));
+    }
+  }
 
   return (
     <div className="mt-auto flex items-center gap-2 rounded-lg border bg-background/50 px-2 py-1.5">
@@ -29,11 +54,25 @@ export function EngineStatusBadge() {
           !status && "bg-muted-foreground/50",
           status?.connected && "bg-emerald-500",
           status && !status.connected && "bg-destructive",
+          (proc?.status === "starting" || proc?.status === "stopping") && managed && "animate-pulse bg-amber-500",
         )}
       />
       <span className="min-w-0 flex-1 truncate text-xs" role="status" title={status?.url}>
         {label}
       </span>
+      {canStart && (
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon-xs"
+          aria-label={t("engine.proc.start")}
+          title={t("engine.proc.start")}
+          disabled={procBusy}
+          onClick={() => void start()}
+        >
+          <Play className="size-3" />
+        </Button>
+      )}
       <Button
         type="button"
         variant="ghost"

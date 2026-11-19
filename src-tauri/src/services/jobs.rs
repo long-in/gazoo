@@ -153,6 +153,17 @@ impl JobService {
             .await
     }
 
+    /// 実行中・待機中のジョブ数(ComfyUI の再起動前の確認に使う。docs/15 §5)。
+    pub async fn active_counts(&self) -> AppResult<(usize, usize)> {
+        self.db
+            .call(|c| {
+                let running = repo::list(c, &[JobStatus::Running], 1000, 0)?.len();
+                let queued = repo::list(c, &[JobStatus::Queued], 1000, 0)?.len();
+                Ok((running, queued))
+            })
+            .await
+    }
+
     pub async fn cancel(&self, id: &str) -> AppResult<()> {
         let id_owned = id.to_owned();
         let row = self.require(id).await?;

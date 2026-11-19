@@ -1,0 +1,146 @@
+//! ComfyUI の起動管理のコマンド(docs/15 §7、docs/04-ipc-api.md「ComfyUI の起動管理」)。
+
+use std::sync::Arc;
+
+use serde::Serialize;
+use tauri::{AppHandle, Manager, State};
+
+use crate::db::Db;
+use crate::error::{AppError, AppResult};
+use crate::services::engine::EngineService;
+use crate::services::engine_process::config::{ManagedEngineConfig, Suggestions, suggest};
+use crate::services::engine_process::{EngineProcState, EngineProcess};
+use crate::services::jobs::JobService;
+use crate::services::models::is_local_engine;
+use crate::services::settings;
+
+type Proc<'a> = State<'a, Arc<EngineProcess>>;
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ManagedView {
+    pub config: ManagedEngineConfig,
+    pub state: EngineProcState,
+    /// 起動中の ComfyUI から求めた、パスの入力候補。
+    pub suggestions: Suggestions,
+}
+
+async fn load_config(db: &Db) -> AppResult<ManagedEngineConfig> {
+    db.call(|c| settings::get_managed_engine(c)).await
+}
+
+async fn view(db: &Db, engine: &EngineService, proc: &EngineProcess) -> AppResult<ManagedView> {
+    let config = load_config(db).await?;
+    let engine = engine.engine()?;
+    let suggestions = if is_local_engine(&engine.url()) {
+        engine
+            .launch_args()
+            .await
+            .map(|argv| suggest(&argv))
+            .unwrap_or_default()
+    } else {
+        Suggestions::default()
+    };
+    Ok(ManagedView {
+        config,
+        state: proc.state(),
+        suggestions,
+    })
+}
+
+#[tauri::command]
+pub async fn engine_managed_get(
+    db: State<'_, Db>,
+    engine: State<'_, Arc<EngineService>>,
+    proc: Proc<'_>,
+) -> AppResult<ManagedView> {
+    view(&db, &engine, &proc).await
+}
+
+#[tauri::command]
+pub async fn engine_managed_set(
+    app: AppHandle,
+    db: State<'_, Db>,
+    engine: State<'_, Arc<EngineService>>,
+    proc: Proc<'_>,
+    config: ManagedEngineConfig,
+) -> AppResult<ManagedView> {
+    config.validate()?;
+    if !config.enabled && proc.has_child() {
+        return Err(AppError::engine_proc(
+            "ENGINE_BUSY",
+            "ComfyUI が起動中です。先に停止してから、アプリでの管理を無効にしてください",
+        ));
+    }
+    let url = config.enabled.then(|| config.url());
+    let saved = config.clone();
+    db.call(move |c| {
+        settings::set_managed_engine(c, &saved)?;
+        // 有効にしたら、接続先をローカルの管理ポートに合わせる
+        if let Some(url) = url {
+            let patch = serde_json::from_value(serde_json::json!({ "comfyuiUrl": url }))?;
+            settings::update(c, patch)?;
+        }
+        Ok(())
+    })
+    .await?;
+    if config.enabled && engine.set_url(&config.url())? {
+        let app = app.clone();
+        tauri::async_runtime::spawn(async move {
+            if let Some(engine) = app.try_state::<Arc<EngineService>>() {
+                let _ = engine.refresh(&app, true).await;
+            }
+        });
+    }
+    view(&db, &engine, &proc).await
+}
+
+#[tauri::command]
+pub async fn engine_process_start(db: State<'_, Db>, proc: Proc<'_>) -> AppResult<EngineProcState> {
+    let cfg = load_config(&db).await?;
+    proc.start(&cfg).await
+}
+
+#[tauri::command]
+pub async fn engine_process_stop(proc: Proc<'_>) -> AppResult<EngineProcState> {
+    proc.stop().await
+}
+
+#[tauri::command]
+pub async fn engine_process_restart(
+    db: State<'_, Db>,
+    jobs: State<'_, Arc<JobService>>,
+    proc: Proc<'_>,
+    force: Option<bool>,
+) -> AppResult<EngineProcState> {
+    let cfg = load_config(&db).await?;
+    if !cfg.enabled {
+        return Err(AppError::engine_proc(
+            "ENGINE_NOT_MANAGED",
+            "ComfyUI の起動管理が有効ではありません",
+        ));
+    }
+    if !force.unwrap_or(false) {
+        let (running, queued) = jobs.active_counts().await?;
+        if running + queued > 0 {
+            return Err(AppError::EngineProc {
+                code: "ENGINE_BUSY",
+                message: "実行中または待機中の生成があります".into(),
+                details: Some(serde_json::json!({ "running": running, "queued": queued })),
+            });
+        }
+    }
+    proc.restart(&cfg).await
+}
+
+#[derive(Serialize)]
+pub struct Logs {
+    pub lines: Vec<String>,
+}
+
+#[tauri::command]
+pub async fn engine_process_logs(proc: Proc<'_>, lines: Option<usize>) -> AppResult<Logs> {
+    Ok(Logs {
+        lines: proc.logs(lines.unwrap_or(500).min(500)),
+    })
+}
