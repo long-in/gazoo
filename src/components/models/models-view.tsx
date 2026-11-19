@@ -1,0 +1,241 @@
+"use client";
+
+import { FolderOpen } from "lucide-react";
+import { useSearchParams } from "next/navigation";
+import { useEffect, useMemo, useState } from "react";
+import { toast } from "sonner";
+
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import {
+  type BaseFilter,
+  CATEGORIES,
+  formatBytes,
+  installedMap,
+  isBase,
+  isCategory,
+  variantKey,
+  visibleFamilies,
+} from "@/lib/models/catalog";
+import type { MessageKey } from "@/lib/i18n";
+import { useErrorMessage, useLanguage, useT } from "@/lib/i18n/use-t";
+import { toAppError } from "@/lib/tauri/errors";
+import { type ModelFamily, type ModelVariant, pickModelsDir } from "@/lib/tauri/models";
+import { useModelsStore } from "@/stores/models-store";
+
+import { ConsentDialog } from "./consent-dialog";
+import { DownloadsPanel } from "./downloads-panel";
+import { FamilyCard } from "./family-card";
+
+const BASE_FILTERS: BaseFilter[] = ["all", "sd15", "sdxl"];
+
+/** モデル取得ページ(docs/12-model-downloader.md §5)。 */
+export function ModelsView() {
+  const t = useT();
+  const lang = useLanguage();
+  const errorMessage = useErrorMessage();
+  const params = useSearchParams();
+
+  const view = useModelsStore((s) => s.view);
+  const loading = useModelsStore((s) => s.loading);
+  const error = useModelsStore((s) => s.error);
+  const downloads = useModelsStore((s) => s.downloads);
+  const category = useModelsStore((s) => s.category);
+  const base = useModelsStore((s) => s.base);
+  const chosen = useModelsStore((s) => s.chosen);
+
+  // 同意が必要で、確認待ちのモデル
+  const [consent, setConsent] = useState<{ family: ModelFamily; variant: ModelVariant } | null>(null);
+
+  // 表示のたびにカタログと導入状況を取り直す(取得イベントの購読はアプリ全体で行う。providers.tsx)
+  useEffect(() => {
+    void useModelsStore.getState().load();
+    void useModelsStore.getState().loadDownloads();
+  }, []);
+
+  // 他の画面からの遷移(?category=&base=)を反映する
+  const qCategory = params.get("category");
+  const qBase = params.get("base");
+  useEffect(() => {
+    const st = useModelsStore.getState();
+    if (isCategory(qCategory)) st.setCategory(qCategory);
+    if (isBase(qBase)) st.setBase(qBase);
+  }, [qCategory, qBase]);
+
+  const installed = useMemo(() => installedMap(view), [view]);
+  const families = useMemo(
+    () => visibleFamilies(view?.catalog.families ?? [], category, base),
+    [view, category, base],
+  );
+  const dirKnown = view?.modelsDir != null;
+
+  async function startDownload(family: ModelFamily, variant: ModelVariant, agreed = false) {
+    try {
+      await useModelsStore.getState().start(family.id, variant.id, agreed);
+      setConsent(null);
+    } catch (e) {
+      const err = toAppError(e);
+      if (err.code === "MODELS_NO_CONSENT") {
+        setConsent({ family, variant });
+        return;
+      }
+      setConsent(null);
+      toast.error(errorMessage(err));
+    }
+  }
+
+  async function changeDir(path: string | null) {
+    try {
+      await useModelsStore.getState().setDir(path);
+      toast.success(t("models.dir.changed"));
+    } catch (e) {
+      toast.error(errorMessage(toAppError(e)));
+    }
+  }
+
+  async function pickDir() {
+    try {
+      const picked = await pickModelsDir();
+      if (picked) await changeDir(picked);
+    } catch (e) {
+      toast.error(errorMessage(toAppError(e)));
+    }
+  }
+
+  return (
+    <div className="mx-auto flex max-w-4xl flex-col gap-4 p-6">
+      <header>
+        <h1 className="text-xl font-semibold">{t("models.title")}</h1>
+        <p className="mt-1 text-sm text-muted-foreground">{t("models.desc")}</p>
+        <p className="mt-1 text-xs text-muted-foreground">{t("models.net.notice")}</p>
+      </header>
+
+      {/* 保存先 */}
+      <section className="rounded-lg border p-3" aria-labelledby="models-dir-title">
+        <h2 id="models-dir-title" className="text-sm font-medium">
+          {t("models.dir.label")}
+        </h2>
+        {dirKnown ? (
+          <div className="mt-2 flex flex-wrap items-center gap-2">
+            <code className="min-w-0 flex-1 truncate rounded bg-muted px-2 py-1 text-xs" title={view?.modelsDir ?? ""}>
+              {view?.modelsDir}
+            </code>
+            <Badge variant="outline">
+              {t(`models.dir.source.${view?.modelsDirSource === "setting" ? "setting" : "detected"}` as MessageKey)}
+            </Badge>
+            {view?.freeBytes != null && (
+              <span className="text-xs text-muted-foreground">
+                {t("models.dir.free")}: {formatBytes(view.freeBytes)}
+              </span>
+            )}
+            <Button variant="outline" size="sm" onClick={() => void pickDir()}>
+              <FolderOpen className="size-3.5" />
+              {t("models.dir.change")}
+            </Button>
+            {view?.modelsDirSource === "setting" && (
+              <Button variant="ghost" size="sm" onClick={() => void changeDir(null)}>
+                {t("models.dir.auto")}
+              </Button>
+            )}
+          </div>
+        ) : (
+          view && (
+            <div
+              role="alert"
+              className="mt-2 flex flex-col gap-2 rounded-md border border-amber-500/40 bg-amber-500/10 p-3 text-sm"
+            >
+              <p className="font-medium">{t("models.dir.unknown.title")}</p>
+              <p className="text-xs">{t("models.dir.unknown.body")}</p>
+              <div>
+                <Button size="sm" onClick={() => void pickDir()}>
+                  <FolderOpen className="size-3.5" />
+                  {t("models.dir.change")}
+                </Button>
+              </div>
+            </div>
+          )
+        )}
+      </section>
+
+      <DownloadsPanel />
+
+      {/* カテゴリとベースモデル */}
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div role="tablist" aria-label={t("models.title")} className="flex gap-1 rounded-lg bg-muted p-1">
+          {CATEGORIES.map((c) => (
+            <button
+              key={c}
+              role="tab"
+              type="button"
+              aria-selected={category === c}
+              onClick={() => useModelsStore.getState().setCategory(c)}
+              className={
+                "rounded-md px-3 py-1 text-sm transition-colors " +
+                (category === c ? "bg-background font-medium shadow-sm" : "text-muted-foreground hover:text-foreground")
+              }
+            >
+              {t(`models.tab.${c}` as MessageKey)}
+            </button>
+          ))}
+        </div>
+        <div className="flex items-center gap-2">
+          <label htmlFor="models-base" className="text-sm text-muted-foreground">
+            {t("models.filter.base")}
+          </label>
+          <Select
+            value={base}
+            items={BASE_FILTERS.map((b) => ({
+              value: b,
+              label: t((b === "all" ? "models.filter.all" : `models.base.${b}`) as MessageKey),
+            }))}
+            onValueChange={(v) => v !== null && useModelsStore.getState().setBase(v as BaseFilter)}
+          >
+            <SelectTrigger id="models-base" className="w-36">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {BASE_FILTERS.map((b) => (
+                <SelectItem key={b} value={b}>
+                  {t((b === "all" ? "models.filter.all" : `models.base.${b}`) as MessageKey)}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+      </div>
+
+      {loading && !view && <p className="text-sm text-muted-foreground">{t("models.loading")}</p>}
+      {error && !view && (
+        <p role="alert" className="text-sm text-destructive">
+          {t("models.loadFailed")}: {errorMessage(error)}
+        </p>
+      )}
+      {view && families.length === 0 && <p className="text-sm text-muted-foreground">{t("models.empty")}</p>}
+
+      <div className="flex flex-col gap-3">
+        {families.map(({ family, variants }) => (
+          <FamilyCard
+            key={family.id}
+            family={family}
+            variants={variants}
+            lang={lang}
+            chosenId={chosen[family.id]}
+            installed={(v) => installed.get(variantKey(family.id, v.id))}
+            downloads={downloads}
+            canDownload={dirKnown}
+            onChoose={(variantId) => useModelsStore.getState().choose(family.id, variantId)}
+            onDownload={(variant) => void startDownload(family, variant)}
+          />
+        ))}
+      </div>
+
+      <ConsentDialog
+        target={consent}
+        lang={lang}
+        onCancel={() => setConsent(null)}
+        onAgree={() => consent && void startDownload(consent.family, consent.variant, true)}
+      />
+    </div>
+  );
+}

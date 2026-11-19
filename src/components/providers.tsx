@@ -16,6 +16,8 @@ import {
   onImageDeleted,
   onJobProgress,
   onJobUpdated,
+  onModelsDone,
+  onModelsProgress,
 } from "@/lib/tauri/events";
 import { toAppError } from "@/lib/tauri/errors";
 import { useAssistantStore } from "@/stores/assistant-store";
@@ -23,6 +25,7 @@ import { useEngineStore } from "@/stores/engine-store";
 import { useGalleryStore } from "@/stores/gallery-store";
 import { usePresetStore } from "@/stores/preset-store";
 import { useJobStore } from "@/stores/job-store";
+import { useModelsStore } from "@/stores/models-store";
 import { useSettingsStore } from "@/stores/settings-store";
 
 /** DB 上の設定(正)をテーマ・言語・lang 属性へ反映する。 */
@@ -136,6 +139,28 @@ function AssistantBootstrap() {
   return null;
 }
 
+/**
+ * モデル取得の進捗・完了イベントの購読(画面を移動しても取りこぼさないよう、アプリ全体で 1 回だけ)。
+ * 完了すると、生成画面で選べるモデル一覧も取り直される(models-store)。
+ */
+function ModelsBootstrap() {
+  useEffect(() => {
+    let cancelled = false;
+    const unlisteners: (() => void)[] = [];
+    const { applyDownload, loadDownloads } = useModelsStore.getState();
+    void Promise.all([onModelsProgress(applyDownload), onModelsDone(applyDownload)]).then((fns) => {
+      if (cancelled) fns.forEach((fn) => fn());
+      else unlisteners.push(...fns);
+    });
+    void loadDownloads();
+    return () => {
+      cancelled = true;
+      unlisteners.forEach((fn) => fn());
+    };
+  }, []);
+  return null;
+}
+
 export function Providers({ children }: { children: ReactNode }) {
   return (
     <ThemeProvider attribute="class" defaultTheme="system" enableSystem>
@@ -145,6 +170,7 @@ export function Providers({ children }: { children: ReactNode }) {
         <JobBootstrap />
         <PresetBootstrap />
         <AssistantBootstrap />
+        <ModelsBootstrap />
         {children}
         <Toaster richColors />
       </TooltipProvider>

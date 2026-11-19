@@ -1,5 +1,6 @@
 "use client";
 
+import { ModelsLink } from "@/components/models/models-link";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
@@ -50,7 +51,10 @@ export function FaceDetailerSection({ error }: { error: (field: string) => strin
       </div>
 
       {reason && (
-        <p className="mt-2 rounded-md border border-amber-500/40 bg-amber-500/10 p-2 text-xs">{t(reason)}</p>
+        <div className="mt-2 flex flex-col gap-1 rounded-md border border-amber-500/40 bg-amber-500/10 p-2 text-xs">
+          <p>{t(reason)}</p>
+          {reason === "generate.face.noDetector" && <ModelsLink category="detector" />}
+        </div>
       )}
 
       {on && (

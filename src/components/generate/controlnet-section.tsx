@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
 
+import { ModelsLink } from "@/components/models/models-link";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
@@ -119,7 +120,10 @@ export function ControlnetSection({ error }: { error: (field: string) => string 
       </div>
 
       {reason && (
-        <p className="mt-2 rounded-md border border-amber-500/40 bg-amber-500/10 p-2 text-xs">{t(reason)}</p>
+        <div className="mt-2 flex flex-col gap-1 rounded-md border border-amber-500/40 bg-amber-500/10 p-2 text-xs">
+          <p>{t(reason)}</p>
+          {reason === "generate.cn.noModel" && <ModelsLink category="controlnet" kind={kind} />}
+        </div>
       )}
 
       {on && (

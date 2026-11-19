@@ -100,6 +100,19 @@ impl GenerationEngine for ComfyUiClient {
         self.base.clone()
     }
 
+    async fn launch_args(&self) -> AppResult<Vec<String>> {
+        let stats = self.get_json("/system_stats").await?;
+        Ok(stats
+            .as_ref()
+            .and_then(|v| v.get("system")?.get("argv")?.as_array())
+            .map(|a| {
+                a.iter()
+                    .filter_map(|x| x.as_str().map(str::to_owned))
+                    .collect()
+            })
+            .unwrap_or_default())
+    }
+
     async fn health(&self) -> AppResult<EngineStatus> {
         let stats = self
             .get_json("/system_stats")
@@ -345,6 +358,30 @@ mod tests {
             ]
         );
         assert!(check(vec![]).await.is_empty());
+    }
+
+    #[tokio::test]
+    async fn launch_args_reads_system_argv() {
+        let stats = r#"{"system":{"argv":["C:\\w\\main.py","--base-directory","C:\\w\\data",7]},"devices":[]}"#;
+        let url = spawn(vec![Route::get("/system_stats", stats)]).await.url;
+        let args = ComfyUiClient::new(&url)
+            .unwrap()
+            .launch_args()
+            .await
+            .unwrap();
+        assert_eq!(
+            args,
+            vec!["C:\\w\\main.py", "--base-directory", "C:\\w\\data"]
+        );
+
+        // argv が無い応答(古いバージョンなど)は空
+        let url = spawn(vec![Route::get("/system_stats", STATS)]).await.url;
+        let args = ComfyUiClient::new(&url)
+            .unwrap()
+            .launch_args()
+            .await
+            .unwrap();
+        assert!(args.is_empty() || args.iter().all(|a| !a.is_empty()));
     }
 
     #[tokio::test]

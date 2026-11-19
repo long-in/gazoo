@@ -123,6 +123,36 @@ pub fn load(conn: &Connection) -> AppResult<Settings> {
     })
 }
 
+// モデル取得(docs/12 §3・§9)。`Settings` には含めず、専用コマンドで検証つきに変更する。
+const KEY_MODELS_DIR: &str = "engine.comfyui.models_dir";
+const KEY_MODEL_CONSENTS: &str = "models.consents";
+
+/// ユーザーが指定した ComfyUI の `models` フォルダ。`None` は自動検出。
+pub fn get_models_dir(conn: &Connection) -> AppResult<Option<String>> {
+    Ok(parse(get_raw(conn, KEY_MODELS_DIR)?))
+}
+
+pub fn set_models_dir(conn: &Connection, dir: Option<&str>) -> AppResult<()> {
+    match dir {
+        Some(d) => set_raw(conn, KEY_MODELS_DIR, &serde_json::json!(d)),
+        None => delete_raw(conn, KEY_MODELS_DIR),
+    }
+}
+
+/// ライセンスに同意済みのモデル(`familyId/variantId`)。
+pub fn get_model_consents(conn: &Connection) -> AppResult<Vec<String>> {
+    Ok(parse(get_raw(conn, KEY_MODEL_CONSENTS)?).unwrap_or_default())
+}
+
+pub fn add_model_consent(conn: &Connection, key: &str) -> AppResult<()> {
+    let mut all = get_model_consents(conn)?;
+    if !all.iter().any(|k| k == key) {
+        all.push(key.to_string());
+        set_raw(conn, KEY_MODEL_CONSENTS, &serde_json::json!(all))?;
+    }
+    Ok(())
+}
+
 fn validate_url(url: &str) -> AppResult<String> {
     let url = url.trim().trim_end_matches('/');
     let rest = url
