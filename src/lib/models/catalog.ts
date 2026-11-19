@@ -6,6 +6,7 @@ import type {
   DownloadStatus,
   Localized,
   ModelCategory,
+  ModelTag,
   ModelFamily,
   ModelVariant,
 } from "@/lib/tauri/models";
@@ -13,7 +14,48 @@ import type {
 /** ベースモデルによる絞り込み。`all` は絞り込まない。 */
 export type BaseFilter = "all" | BaseModel;
 
-export const CATEGORIES: ModelCategory[] = ["checkpoint", "controlnet", "detector", "flux"];
+export const CATEGORIES: ModelCategory[] = ["checkpoint", "controlnet", "detector", "flux", "anima", "qwen_image", "krea2"];
+
+/** 「まとめて取得」の 1 件(本体、またはそれに必要なテキストエンコーダ・VAE)。 */
+export interface BundleItem {
+  family: ModelFamily;
+  variant: ModelVariant;
+  installed: boolean;
+}
+
+/**
+ * ファミリーの選択中の variant と、その `requires`(テキストエンコーダ・VAE)を、取得する順に並べる。
+ * `requires` が無いファミリーは空(まとめて取得の対象ではない)。参照先がカタログに無いものは飛ばす。
+ */
+export function bundleFor(
+  families: ModelFamily[],
+  family: ModelFamily,
+  selected: ModelVariant,
+  isInstalled: (familyId: string, variantId: string) => boolean,
+): BundleItem[] {
+  if (!family.requires || family.requires.length === 0) return [];
+  const items: BundleItem[] = [{ family, variant: selected, installed: isInstalled(family.id, selected.id) }];
+  for (const r of family.requires) {
+    const f = families.find((x) => x.id === r.familyId);
+    const v = f?.variants.find((x) => x.id === r.variantId);
+    if (f && v) items.push({ family: f, variant: v, installed: isInstalled(f.id, v.id) });
+  }
+  return items;
+}
+
+/** 未導入の分の合計サイズ(同じファイルが重複して数えられないよう、配置先とファイル名で 1 つにまとめる)。 */
+export function bundleMissingBytes(items: BundleItem[]): number {
+  const seen = new Set<string>();
+  let total = 0;
+  for (const it of items) {
+    if (it.installed) continue;
+    const key = `${it.variant.destDir}/${it.variant.fileName.toLowerCase()}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    total += it.variant.sizeBytes;
+  }
+  return total;
+}
 
 export const variantKey = (familyId: string, variantId: string) => `${familyId}/${variantId}`;
 
@@ -27,19 +69,37 @@ export function isBase(v: string | null): v is BaseModel {
   return v === "sd15" || v === "sdxl";
 }
 
+/** 用途による絞り込み(docs/16 §3.3、Q-61)。`all` は絞り込まない。チェックポイントのタブだけで使う。 */
+export type PurposeFilter = "all" | ModelTag;
+
+export const PURPOSES: PurposeFilter[] = ["all", "anime", "nsfw"];
+
+export function isPurpose(v: string | null): v is PurposeFilter {
+  return v !== null && (PURPOSES as string[]).includes(v);
+}
+
+export function matchesPurpose(f: ModelFamily, purpose: PurposeFilter): boolean {
+  return purpose === "all" || f.tags.includes(purpose);
+}
+
 /** ベースモデルを持たない variant(検出モデルなど)は、どの絞り込みでも表示する。 */
 export function matchesBase(v: ModelVariant, base: BaseFilter): boolean {
   return base === "all" || v.baseModel === undefined || v.baseModel === base;
 }
 
-/** カテゴリとベースモデルで絞り込む。表示できる variant が無いファミリーは除く。 */
+/**
+ * カテゴリ・ベースモデル・用途で絞り込む。表示できる variant が無いファミリーは除く。
+ * 用途フィルタはチェックポイントのタブだけで効く(他のタブでは常に全件。docs/16 Q-61)。
+ */
 export function visibleFamilies(
   families: ModelFamily[],
   category: ModelCategory,
   base: BaseFilter,
+  purpose: PurposeFilter = "all",
 ): { family: ModelFamily; variants: ModelVariant[] }[] {
   return families
     .filter((f) => f.category === category)
+    .filter((f) => category !== "checkpoint" || matchesPurpose(f, purpose))
     .map((family) => ({ family, variants: family.variants.filter((v) => matchesBase(v, base)) }))
     .filter((x) => x.variants.length > 0);
 }

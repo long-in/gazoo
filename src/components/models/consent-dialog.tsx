@@ -52,6 +52,12 @@ export function ConsentDialog({
                 </Button>
               </div>
             </div>
+            {target.family.tags.includes("nsfw") && (
+              <div role="note" className="rounded-md border p-3 text-sm">
+                <p className="font-medium">{t("models.consent.nsfw.title")}</p>
+                <p className="mt-1 text-muted-foreground">{t("models.consent.nsfw.body")}</p>
+              </div>
+            )}
             <DialogFooter>
               <Button variant="outline" onClick={onCancel}>
                 {t("models.cancel")}

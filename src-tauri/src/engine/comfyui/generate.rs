@@ -541,7 +541,7 @@ mod tests {
         assert_eq!(err.code(), "ENGINE_MODEL_MISSING");
     }
 
-    /// 実機: 4 種類すべてのワークフローが ComfyUI のバリデータに構造的に受理されること。
+    /// 実機: 7 種類すべてのワークフローが ComfyUI のバリデータに構造的に受理されること。
     /// モデルが未導入でも、検出されるエラーが「モデル名が一覧に無い」だけであれば、
     /// ノード種別・必須入力・リンクの型はすべて正しいと確認できる(通常は実行しない)。
     #[tokio::test]
@@ -552,6 +552,7 @@ mod tests {
         let model_inputs = [
             "ckpt_name",
             "unet_name",
+            "clip_name",
             "clip_name1",
             "clip_name2",
             "vae_name",
@@ -562,6 +563,9 @@ mod tests {
             ModelKind::Sdxl,
             ModelKind::Flux,
             ModelKind::FluxGguf,
+            ModelKind::Anima,
+            ModelKind::QwenImage,
+            ModelKind::Krea2,
         ] {
             let mut p = sample(kind);
             p.model.name = "not-installed.safetensors".into();
@@ -645,6 +649,152 @@ mod tests {
         println!("progress events: {}", seen.len());
         assert!(!seen.is_empty(), "WebSocket から進捗を受信できる");
         assert_eq!(seen.last().unwrap().total, 8);
+    }
+
+    /// 実機: Anima(docs/17)で画像が生成されること。アプリの既定値(1024×1024・30 ステップ・CFG 4・euler / simple)と、
+    /// 公式のファイル名のモデルを使う。`COMFYUI_SAVE_PNG` に出力先を指定すると、生成した PNG を保存する。
+    #[tokio::test]
+    #[ignore = "requires a running ComfyUI with the Anima files (docs/17 §2)"]
+    async fn real_comfyui_generates_anima_image() {
+        let c = ComfyUiClient::new(&real_url()).unwrap();
+        let mut p = sample(ModelKind::Anima);
+        p.model.name = "anima-base-v1.0.safetensors".into();
+        p.model.clip = vec!["qwen_3_06b_base.safetensors".into()];
+        p.model.vae = Some("qwen_image_vae.safetensors".into());
+        p.prompt =
+            "masterpiece, best quality, score_7, safe, 1girl, solo, silver hair, blue eyes, \
+                    school uniform, standing in a flower field, smile, looking at viewer"
+                .into();
+        p.negative_prompt = "worst quality, low quality, score_1, score_2, score_3, artist name, blurry, jpeg artifacts"
+            .into();
+        p.width = 1024;
+        p.height = 1024;
+        p.steps = 30;
+        p.cfg = 4.0;
+        p.sampler = "euler".into();
+        p.scheduler = "simple".into();
+        p.seed = 20_261_119;
+
+        let id = c.submit(&p, &[]).await.expect("submit");
+        let seen: Arc<Mutex<Vec<Progress>>> = Arc::default();
+        let sink = Arc::clone(&seen);
+        let images = c
+            .wait(&id, &move |pr| sink.lock().unwrap().push(pr))
+            .await
+            .expect("wait");
+
+        assert_eq!(images.len(), 1);
+        assert_eq!(&images[0].bytes[..8], &PNG_MAGIC, "PNG として取得できる");
+        let decoded = image::load_from_memory(&images[0].bytes).expect("decodable");
+        assert_eq!((decoded.width(), decoded.height()), (1024, 1024));
+        assert!(
+            images[0].bytes.len() > 100_000,
+            "画像として妥当なサイズ(真っ黒・空ではない)"
+        );
+        let seen = seen.lock().unwrap();
+        println!("progress events: {}, last: {:?}", seen.len(), seen.last());
+        assert!(!seen.is_empty(), "WebSocket から進捗を受信できる");
+        assert_eq!(seen.last().unwrap().total, 30);
+        if let Ok(path) = std::env::var("COMFYUI_SAVE_PNG") {
+            std::fs::write(&path, &images[0].bytes).expect("save png");
+            println!("saved {path}");
+        }
+    }
+
+    /// 実機: Qwen-Image 2.1(docs/17)で画像が生成されること。アプリの既定値(1024×1024・25 ステップ・CFG 1・euler / simple)と、
+    /// INT8 convrot 版(推奨)のファイルを使う。`COMFYUI_SAVE_PNG` に出力先を指定すると、生成した PNG を保存する。
+    #[tokio::test]
+    #[ignore = "requires a running ComfyUI with the Qwen-Image 2.1 files (docs/17 §2)"]
+    async fn real_comfyui_generates_qwen_image_21() {
+        let c = ComfyUiClient::new(&real_url()).unwrap();
+        let mut p = sample(ModelKind::QwenImage);
+        p.model.name = "qwen_image_2.1_int8_convrot.safetensors".into();
+        p.model.clip = vec!["qwen3vl_8b_int8_convrot.safetensors".into()];
+        p.model.vae = Some("qwen_image_2.1_vae_bf16.safetensors".into());
+        p.prompt = "A small wooden cafe on a rainy street at dusk, warm light in the windows, \
+                    a hand-painted sign that reads \"OPEN\", reflections on the wet pavement, cinematic"
+            .into();
+        p.negative_prompt = String::new();
+        p.width = 1024;
+        p.height = 1024;
+        p.steps = 25;
+        p.cfg = 1.0;
+        p.sampler = "euler".into();
+        p.scheduler = "simple".into();
+        p.seed = 20_261_119;
+
+        let id = c.submit(&p, &[]).await.expect("submit");
+        let seen: Arc<Mutex<Vec<Progress>>> = Arc::default();
+        let sink = Arc::clone(&seen);
+        let images = c
+            .wait(&id, &move |pr| sink.lock().unwrap().push(pr))
+            .await
+            .expect("wait");
+
+        assert_eq!(images.len(), 1);
+        assert_eq!(&images[0].bytes[..8], &PNG_MAGIC, "PNG として取得できる");
+        let decoded = image::load_from_memory(&images[0].bytes).expect("decodable");
+        assert_eq!((decoded.width(), decoded.height()), (1024, 1024));
+        assert!(
+            images[0].bytes.len() > 100_000,
+            "画像として妥当なサイズ(真っ黒・空ではない)"
+        );
+        let seen = seen.lock().unwrap();
+        println!("progress events: {}, last: {:?}", seen.len(), seen.last());
+        assert!(!seen.is_empty(), "WebSocket から進捗を受信できる");
+        assert_eq!(seen.last().unwrap().total, 25);
+        if let Ok(path) = std::env::var("COMFYUI_SAVE_PNG") {
+            std::fs::write(&path, &images[0].bytes).expect("save png");
+            println!("saved {path}");
+        }
+    }
+
+    /// 実機: Krea 2 Turbo(docs/17)で画像が生成されること。アプリの既定値(1024×1024・8 ステップ・CFG 1・euler / simple)と、
+    /// FP8 scaled 版(推奨)のファイルを使う。`COMFYUI_SAVE_PNG` に出力先を指定すると、生成した PNG を保存する。
+    #[tokio::test]
+    #[ignore = "requires a running ComfyUI with the Krea 2 files (docs/17 §2)"]
+    async fn real_comfyui_generates_krea2() {
+        let c = ComfyUiClient::new(&real_url()).unwrap();
+        let mut p = sample(ModelKind::Krea2);
+        p.model.name = "krea2_turbo_fp8_scaled.safetensors".into();
+        p.model.clip = vec!["qwen3vl_4b_fp8_scaled.safetensors".into()];
+        p.model.vae = Some("qwen_image_vae.safetensors".into());
+        p.prompt = "A small wooden cafe on a rainy street at dusk, warm light in the windows, \
+                    a hand-painted sign that reads \"OPEN\", reflections on the wet pavement, cinematic"
+            .into();
+        p.negative_prompt = String::new();
+        p.width = 1024;
+        p.height = 1024;
+        p.steps = 8;
+        p.cfg = 1.0;
+        p.sampler = "euler".into();
+        p.scheduler = "simple".into();
+        p.seed = 20_261_119;
+
+        let id = c.submit(&p, &[]).await.expect("submit");
+        let seen: Arc<Mutex<Vec<Progress>>> = Arc::default();
+        let sink = Arc::clone(&seen);
+        let images = c
+            .wait(&id, &move |pr| sink.lock().unwrap().push(pr))
+            .await
+            .expect("wait");
+
+        assert_eq!(images.len(), 1);
+        assert_eq!(&images[0].bytes[..8], &PNG_MAGIC, "PNG として取得できる");
+        let decoded = image::load_from_memory(&images[0].bytes).expect("decodable");
+        assert_eq!((decoded.width(), decoded.height()), (1024, 1024));
+        assert!(
+            images[0].bytes.len() > 100_000,
+            "画像として妥当なサイズ(真っ黒・空ではない)"
+        );
+        let seen = seen.lock().unwrap();
+        println!("progress events: {}, last: {:?}", seen.len(), seen.last());
+        assert!(!seen.is_empty(), "WebSocket から進捗を受信できる");
+        assert_eq!(seen.last().unwrap().total, 8);
+        if let Ok(path) = std::env::var("COMFYUI_SAVE_PNG") {
+            std::fs::write(&path, &images[0].bytes).expect("save png");
+            println!("saved {path}");
+        }
     }
 
     /// 実機: 同じパラメータ・同じシードなら同じ画像になること(ギャラリーの「この設定で生成」の前提)。

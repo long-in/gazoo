@@ -20,13 +20,13 @@
 └────────────────────────────────────────────────────────────────────┘
           │ HTTP/WS (127.0.0.1:8188)                │ ファイル
           ▼                                         ▼
-     ComfyUI(別プロセス・ユーザーが起動)     {app_data}/gazoo.db, images/
+     ComfyUI(別プロセス・ユーザーが起動)     {app_data}/gazooo.db, images/
 ```
 
 ## 2. ディレクトリ構成(実装時)
 
 ```
-gazoo/
+gazooo/
 ├─ AGENTS.md / CLAUDE.md / docs/
 ├─ package.json, package-lock.json
 ├─ next.config.ts          # output: "export", images.unoptimized: true

@@ -3,13 +3,17 @@ import { describe, expect, it } from "vitest";
 import type { DownloadState, ModelFamily, ModelVariant } from "@/lib/tauri/models";
 
 import {
+  bundleFor,
+  bundleMissingBytes,
   downloadFor,
   etaSeconds,
   formatBytes,
   formatDuration,
   isBase,
   isCategory,
+  isPurpose,
   matchesBase,
+  matchesPurpose,
   pickVariant,
   progressPercent,
   visibleFamilies,
@@ -35,6 +39,7 @@ const family = (id: string, category: ModelFamily["category"], variants: ModelVa
   name: L,
   description: L,
   usedBy: [],
+  tags: [],
   variants,
 });
 
@@ -45,6 +50,56 @@ const canny = family("controlnet-canny", "controlnet", [
 ]);
 const face = family("detector-face", "detector", [variant("yolov9c", { recommended: true }), variant("yolov8m")]);
 const sd15ckpt = family("checkpoint-sd15", "checkpoint", [variant("a", { baseModel: "sd15" })]);
+
+const noob: ModelFamily = {
+  ...family("checkpoint-noobai-xl", "checkpoint", [variant("v1.1", { baseModel: "sdxl", recommended: true })]),
+  tags: ["anime", "nsfw"],
+};
+const animagine: ModelFamily = {
+  ...family("checkpoint-animagine-xl-4", "checkpoint", [variant("opt", { baseModel: "sdxl", recommended: true })]),
+  tags: ["anime", "nsfw"],
+};
+const sdxlckpt = family("checkpoint-sdxl", "checkpoint", [variant("base", { baseModel: "sdxl", recommended: true })]);
+
+describe("用途フィルタ(docs/16 §3.3)", () => {
+  const all = [sd15ckpt, sdxlckpt, noob, animagine];
+
+  it("チェックポイントのタブで、タグを持つファミリーだけに絞る", () => {
+    expect(visibleFamilies(all, "checkpoint", "all", "all").map((x) => x.family.id)).toHaveLength(4);
+    expect(visibleFamilies(all, "checkpoint", "all", "anime").map((x) => x.family.id)).toEqual([
+      "checkpoint-noobai-xl",
+      "checkpoint-animagine-xl-4",
+    ]);
+    expect(visibleFamilies(all, "checkpoint", "all", "nsfw").map((x) => x.family.id)).toEqual([
+      "checkpoint-noobai-xl",
+      "checkpoint-animagine-xl-4",
+    ]);
+  });
+
+  it("ベースモデルのフィルタと併用できる", () => {
+    expect(visibleFamilies(all, "checkpoint", "sd15", "anime")).toEqual([]);
+    expect(visibleFamilies(all, "checkpoint", "sdxl", "anime")).toHaveLength(2);
+  });
+
+  it("用途フィルタはチェックポイント以外のタブでは効かない", () => {
+    expect(visibleFamilies([canny, face], "controlnet", "all", "anime")).toHaveLength(1);
+    expect(visibleFamilies([canny, face], "detector", "all", "nsfw")).toHaveLength(1);
+  });
+
+  it("既定では絞り込まない", () => {
+    expect(visibleFamilies(all, "checkpoint", "all")).toHaveLength(4);
+    expect(matchesPurpose(sd15ckpt, "all")).toBe(true);
+    expect(matchesPurpose(sd15ckpt, "nsfw")).toBe(false);
+  });
+
+  it("URL パラメータの値を検証する", () => {
+    expect(isPurpose("anime")).toBe(true);
+    expect(isPurpose("nsfw")).toBe(true);
+    expect(isPurpose("all")).toBe(true);
+    expect(isPurpose("evil")).toBe(false);
+    expect(isPurpose(null)).toBe(false);
+  });
+});
 
 describe("絞り込み", () => {
   it("カテゴリで絞る", () => {
@@ -131,5 +186,49 @@ describe("書式", () => {
     expect(formatDuration(5)).toBe("5s");
     expect(formatDuration(125)).toBe("2m 5s");
     expect(formatDuration(3700)).toBe("1h 1m");
+  });
+});
+
+describe("まとめて取得(docs/17 §5、Q-70)", () => {
+  const sized = (id: string, file: string, size: number, dest: ModelVariant["destDir"]) =>
+    variant(id, { fileName: file, sizeBytes: size, destDir: dest, recommended: true });
+  const model: ModelFamily = {
+    ...family("anima-base", "anima", [sized("m", "anima-base-v1.0.safetensors", 4_000, "unet")]),
+    kind: "anima",
+    requires: [
+      { familyId: "anima-te", variantId: "te" },
+      { familyId: "anima-vae", variantId: "vae" },
+      { familyId: "missing", variantId: "x" },
+    ],
+  };
+  const te = family("anima-te", "anima", [sized("te", "te.safetensors", 1_000, "clip")]);
+  const vae = family("anima-vae", "anima", [sized("vae", "qwen_image_vae.safetensors", 250, "vae")]);
+  const all = [model, te, vae];
+
+  it("本体のあとに、必要なファイルが並ぶ(参照先が無いものは飛ばす)", () => {
+    const items = bundleFor(all, model, model.variants[0], () => false);
+    expect(items.map((i) => i.variant.id)).toEqual(["m", "te", "vae"]);
+    expect(items.every((i) => !i.installed)).toBe(true);
+  });
+
+  it("requires が無いファミリーは対象外", () => {
+    expect(bundleFor(all, te, te.variants[0], () => false)).toEqual([]);
+  });
+
+  it("導入済みの印と、未導入の合計サイズ", () => {
+    const installed = new Set(["anima-te/te"]);
+    const items = bundleFor(all, model, model.variants[0], (f, v) => installed.has(`${f}/${v}`));
+    expect(items.map((i) => i.installed)).toEqual([false, true, false]);
+    expect(bundleMissingBytes(items)).toBe(4_250);
+    expect(bundleMissingBytes(items.map((i) => ({ ...i, installed: true })))).toBe(0);
+  });
+
+  it("同じファイル(配置先とファイル名が同じ)は、サイズを重複して数えない", () => {
+    const vae2 = family("krea2-vae", "krea2", [sized("vae", "qwen_image_vae.safetensors", 250, "vae")]);
+    const items = [
+      { family: vae, variant: vae.variants[0], installed: false },
+      { family: vae2, variant: vae2.variants[0], installed: false },
+    ];
+    expect(bundleMissingBytes(items)).toBe(250);
   });
 });

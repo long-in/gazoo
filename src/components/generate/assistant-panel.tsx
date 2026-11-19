@@ -10,12 +10,14 @@ import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "
 import { Textarea } from "@/components/ui/textarea";
 import { diffRows, listChanges, usableChanges } from "@/lib/generation/suggestions";
 import type { MessageKey } from "@/lib/i18n";
-import { useErrorMessage, useT } from "@/lib/i18n/use-t";
+import { useErrorMessage, useLanguage, useT } from "@/lib/i18n/use-t";
+import { switchTarget } from "@/lib/models/profile";
 import { assistantUpdate, type Suggestion } from "@/lib/tauri/assistant";
 import { toAppError } from "@/lib/tauri/errors";
 import { type ChatMessage, useAssistantStore } from "@/stores/assistant-store";
 import { useEngineStore } from "@/stores/engine-store";
 import { useFormStore } from "@/stores/form-store";
+import { useModelsStore } from "@/stores/models-store";
 
 /** AI に相談するパネル(docs/11-ai-assistant.md §2)。 */
 export function AssistantPanel({ open, onOpenChange }: { open: boolean; onOpenChange: (open: boolean) => void }) {
@@ -88,6 +90,7 @@ function Consent() {
       <ul className="list-disc pl-5 text-sm">
         <li>{t("assistant.consent.item1")}</li>
         <li>{t("assistant.consent.item2")}</li>
+        <li>{t("assistant.consent.item3")}</li>
       </ul>
       <p className="text-sm text-muted-foreground">{t("assistant.consent.body2")}</p>
       <p className="text-xs text-muted-foreground">{t("assistant.cost")}</p>
@@ -108,7 +111,8 @@ function Chat() {
   const conversationId = useAssistantStore((s) => s.conversationId);
   const requestId = useAssistantStore((s) => s.requestId);
   const error = useAssistantStore((s) => s.error);
-  const [text, setText] = useState("");
+  const text = useAssistantStore((s) => s.draft);
+  const setText = (v: string) => useAssistantStore.getState().setDraft(v);
   const endRef = useRef<HTMLDivElement>(null);
   const running = requestId !== null;
 
@@ -218,9 +222,13 @@ function Message({ message }: { message: ChatMessage }) {
         {message.text || (message.pending ? t("assistant.thinking") : "")}
       </div>
       {!mine &&
-        message.suggestions.map((s, i) => (
-          <SuggestionCard key={i} messageId={message.id} index={i} suggestion={s} disabled={message.pending === true} />
-        ))}
+        message.suggestions.map((s, i) =>
+          s.model ? (
+            <ModelSuggestionCard key={i} messageId={message.id} index={i} suggestion={s} disabled={message.pending === true} />
+          ) : (
+            <SuggestionCard key={i} messageId={message.id} index={i} suggestion={s} disabled={message.pending === true} />
+          ),
+        )}
     </div>
   );
 }
@@ -296,6 +304,73 @@ function SuggestionCard({
           <Button size="xs" disabled={disabled || rows.length === 0} onClick={apply}>
             {t("assistant.suggest.apply")}
           </Button>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/**
+ * モデルの提案(docs/18 §6.3)。導入済みなら [このモデルに切り替える]、未導入なら [モデル取得ページで開く]。
+ * 切り替えは、必ずユーザーがボタンを押したときだけ行う。
+ */
+function ModelSuggestionCard({
+  messageId,
+  index,
+  suggestion,
+  disabled,
+}: {
+  messageId: string;
+  index: number;
+  suggestion: Suggestion;
+  disabled: boolean;
+}) {
+  const t = useT();
+  const lang = useLanguage();
+  const catalog = useModelsStore((s) => s.view?.catalog);
+  const models = useEngineStore((s) => s.models);
+
+  // カタログが未取得なら取り直す(提案の表示に、モデル名と導入状況が要る)
+  useEffect(() => {
+    if (!useModelsStore.getState().view) void useModelsStore.getState().load();
+  }, []);
+
+  const model = suggestion.model;
+  if (!model) return null;
+  const family = catalog?.families.find((f) => f.id === model.familyId);
+  const target = family ? switchTarget(family, models) : null;
+
+  function switchTo() {
+    if (!target) return;
+    useFormStore.getState().switchModel(target.kind, target.name, models);
+    void useAssistantStore.getState().markApplied(messageId, index);
+    toast.success(t("assistant.model.switched"));
+  }
+
+  return (
+    <div className="w-full rounded-lg border p-3 text-sm">
+      <p className="text-xs text-muted-foreground">{t("assistant.model.title")}</p>
+      <p className="font-medium">{family ? family.name[lang] : model.familyId}</p>
+      <p className="mt-1 text-xs whitespace-pre-wrap">{model.reason}</p>
+      <div className="mt-2 flex flex-wrap items-center gap-2">
+        {suggestion.applied ? (
+          <span className="text-xs text-muted-foreground">{t("assistant.model.done")}</span>
+        ) : target ? (
+          <Button size="xs" disabled={disabled} onClick={switchTo}>
+            {t("assistant.model.switch")}
+          </Button>
+        ) : (
+          <>
+            <span className="text-xs text-muted-foreground">{t("assistant.model.notInstalled")}</span>
+            <Button
+              size="xs"
+              variant="outline"
+              render={<Link href={`/models?family=${encodeURIComponent(model.familyId)}`} />}
+              nativeButton={false}
+            >
+              {t("assistant.model.open")}
+            </Button>
+          </>
         )}
       </div>
     </div>

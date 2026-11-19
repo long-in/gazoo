@@ -126,7 +126,7 @@ function AssistantBootstrap() {
     const st = () => useAssistantStore.getState();
     void Promise.all([
       onAssistantDelta((p) => st().onDelta(p.requestId, p.text)),
-      onAssistantSuggestion((p) => st().onSuggestion(p.requestId, p.index, p.summary, p.changes)),
+      onAssistantSuggestion((p) => st().onSuggestion(p.requestId, p.index, p.summary, p.changes, p.model ?? undefined)),
       onAssistantDone((p) => st().onDone(p.requestId)),
       onAssistantError((p) => st().onError(p.requestId, toAppError({ code: p.code, message: p.message }))),
     ]).then((fns) => {

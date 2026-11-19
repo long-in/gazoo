@@ -4,31 +4,125 @@
 //! 画面名・ボタン名は UI の文言(`src/lib/i18n/ja.ts`)と一致させる。
 //! アプリ固定の信頼できる文面であり、ユーザー入力は含めない。
 
+use std::sync::OnceLock;
+
 use serde_json::{Value, json};
 
 use crate::engine::EngineFeatures;
+use crate::services::models::catalog::{
+    Catalog, Family, FamilyKind, NsfwSupport, PromptKind, Speed, Style,
+};
+use crate::services::models::download::DownloadPolicy;
 
 pub const CAPABILITIES: &str = r#"
 # gazoo でできること(画面名・ボタン名はアプリの表示どおり)
-- 画像生成(生成画面): プロンプト・ネガティブ・モデル種別(SD 1.5 / SDXL / Flux / Flux GGUF)・サイズ・steps・CFG(Flux は guidance)・サンプラー・シード・枚数を指定して生成する。「生成」でキューに入る。
+- 画像生成(生成画面): プロンプト・ネガティブ・モデル種別(SD 1.5 / SDXL / Flux / Flux GGUF / Anima / Qwen-Image 2.1 / Krea 2)・サイズ・steps・CFG(Flux は guidance)・サンプラー・シード・枚数を指定して生成する。「生成」でキューに入る。
 - 顔補正(生成画面のスイッチ。SD 1.5 / SDXL のみ): 生成画像の顔を検出し、その部分だけを再生成して整える。強さ(denoise)で変化の大きさを調整する。ComfyUI に Impact Pack / Subpack と検出モデルが必要。
 - ControlNet(生成画面のスイッチ。SD 1.5 / SDXL のみ、1 つまで): 参照画像から輪郭(Canny)・深度・ポーズを取り出し、構図の条件にする。ベースモデルに合う ControlNet モデルが必要。
 - Inpaint(生成画面のスイッチ。SD 1.5 / SDXL のみ): 参照画像に「マスクを描く」で範囲を塗り、塗った範囲だけを描き直す。マスク外は「結果を元画像へ合成し直す」で元画像と一致させられる。顔を保って服・背景だけ変えたいときは、顔を塗って「反転」する。強さは 0.6〜0.8 が目安。プロンプトには描き直す部分の説明だけを書く。顔補正とは同時に使えない。参照画像は、ファイル選択か、ギャラリー詳細の「Inpaint に使う」で設定する。
-- プリセット(プリセット画面): 生成設定の保存と呼び出し。
+- プリセット(プリセット画面と生成画面のプリセット欄): 生成設定の保存と呼び出し。組み込みの「アニメ(SDXL・縦長)」「アニメ(SDXL・正方形)」(アニメ系 SDXL 向けのサイズ・steps・CFG・サンプラー・ネガティブ。プロンプトとモデルの選択は変えない)がある。
 - ギャラリー: 生成画像の一覧・検索・お気に入り・書き出し。詳細の「この設定で生成」で同じ設定を再現し、「参照画像に使う」(ControlNet)や「Inpaint に使う」で画像を参照に設定できる。
 - キュー: 実行中・待機中のジョブの確認、並べ替え、キャンセル、再試行。
-- モデル(モデル画面): チェックポイント・ControlNet・検出モデル・Flux 一式を、バージョンを選んで取得できる。取得はユーザーが「ダウンロード」を押したときだけ行う。
+- モデル(モデル画面): チェックポイント・ControlNet・検出モデル・Flux・Anima・Qwen-Image 2.1・Krea 2 を、バージョンを選んで取得できる(Anima などは「必要なファイルをまとめて取得」で、本体・テキストエンコーダ・VAE が揃う)。取得はユーザーが「ダウンロード」を押したときだけ行う。チェックポイントには、アニメ・イラスト特化の SDXL の NoobAI-XL と Animagine XL 4.0(どちらも成人向けにも対応。「用途」で絞り込める)がある。
+- アニメ系モデルの使い方: NoobAI-XL・Animagine XL 4.0 は自然な文章ではなく Danbooru タグ(1girl, solo, …)で書く。品質タグ(例: masterpiece, best quality)を入れ、ネガティブに lowres, bad anatomy, worst quality などを入れる。サイズは 832×1216 か 1024×1024、steps 28 前後、CFG 5 前後、サンプラーは euler_ancestral が目安。成人向けの表現はタグ(Animagine は rating: safe / sensitive / nsfw / explicit)で制御し、避けたいときはネガティブに nsfw を入れる。顔補正・ControlNet・Inpaint はそのまま使える。
 - AI に相談(このパネル): フォームの設定へのアドバイス。提案はユーザーが「適用」を押して初めてフォームに反映される。
 
 # gazoo にまだ無い機能(「ある」と案内しない。必要なら ComfyUI を直接使う方法を勧める)
 - LoRA、生成中のプレビュー画像、Inpaint 以外の img2img、アウトペイント(キャンバスの拡張)、複数の ControlNet、動画生成。
-- Flux 系では Inpaint・顔補正・ControlNet を使えない(SD 1.5 / SDXL のみ)。
-- あなた(AI)はアプリを操作できない。モデルの切替・シード・ControlNet・Inpaint の画像やマスクは、提案ではなく手順を本文で説明する。
+- Flux 系・Anima・Qwen-Image 2.1・Krea 2 では Inpaint・顔補正・ControlNet を使えない(SD 1.5 / SDXL のみ)。
+- あなた(AI)はアプリを操作できない。シード・ControlNet・Inpaint の画像やマスクは、提案ではなく手順を本文で説明する。モデルの切替は suggest_model で提案できる(切り替えるのはユーザーが「このモデルに切り替える」を押したとき)。
 - 「現在のフォーム」の capabilities が false の機能は、今の ComfyUI では使えない。足りないものを案内する(例: Inpaint が false なら ComfyUI の更新)。"#;
 
-/// システムプロンプト全体(基本の指示 + 機能カタログ)。
+/// 同梱のモデルカタログ(読み込みに失敗したら `None`。その場合モデルガイドは付けない)。
+pub fn catalog() -> Option<&'static Catalog> {
+    static CATALOG: OnceLock<Option<Catalog>> = OnceLock::new();
+    CATALOG
+        .get_or_init(|| Catalog::embedded(&DownloadPolicy::production()).ok())
+        .as_ref()
+}
+
+const MODEL_RULES: &str = r#"
+# モデルの提案のルール
+- 依頼の目的(絵柄・人数・文字・成人向け・速度・使えるメモリ)に合うモデルを、1〜2 件、理由つきで挙げる。
+- 「選択中のモデルと導入済みのモデル」にある導入済みのモデルを優先する。未導入のモデルを勧めたら、モデル画面で取得できると案内する。
+- メモリが足りなそうなときは、軽いモデルも添える。
+- 下のモデルガイドに無いモデルを、推測で勧めない。選択中のモデルがガイドに無い(カタログ外)ときは、特徴が分からないと答える。
+- 成人向けの内容は、ガイドで「成人向け対応」とあるモデルだけを勧める。利用者が適法な範囲で使うことが前提で、未成年・実在の人物に関わる依頼には協力しない。
+"#;
+
+/// モデルガイド(docs/18 §6.1)。カタログのプロフィールから自動生成する(手書きで二重に持たない)。
+/// 1 ファミリー 1 項目。`[ID]` は `suggest_model` の familyId に渡すもの。
+pub fn model_guide(catalog: &Catalog) -> String {
+    let mut out =
+        String::from("\n# モデルガイド(`[ID]` を suggest_model の familyId に指定する)\n");
+    for f in catalog.families.iter().filter(|f| f.is_selectable_model()) {
+        if let Some(line) = guide_line(f) {
+            out.push_str(&line);
+            out.push('\n');
+        }
+    }
+    out
+}
+
+fn guide_line(f: &Family) -> Option<String> {
+    let p = f.profile.as_ref()?;
+    let styles: Vec<&str> = p
+        .style
+        .iter()
+        .map(|s| match s {
+            Style::Anime => "アニメ",
+            Style::Realistic => "実写",
+            Style::Illustration => "イラスト",
+            Style::General => "汎用",
+        })
+        .collect();
+    let prompt = match p.prompt_style.kind {
+        PromptKind::Tags => "タグ形式",
+        PromptKind::Natural => "文章",
+        PromptKind::Both => "タグでも文章でも可",
+    };
+    let speed = match p.resources.speed {
+        Speed::Fast => "速い",
+        Speed::Medium => "普通",
+        Speed::Slow => "遅い",
+    };
+    // 対応機能は種別から決まる(SD 1.5 / SDXL 以外は txt2img のみ。docs/17 §3、18 §3)
+    let features = match f.kind {
+        Some(FamilyKind::FluxGguf) => "Flux 系(ネガティブ・顔補正・ControlNet・Inpaint は使えない)",
+        Some(FamilyKind::Anima | FamilyKind::QwenImage) => {
+            "ネガティブは使える。顔補正・ControlNet・Inpaint は使えない"
+        }
+        Some(FamilyKind::Krea2) => "ネガティブ・顔補正・ControlNet・Inpaint は使えない",
+        None => "顔補正・ControlNet・Inpaint・ネガティブが使える",
+    };
+    let nsfw = match p.nsfw {
+        NsfwSupport::Capable | NsfwSupport::Limited => "。成人向け対応",
+        NsfwSupport::NotIntended | NsfwSupport::Unknown => "",
+    };
+    Some(format!(
+        "- [{}] {}: {}。絵柄: {}。得意: {}。不得意: {}。プロンプト: {}。目安: VRAM {}GB 以上・{}{}。{}",
+        f.id,
+        f.name.ja,
+        p.summary.ja,
+        styles.join("・"),
+        p.best_for.ja.join(" / "),
+        p.weak_at.ja.join(" / "),
+        prompt,
+        p.resources.vram_gb,
+        speed,
+        nsfw,
+        features,
+    ))
+}
+
+/// システムプロンプト全体(基本の指示 + 機能カタログ + モデルの提案のルールとモデルガイド)。
 pub fn system_prompt() -> String {
-    format!("{}\n{}", super::context::SYSTEM_PROMPT, CAPABILITIES)
+    let mut s = format!("{}\n{}", super::context::SYSTEM_PROMPT, CAPABILITIES);
+    if let Some(c) = catalog() {
+        s.push_str(MODEL_RULES);
+        s.push_str(&model_guide(c));
+    }
+    s
 }
 
 /// 今の ComfyUI で使える機能(「現在のフォーム」に添える)。接続状態が不明なら `None`。
@@ -49,7 +143,7 @@ mod tests {
     use crate::domain::params::Preprocessor;
 
     /// システムプロンプトの上限の目安(文字数)。トークン消費を抑えるためのテストで使う。
-    pub const MAX_PROMPT_CHARS: usize = 6000;
+    pub const MAX_PROMPT_CHARS: usize = 9000;
 
     /// 「できること」の各機能の名前(テストで、カタログに載っているかの確認に使う)。
     pub const FEATURE_NAMES: [&str; 9] = [
@@ -100,6 +194,78 @@ mod tests {
         ] {
             assert!(CAPABILITIES.contains(label), "{label} がカタログにない");
             assert!(ja.contains(label), "{label} が ja.ts にない");
+        }
+    }
+
+    #[test]
+    fn model_guide_lists_every_selectable_family_with_its_id() {
+        // docs/18 §6.1: 選べるモデルすべてが ID つきで載る(suggest_model の familyId の元)
+        let c = catalog().expect("同梱カタログを読める");
+        let guide = model_guide(c);
+        let selectable: Vec<_> = c
+            .families
+            .iter()
+            .filter(|f| f.is_selectable_model())
+            .collect();
+        assert!(selectable.len() >= 6);
+        for f in &selectable {
+            assert!(
+                guide.contains(&format!("[{}]", f.id)),
+                "{} がガイドにない",
+                f.id
+            );
+        }
+        // ControlNet・検出モデル・Flux のテキストエンコーダ / VAE は載らない
+        assert!(!guide.contains("[controlnet-canny]"));
+        assert!(!guide.contains("[flux-vae]"));
+        // 説明の内容(書き方・メモリ)が入る
+        assert!(guide.contains("Danbooru"), "NoobAI-XL の説明");
+        assert!(guide.contains("VRAM"));
+    }
+
+    #[test]
+    fn nsfw_is_only_claimed_for_models_marked_capable() {
+        let c = catalog().unwrap();
+        let guide = model_guide(c);
+        for line in guide.lines().filter(|l| l.starts_with("- [")) {
+            let id = line.trim_start_matches("- [").split(']').next().unwrap();
+            let fam = c.families.iter().find(|f| f.id == id).unwrap();
+            let capable = fam.profile.as_ref().unwrap().nsfw.is_nsfw();
+            assert_eq!(line.contains("成人向け対応"), capable, "{id}");
+        }
+        assert!(guide.contains("[checkpoint-noobai-xl]"));
+    }
+
+    #[test]
+    fn system_prompt_includes_rules_and_guide() {
+        let p = system_prompt();
+        assert!(p.contains("suggest_model"));
+        assert!(p.contains("# モデルの提案のルール"));
+        assert!(p.contains("# モデルガイド"));
+        assert!(p.contains("[checkpoint-sdxl]"));
+        // 「アプリを操作できない」の項で、モデルの切替は提案できることになった
+        assert!(!CAPABILITIES.contains("モデルの切替・シード"));
+    }
+
+    #[test]
+    fn anime_models_and_builtin_presets_are_described() {
+        // docs/16 §6: アニメ系モデルと組み込みプリセットを案内できる。名前は UI・カタログと一致させる
+        let presets = include_str!("../../../../src/lib/generation/builtin-presets.ts");
+        let catalog = include_str!("../../../resources/models/catalog.json");
+        for name in [
+            "NoobAI-XL",
+            "Animagine XL 4.0",
+            "Danbooru",
+            "アニメ(SDXL・縦長)",
+            "アニメ(SDXL・正方形)",
+        ] {
+            assert!(CAPABILITIES.contains(name), "{name} がカタログにない");
+        }
+        for name in ["アニメ(SDXL・縦長)", "アニメ(SDXL・正方形)"] {
+            assert!(presets.contains(name), "{name} が組み込みプリセットにない");
+        }
+        for name in ["NoobAI-XL", "Animagine XL 4.0"] {
+            assert!(catalog.contains(name), "{name} がモデルカタログにない");
         }
     }
 

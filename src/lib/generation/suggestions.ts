@@ -2,7 +2,7 @@ import type { SuggestedChanges } from "@/lib/tauri/assistant";
 import type { EngineModels } from "@/lib/tauri/engine";
 import type { GenerationParams } from "@/lib/tauri/jobs";
 
-import { defaultFaceDetailer, isFlux } from "./defaults";
+import { defaultFaceDetailer, isFlux, supportsExtras, usesNegative } from "./defaults";
 
 /** AI の提案をフォームへ適用する・差分を表示する・元に戻すためのロジック(docs/11 §6)。 */
 
@@ -46,13 +46,14 @@ export function usableChanges(
   for (const key of SCALAR_KEYS) {
     const v = changes[key];
     if (v === undefined) continue;
-    if (flux && (key === "cfg" || key === "negativePrompt")) continue;
+    if (flux && key === "cfg") continue;
+    if (key === "negativePrompt" && !usesNegative(params.model.kind)) continue;
     if (!flux && key === "guidance") continue;
     if (key === "sampler" && models && models.samplers.length > 0 && !models.samplers.includes(v as string)) continue;
     if (key === "scheduler" && models && models.schedulers.length > 0 && !models.schedulers.includes(v as string)) continue;
     (out as Record<string, unknown>)[key] = v;
   }
-  if (changes.faceDetailer && !flux) {
+  if (changes.faceDetailer && supportsExtras(params.model.kind)) {
     const f: NonNullable<SuggestedChanges["faceDetailer"]> = {};
     if (changes.faceDetailer.enabled !== undefined) f.enabled = changes.faceDetailer.enabled;
     if (changes.faceDetailer.denoise !== undefined) f.denoise = changes.faceDetailer.denoise;

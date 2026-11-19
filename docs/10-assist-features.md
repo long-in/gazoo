@@ -1,6 +1,6 @@
 # 10. 生成補助機能(顔補正・ControlNet)
 
-Stable Diffusion WebUI 系の定番拡張である **ADetailer(顔補正)** と **ControlNet(構図・ポーズ指定)** に相当する機能を、ComfyUI のノードを使って gazoo に組み込む。
+Stable Diffusion WebUI 系の定番拡張である **ADetailer(顔補正)** と **ControlNet(構図・ポーズ指定)** に相当する機能を、ComfyUI のノードを使って gazooo に組み込む。
 
 > ステータス: 🟢 承認済み(2026-11-19)
 > 位置づけ: MVP(M0〜M5)の後に追加する **v0.2 の機能**。方針は 07 の Q-19〜Q-24 を参照。

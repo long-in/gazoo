@@ -1,6 +1,6 @@
 import { invoke } from "./invoke";
 
-export type ModelKind = "sd15" | "sdxl" | "flux" | "flux_gguf";
+export type ModelKind = "sd15" | "sdxl" | "flux" | "flux_gguf" | "anima" | "qwen_image" | "krea2";
 
 export interface ModelSpec {
   kind: ModelKind;
