@@ -134,9 +134,9 @@ describe("モデルの説明(docs/18)", () => {
     expect(profileFor(catalog, "anima", "other.safetensors")).toMatchObject({ exact: false });
     expect(profileFor(catalog, "anima", "other.safetensors")?.family.id).toBe("anima-base");
     // 対応機能: Anima はネガティブを使えるが、拡張機能はない。Krea 2 はネガティブも使わない
-    expect(featuresFor("anima")).toEqual({ negative: true, faceDetailer: false, controlnet: false, inpaint: false });
+    expect(featuresFor("anima")).toEqual({ negative: true, faceDetailer: false, controlnet: false, inpaint: false, img2img: false });
     expect(featuresFor("qwen_image").negative).toBe(true);
-    expect(featuresFor("krea2")).toEqual({ negative: false, faceDetailer: false, controlnet: false, inpaint: false });
+    expect(featuresFor("krea2")).toEqual({ negative: false, faceDetailer: false, controlnet: false, inpaint: false, img2img: false });
   });
 
   it("一致すればそのモデルの説明、カタログ外・種別違いなら種別の一般説明(exact=false)", () => {
@@ -156,8 +156,8 @@ describe("モデルの説明(docs/18)", () => {
   });
 
   it("対応機能は種別から計算する(Flux 系は何も使えない)", () => {
-    expect(featuresFor("sdxl")).toEqual({ negative: true, faceDetailer: true, controlnet: true, inpaint: true });
-    expect(featuresFor("flux_gguf")).toEqual({ negative: false, faceDetailer: false, controlnet: false, inpaint: false });
+    expect(featuresFor("sdxl")).toEqual({ negative: true, faceDetailer: true, controlnet: true, inpaint: true, img2img: true });
+    expect(featuresFor("flux_gguf")).toEqual({ negative: false, faceDetailer: false, controlnet: false, inpaint: false, img2img: false });
   });
 
   it("導入済みのファミリー ID は、ComfyUI の一覧にあるファイルから決める(ファイル名は含めない)", () => {

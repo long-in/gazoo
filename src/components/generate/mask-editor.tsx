@@ -11,7 +11,7 @@ import { useErrorMessage, useT } from "@/lib/i18n/use-t";
 import { toAppError } from "@/lib/tauri/errors";
 import { type InputImage, inputImageGet, maskSave } from "@/lib/tauri/inputs";
 
-import { imageSrc } from "./result-panel";
+import { imageSrc } from "@/lib/image-src";
 
 /** 画面上の編集用キャンバスの長辺(px)。保存時に原寸へ拡大する。 */
 const VIEW_LONG_SIDE = 640;

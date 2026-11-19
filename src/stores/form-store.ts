@@ -13,18 +13,26 @@ import {
 } from "@/lib/generation/defaults";
 import { applyBuiltinPreset, type BuiltinPreset } from "@/lib/generation/builtin-presets";
 import type { RecommendedPatch } from "@/lib/models/profile";
+import { animeStart, type AnimeStartOutcome, withCompositionLock, withImg2imgEnabled, withImg2imgImage } from "@/lib/generation/img2img";
+import { defaultImg2img } from "@/lib/generation/img2img-defaults";
 import { defaultInpaint, sizeForImage } from "@/lib/generation/inpaint";
 import { applyChanges, usableChanges } from "@/lib/generation/suggestions";
+import { useModelsStore } from "@/stores/models-store";
 import type { SuggestedChanges } from "@/lib/tauri/assistant";
 import type { EngineModels } from "@/lib/tauri/engine";
+import type { ModelCatalog } from "@/lib/tauri/models";
 import type {
   ControlnetUnit,
   FaceDetailerParams,
   GenerationParams,
+  Img2imgParams,
   InpaintParams,
   ModelKind,
   ModelSpec,
 } from "@/lib/tauri/jobs";
+
+/** モデルの絞り込みに使うカタログ(未取得なら `null` = 絞り込まない)。 */
+const catalogNow = () => useModelsStore.getState().view?.catalog ?? null;
 
 interface FormState {
   params: GenerationParams;
@@ -50,6 +58,18 @@ interface FormState {
   patchInpaint: (patch: Partial<InpaintParams>) => void;
   /** Inpaint の参照画像を設定する。生成サイズを画像に合わせ、前のマスクは捨てる。 */
   setInpaintImage: (path: string, width: number, height: number) => void;
+  /** 画像から生成(img2img)を切り替える。有効にすると Inpaint は無効にする(同時に使えない。docs/19 §4)。 */
+  setImg2imgEnabled: (enabled: boolean) => void;
+  patchImg2img: (patch: Partial<Img2imgParams>) => void;
+  /** 元画像を設定する。生成サイズを画像に合わせる(構図の固定中は ControlNet の画像も揃える)。 */
+  setImg2imgImage: (path: string, width: number, height: number) => void;
+  /** 構図の固定(ControlNet の Canny を元画像で自動設定)を入れる/切る。 */
+  setCompositionLock: (on: boolean, controlnets: string[]) => void;
+  /** 「画像からアニメ調に」: 元画像・アニメ系 SDXL・推奨値を一度に設定する(docs/19 §3.1)。 */
+  startAnime: (
+    image: { path: string; width: number; height: number },
+    ctx: { catalog: ModelCatalog | null | undefined; models: EngineModels | null; cannyAvailable: boolean },
+  ) => { outcome: AnimeStartOutcome; compositionLocked: boolean };
   setKind: (kind: ModelKind) => void;
   setCount: (count: number) => void;
   /** ギャラリーの「この設定で生成」: 画像のパラメータをフォームに読み込む(シードは固定して再現する)。 */
@@ -118,8 +138,24 @@ export const useFormStore = create<FormState>((set, get) => ({
         ...s.params,
         inpaint: { ...(s.params.inpaint ?? defaultInpaint()), enabled },
         ...(enabled && s.params.faceDetailer && { faceDetailer: { ...s.params.faceDetailer, enabled: false } }),
+        ...(enabled && s.params.img2img && { img2img: { ...s.params.img2img, enabled: false } }),
       },
     })),
+
+  setImg2imgEnabled: (enabled) => set((s) => ({ params: withImg2imgEnabled(s.params, enabled) })),
+
+  patchImg2img: (patch) =>
+    set((s) => ({ params: { ...s.params, img2img: { ...(s.params.img2img ?? defaultImg2img()), ...patch } } })),
+
+  setImg2imgImage: (path, width, height) => set((s) => ({ params: withImg2imgImage(s.params, path, width, height) })),
+
+  setCompositionLock: (on, controlnets) => set((s) => ({ params: withCompositionLock(s.params, on, controlnets) })),
+
+  startAnime: (image, ctx) => {
+    const r = animeStart(get().params, image, ctx);
+    if (r.outcome === "ok") set({ params: r.params, hydrated: true });
+    return { outcome: r.outcome, compositionLocked: r.compositionLocked };
+  },
 
   patchInpaint: (patch) =>
     set((s) => ({ params: { ...s.params, inpaint: { ...(s.params.inpaint ?? defaultInpaint()), ...patch } } })),
@@ -143,16 +179,17 @@ export const useFormStore = create<FormState>((set, get) => ({
 
   applyPreset: (params) => set({ params: restoreParams(params), hydrated: true }),
 
-  applyRecommended: (patch, models) => set((s) => ({ params: autofill({ ...s.params, ...patch }, models) })),
+  applyRecommended: (patch, models) =>
+    set((s) => ({ params: autofill({ ...s.params, ...patch }, models, catalogNow()) })),
 
   switchModel: (kind, name, models) =>
     set((s) => {
       const switched = switchKind(s.params, kind);
-      return { params: autofill({ ...switched, model: { ...switched.model, name } }, models) };
+      return { params: autofill({ ...switched, model: { ...switched.model, name } }, models, catalogNow()) };
     }),
 
   applyBuiltinPreset: (preset, models) =>
-    set((s) => ({ params: autofill(applyBuiltinPreset(s.params, preset), models), hydrated: true })),
+    set((s) => ({ params: autofill(applyBuiltinPreset(s.params, preset), models, catalogNow()), hydrated: true })),
 
   loadParams: (params) =>
     set({ params: { ...restoreParams(params), seedRandomize: false }, hydrated: true }),
@@ -162,7 +199,7 @@ export const useFormStore = create<FormState>((set, get) => ({
     const usable = usableChanges(params, changes, models);
     if (Object.keys(usable).length === 0) return false;
     const { next, inverse } = applyChanges(params, usable);
-    set({ params: autofill(next, models), suggestionUndo: inverse });
+    set({ params: autofill(next, models, catalogNow()), suggestionUndo: inverse });
     return true;
   },
 
@@ -174,7 +211,7 @@ export const useFormStore = create<FormState>((set, get) => ({
 
   applyModels: (models) =>
     set((s) => {
-      const next = autofill(s.params, models);
+      const next = autofill(s.params, models, catalogNow());
       return next === s.params ? s : { params: next };
     }),
 }));

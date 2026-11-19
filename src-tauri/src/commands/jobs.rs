@@ -46,6 +46,34 @@ pub async fn job_retry(jobs: State<'_, Arc<JobService>>, id: String) -> AppResul
 }
 
 #[tauri::command]
+pub async fn job_remove(jobs: State<'_, Arc<JobService>>, ids: Vec<String>) -> AppResult<usize> {
+    jobs.remove(ids).await
+}
+
+#[tauri::command]
+pub fn queue_pause(jobs: State<'_, Arc<JobService>>) {
+    jobs.pause();
+}
+
+#[tauri::command]
+pub fn queue_resume(jobs: State<'_, Arc<JobService>>) {
+    jobs.resume();
+}
+
+#[tauri::command]
+pub fn queue_state(jobs: State<'_, Arc<JobService>>) -> QueueState {
+    QueueState {
+        paused: jobs.is_paused(),
+    }
+}
+
+/// キューの状態(docs/20 §3.4)。
+#[derive(serde::Serialize)]
+pub struct QueueState {
+    pub paused: bool,
+}
+
+#[tauri::command]
 pub async fn job_clear_finished(jobs: State<'_, Arc<JobService>>) -> AppResult<usize> {
     jobs.clear_finished().await
 }

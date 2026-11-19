@@ -4,6 +4,7 @@
 //! 通信はダウンロード開始後に Rust からのみ行い、許可リストのホストに限る。
 
 pub mod catalog;
+pub mod compat;
 pub mod download;
 pub mod engine_paths;
 #[cfg(test)]

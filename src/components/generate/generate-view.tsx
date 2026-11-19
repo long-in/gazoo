@@ -7,7 +7,7 @@ import { useAssistantStore } from "@/stores/assistant-store";
 
 import { AssistantPanel } from "./assistant-panel";
 import { GenerationForm } from "./generation-form";
-import { ResultPanel } from "./result-panel";
+import { Workspace } from "./workspace";
 
 export function GenerateView() {
   const t = useT();
@@ -21,7 +21,7 @@ export function GenerateView() {
           <GenerationForm />
         </div>
         <div className="min-h-0 overflow-y-auto">
-          <ResultPanel />
+          <Workspace />
         </div>
       </div>
       {/* フォームの外に置く(フォームの Ctrl+Enter で生成が走らないように) */}

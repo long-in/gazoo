@@ -39,9 +39,9 @@ pub const SYSTEM_PROMPT: &str = r#"あなたは、ローカル画像生成アプ
 - sampler / scheduler: ComfyUI の名前(例: euler, dpmpp_2m, dpmpp_2m_sde, normal, karras, simple)。
 - batchSize: 1〜8。
 - faceDetailer(顔補正、SD 系のみ): enabled と denoise(0.05〜1.0。0.3〜0.5 が目安)。
-- suggest_params で提案できるのは prompt / negativePrompt / width / height / steps / cfg / guidance / sampler / scheduler / batchSize / faceDetailer だけ。seed・ControlNet・Inpaint は提案できない(必要なら本文で手順を説明する)。
+- suggest_params で提案できるのは prompt / negativePrompt / width / height / steps / cfg / guidance / sampler / scheduler / batchSize / faceDetailer だけ。seed・ControlNet・img2img・Inpaint は提案できない(必要なら本文で手順を説明する)。
 - モデルを勧めるときは、本文で理由を説明したうえで suggest_model ツールを呼ぶ(下の「モデルガイド」にある ID だけ。1 回の回答につき 1 回まで)。
-- Inpaint が有効なときは、width / height が参照画像から決まるため提案しない。
+- Inpaint または img2img が有効なときは、width / height が参照画像から決まるため提案しない。
 - 提案では変えたい項目だけを changes に入れる。"#;
 
 pub fn tool_definition() -> Value {
@@ -123,6 +123,14 @@ pub fn snapshot(p: &GenerationParams) -> Value {
             "feather": ip.feather,
             "compositeBack": ip.composite_back,
             "hasMask": !ip.mask.is_empty(),
+        });
+    }
+    // img2img: 元画像のパスは送らない。強さと、画像の有無だけ
+    if let Some(i2i) = p.active_img2img() {
+        v["img2img"] = json!({
+            "enabled": true,
+            "denoise": i2i.denoise,
+            "hasImage": !i2i.image.is_empty(),
         });
     }
     if let Some(cn) = &p.controlnet {
@@ -498,6 +506,25 @@ mod tests {
         assert!(!text.contains("inputs/"));
         assert!(!text.contains("987654321"));
         assert!(text.contains("canny"));
+    }
+
+    #[test]
+    fn snapshot_reports_img2img_without_the_image_path() {
+        use crate::domain::params::Img2imgParams;
+        let mut p = sample(ModelKind::Sdxl);
+        p.img2img = Some(Img2imgParams {
+            enabled: true,
+            image: "inputs/secret-photo.png".into(),
+            denoise: 0.6,
+        });
+        let snap = snapshot(&p);
+        let text = snap.to_string();
+        assert!(!text.contains("secret"));
+        assert!(!text.contains("inputs/"));
+        assert_eq!(snap["img2img"]["hasImage"], true);
+        assert_eq!(snap["img2img"]["denoise"], 0.6);
+        p.img2img.as_mut().unwrap().enabled = false;
+        assert!(snapshot(&p).get("img2img").is_none());
     }
 
     #[test]

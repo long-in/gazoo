@@ -44,6 +44,9 @@ const INPAINT_NODES: [&str; 11] = [
     "ImageCompositeMasked",
 ];
 
+/// 画像から生成(workflow.rs の `add_img2img`)が使うコアノード(docs/19 §5)。
+const IMG2IMG_NODES: [&str; 4] = ["LoadImage", "ImageScale", "VAEEncode", "RepeatLatentBatch"];
+
 pub struct ComfyUiClient {
     base: String,
     http: reqwest::Client,
@@ -168,14 +171,15 @@ impl GenerationEngine for ComfyUiClient {
         .map(|(kind, _, _)| kind)
         .collect();
 
-        // Inpaint はコアノードだけで組む。すべて揃っているときだけ使える
-        let inpaint = {
-            let infos = futures_util::future::join_all(INPAINT_NODES.iter().map(|n| async move {
+        // Inpaint・img2img はコアノードだけで組む。すべて揃っているときだけ使える
+        let all_core = |nodes: &'static [&'static str]| async move {
+            let found = futures_util::future::join_all(nodes.iter().map(|n| async move {
                 matches!(self.node_info(n).await, Ok(i) if parse::has_node(&i, n))
             }))
             .await;
-            infos.into_iter().all(|ok| ok)
+            found.into_iter().all(|ok| ok)
         };
+        let (inpaint, img2img) = tokio::join!(all_core(&INPAINT_NODES), all_core(&IMG2IMG_NODES));
 
         Ok(EngineStatus {
             connected: true,
@@ -188,6 +192,7 @@ impl GenerationEngine for ComfyUiClient {
                 face_detailer,
                 controlnet_preprocessors,
                 inpaint,
+                img2img,
             },
             error: None,
         })
