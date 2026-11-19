@@ -223,14 +223,15 @@ function InstallWizard({ onOpenChange }: { onOpenChange: (o: boolean) => void })
 
   return (
     <Dialog open={open} onOpenChange={(o) => (!running || !o ? onOpenChange(o) : undefined)}>
-      <DialogContent className="sm:max-w-xl" showCloseButton={!running}>
+      {/* グリッドの列幅を固定する(長いログの 1 行で、モーダルやバーが広がらないように) */}
+      <DialogContent className="grid-cols-[minmax(0,1fr)] sm:max-w-xl" showCloseButton={!running}>
         <DialogHeader>
           <DialogTitle>{t("engine.install.title")}</DialogTitle>
           <DialogDescription>{t(`engine.install.screen.${screen}` as MessageKey)}</DialogDescription>
         </DialogHeader>
 
         {screen === "check" && (
-          <div className="flex max-h-[60vh] flex-col gap-3 overflow-y-auto text-sm">
+          <div className="flex max-h-[60vh] min-w-0 flex-col gap-3 overflow-y-auto text-sm">
             <div className="rounded-lg border p-3">
               <p className="font-medium">{t("engine.install.check.title")}</p>
               {preflightLoading && !preflight && <p className="text-muted-foreground">…</p>}
@@ -294,7 +295,7 @@ function InstallWizard({ onOpenChange }: { onOpenChange: (o: boolean) => void })
         )}
 
         {screen === "consent" && (
-          <div className="flex max-h-[60vh] flex-col gap-3 overflow-y-auto text-sm">
+          <div className="flex max-h-[60vh] min-w-0 flex-col gap-3 overflow-y-auto text-sm">
             <div className="rounded-lg border p-3">
               <p className="font-medium">{t("engine.install.consent.hosts")}</p>
               <p className="mt-1 break-all font-mono text-xs text-muted-foreground">{view.hosts.join(", ")}</p>
@@ -324,8 +325,8 @@ function InstallWizard({ onOpenChange }: { onOpenChange: (o: boolean) => void })
         )}
 
         {screen === "progress" && (
-          <div className="flex flex-col gap-3 text-sm">
-            <div>
+          <div className="flex min-w-0 flex-col gap-3 text-sm">
+            <div className="min-w-0">
               <p className="font-medium">
                 {status === "done"
                   ? t("engine.install.done")
@@ -351,7 +352,7 @@ function InstallWizard({ onOpenChange }: { onOpenChange: (o: boolean) => void })
             </div>
             <pre
               aria-label={t("engine.install.log")}
-              className="h-48 overflow-auto rounded-lg border bg-muted/40 p-2 font-mono text-[11px] leading-snug"
+              className="h-48 min-w-0 max-w-full overflow-auto whitespace-pre-wrap break-all rounded-lg border bg-muted/40 p-2 font-mono text-[11px] leading-snug"
             >
               {logs.join("\n")}
             </pre>
