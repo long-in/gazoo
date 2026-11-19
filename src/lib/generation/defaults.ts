@@ -9,11 +9,13 @@ import type {
   InpaintParams,
   ModelKind,
   Preprocessor,
+  ReferenceParams,
 } from "@/lib/tauri/jobs";
 
 import { type FileKinds, fileKinds, filterForKind } from "./compat";
 import { defaultImg2img } from "./img2img-defaults";
 import { defaultInpaint } from "./inpaint";
+import { defaultReference, supportsReference } from "./reference";
 
 export const MODEL_KINDS: ModelKind[] = ["sd15", "sdxl", "flux", "flux_gguf", "anima", "qwen_image", "krea2"];
 
@@ -144,6 +146,10 @@ export function switchKind(current: GenerationParams, kind: ModelKind): Generati
     // Inpaint も同様(参照画像・マスクは残し、非対応の種別では無効にする)
     ...(current.inpaint && {
       inpaint: { ...current.inpaint, enabled: current.inpaint.enabled && supportsInpaint(kind) },
+    }),
+    // 参照画像つき生成(Qwen-Image 2.1)も同様(画像は残し、非対応の種別では無効にする)
+    ...(current.reference && {
+      reference: { ...current.reference, enabled: current.reference.enabled && supportsReference(kind) },
     }),
   };
 }
@@ -295,6 +301,9 @@ export function restoreParams(saved: Partial<GenerationParams> | null | undefine
     }),
     ...(saved.inpaint && { inpaint: { ...defaultInpaint(), ...saved.inpaint } satisfies InpaintParams }),
     ...(saved.img2img && { img2img: { ...defaultImg2img(), ...saved.img2img } satisfies Img2imgParams }),
+    ...(saved.reference && {
+      reference: { ...defaultReference(), ...saved.reference, images: saved.reference.images ?? [] } satisfies ReferenceParams,
+    }),
   };
 }
 

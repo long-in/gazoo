@@ -8,7 +8,7 @@
 Anima・Qwen-Image 2.1・Krea 2 を、生成画面で選んで txt2img できるようにし、取得ページから必要なファイルを取得できるようにする。
 
 **やること**: 3 種別の追加(`anima` / `qwen_image` / `krea2`)、ワークフロー生成、必要ファイルの取得(カタログ)、生成フォームの出し分け、推奨パラメータ、モデルの説明(18)。
-**やらないこと(v0.9)**: 画像編集(Qwen-Image 2.1 の参照画像入力・Krea 2 の LoRA による参照)、顔補正・ControlNet・Inpaint(いずれも `sd15` / `sdxl` のみのまま。10・13)、LoRA、Turbo 系の LoRA、プロンプトの自動書き換え(Qwen-Image 2.1 の `TextGenerate`・Krea 2 のプロンプト拡張)、Civitai からの取得(07 Q-65)。
+**やらないこと(v0.9)**: 画像編集(Qwen-Image 2.1 の参照画像入力は **v0.16 の [24](24-qwen-reference-image.md) で別途設計**。Krea 2 の LoRA による参照は対象外のまま)、顔補正・ControlNet・Inpaint(いずれも `sd15` / `sdxl` のみのまま。10・13)、LoRA、Turbo 系の LoRA、プロンプトの自動書き換え(Qwen-Image 2.1 の `TextGenerate`・Krea 2 のプロンプト拡張)、Civitai からの取得(07 Q-65)。
 
 ## 2. 調査結果(2026-11-19。ComfyUI 0.45.6 同梱の公式テンプレートと、Hugging Face の API による)
 

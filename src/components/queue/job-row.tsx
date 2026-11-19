@@ -89,6 +89,7 @@ function JobErrorNote({ code, message }: { code: string; message: string }) {
 function extras(job: Job, t: (k: MessageKey) => string): string[] {
   const p = job.params;
   const out: string[] = [];
+  if (p.reference?.enabled) out.push(`${t("gallery.params.reference")} (${p.reference.images.length})`);
   if (p.img2img?.enabled) out.push(`${t("gallery.params.img2img")} (denoise ${p.img2img.denoise})`);
   if (p.controlnet?.enabled) out.push("ControlNet");
   if (p.inpaint?.enabled) out.push(`Inpaint (denoise ${p.inpaint.denoise})`);

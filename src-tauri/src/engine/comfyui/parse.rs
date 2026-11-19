@@ -70,6 +70,25 @@ pub fn has_node(node_info: &Value, node: &str) -> bool {
     node_info.get(node).is_some()
 }
 
+/// `TextEncodeQwenImage21` が参照画像つき生成に使える定義か(docs/24 §4.2)。
+/// 参照画像の入力 `images`(`COMFY_AUTOGROW_V3`)と任意の `vae` を持ち、出力に `latent` があること。
+/// ComfyUI のバージョンではなくノードの定義で判定する(古い版にはこの入力が無い)。
+pub fn has_reference_inputs(node_info: &Value) -> bool {
+    let Some(node) = node_info.get("TextEncodeQwenImage21") else {
+        return false;
+    };
+    let input = &node["input"];
+    let images = input["required"]["images"]
+        .get(0)
+        .and_then(Value::as_str)
+        .or_else(|| input["optional"]["images"].get(0).and_then(Value::as_str));
+    let has_vae = input["optional"].get("vae").is_some() || input["required"].get("vae").is_some();
+    let has_latent = node["output_name"]
+        .as_array()
+        .is_some_and(|o| o.iter().any(|n| n.as_str() == Some("latent")));
+    images == Some("COMFY_AUTOGROW_V3") && has_vae && has_latent
+}
+
 /// `POST /upload/image` の応答から、`LoadImage` に渡す名前(サブフォルダがあれば `sub/name`)を取り出す。
 pub fn parse_upload_name(v: &Value) -> Option<String> {
     let name = v.get("name")?.as_str().filter(|n| !n.is_empty())?;
@@ -259,6 +278,43 @@ pub fn parse_ws_progress(text: &str, prompt_id: &str) -> Option<(u32, u32, Optio
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// ComfyUI 0.45.6 の `/object_info/TextEncodeQwenImage21`(2026-11-20 に実機で確認した形)を縮めたもの。
+    fn qwen_encode_info() -> Value {
+        json!({ "TextEncodeQwenImage21": {
+            "input": {
+                "required": {
+                    "clip": ["CLIP", {}],
+                    "prompt": ["STRING", {}],
+                    "negative_prompt": ["STRING", {}],
+                    "resolution": ["INT", {}],
+                    "images": ["COMFY_AUTOGROW_V3", { "template": { "names": ["image_1", "image_2"] } }]
+                },
+                "optional": { "vae": ["VAE", {}] }
+            },
+            "output_name": ["positive", "negative", "latent"]
+        }})
+    }
+
+    #[test]
+    fn reference_inputs_are_detected_from_the_node_definition() {
+        assert!(has_reference_inputs(&qwen_encode_info()));
+        // ノードが無い(未導入・Null)
+        assert!(!has_reference_inputs(&Value::Null));
+        assert!(!has_reference_inputs(&json!({})));
+        // 古い定義: 参照画像の入力・vae・latent 出力が無い(t2i だけのエンコーダ)
+        let old = json!({ "TextEncodeQwenImage21": {
+            "input": { "required": { "clip": ["CLIP", {}], "prompt": ["STRING", {}] } },
+            "output_name": ["positive", "negative"]
+        }});
+        assert!(!has_reference_inputs(&old));
+        let mut no_vae = qwen_encode_info();
+        no_vae["TextEncodeQwenImage21"]["input"]["optional"] = json!({});
+        assert!(!has_reference_inputs(&no_vae));
+        let mut no_latent = qwen_encode_info();
+        no_latent["TextEncodeQwenImage21"]["output_name"] = json!(["positive", "negative"]);
+        assert!(!has_reference_inputs(&no_latent));
+    }
     use serde_json::json;
 
     #[test]

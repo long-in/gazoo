@@ -21,6 +21,7 @@ pub const CAPABILITIES: &str = r#"
 - ControlNet(生成画面のスイッチ。SD 1.5 / SDXL のみ、1 つまで): 参照画像から輪郭(Canny)・深度・ポーズを取り出し、構図の条件にする。ベースモデルに合う ControlNet モデルが必要。
 - Inpaint(生成画面のスイッチ。SD 1.5 / SDXL のみ): 参照画像に「マスクを描く」で範囲を塗り、塗った範囲だけを描き直す。マスク外は「結果を元画像へ合成し直す」で元画像と一致させられる。顔を保って服・背景だけ変えたいときは、顔を塗って「反転」する。強さは 0.6〜0.8 が目安。プロンプトには描き直す部分の説明だけを書く。顔補正とは同時に使えない。参照画像は、ファイル選択か、ギャラリー詳細の「Inpaint に使う」で設定する。
 - 画像から生成(生成画面のスイッチ「画像から生成(img2img)」。SD 1.5 / SDXL のみ): 元画像を出発点に、強さ(denoise)の分だけ描き直す。写真やイラストをアニメ調にしたいときは、アニメ系の SDXL モデル(Animagine XL 4.0・NoobAI-XL など)を選び、強さは弱 0.45・中 0.6(既定)・強 0.75 が目安。「構図を固定する」を入れると輪郭(Canny)の ControlNet が自動で設定され、形を保ったまま画風だけ変わる。「画像からアニメ調に」ボタンで、アニメ系モデルと推奨値を一度に設定できる。プロンプトには写っているものをタグで書く(元画像からの自動入力はしない)。Inpaint とは同時に使えない。顔補正・ControlNet とは併用できる。元画像は、ファイル選択か、ギャラリー詳細の「img2img に使う」で設定する。
+- 参照画像つき生成(生成画面のスイッチ「参照画像」。Qwen-Image 2.1 のみ): 参照画像を 1〜4 枚与え、プロンプトで「どうするか」を指示して編集・合成する。参照画像はプロンプトの中で <image1> <image2> のように番号で指す(例: 「<image1> の人物とポーズはそのままで、<image2> の服を着せる」)。1 枚目が編集される画像で、出力サイズも 1 枚目で決まる。「保つもの」と「変えるもの」を言葉で書くのがコツ。CFG は 1 のまま(ネガティブは効かない)。参照画像の大きさは小(768)・標準(1024、既定)・大(1536)で、大きいほどメモリと時間がかかる。「指示でアニメ調に」ボタンで、アニメ調に描き直す指示の雛形が入る(画風を別の画像で指定するより、言葉で指示するほうが安定する)。Inpaint・img2img・ControlNet・顔補正とは同時に使えない。参照画像は、ファイル選択か、ギャラリー詳細の「Qwen の参照に使う」で追加する。
 - プリセット(プリセット画面と生成画面のプリセット欄): 生成設定の保存と呼び出し。組み込みの「アニメ(SDXL・縦長)」「アニメ(SDXL・正方形)」(アニメ系 SDXL 向けのサイズ・steps・CFG・サンプラー・ネガティブ。プロンプトとモデルの選択は変えない)がある。
 - ギャラリー: 生成画像の一覧・検索・お気に入り・書き出し。詳細の「この設定で生成」で同じ設定を再現し、「参照画像に使う」(ControlNet)や「Inpaint に使う」で画像を参照に設定できる。
 - キュー: 実行中・待機中のジョブの確認、並べ替え、キャンセル、再試行。
@@ -29,9 +30,9 @@ pub const CAPABILITIES: &str = r#"
 - AI に相談(このパネル): フォームの設定へのアドバイス。提案はユーザーが「適用」を押して初めてフォームに反映される。
 
 # gazooo にまだ無い機能(「ある」と案内しない。必要なら ComfyUI を直接使う方法を勧める)
-- LoRA、生成中のプレビュー画像、元画像からのプロンプト自動生成、画像編集モデルによる指示だけの変換、アウトペイント(キャンバスの拡張)、複数の ControlNet、動画生成。
-- Flux 系・Anima・Qwen-Image 2.1・Krea 2 では画像から生成・Inpaint・顔補正・ControlNet を使えない(SD 1.5 / SDXL のみ)。
-- あなた(AI)はアプリを操作できない。シード・ControlNet・img2img・Inpaint の画像やマスクは、提案ではなく手順を本文で説明する。モデルの切替は suggest_model で提案できる(切り替えるのはユーザーが「このモデルに切り替える」を押したとき)。
+- LoRA、生成中のプレビュー画像、元画像からのプロンプト自動生成、参照画像への色マークによる領域指定、アウトペイント(キャンバスの拡張)、複数の ControlNet、動画生成。
+- Flux 系・Anima・Qwen-Image 2.1・Krea 2 では画像から生成・Inpaint・顔補正・ControlNet を使えない(SD 1.5 / SDXL のみ)。参照画像つき生成は Qwen-Image 2.1 のみ。
+- あなた(AI)はアプリを操作できない。シード・ControlNet・img2img・Inpaint・参照画像の画像やマスクは、提案ではなく手順を本文で説明する。モデルの切替は suggest_model で提案できる(切り替えるのはユーザーが「このモデルに切り替える」を押したとき)。
 - 「現在のフォーム」の capabilities が false の機能は、今の ComfyUI では使えない。足りないものを案内する(例: Inpaint が false なら ComfyUI の更新)。"#;
 
 /// 同梱のモデルカタログ(読み込みに失敗したら `None`。その場合モデルガイドは付けない)。
@@ -139,6 +140,7 @@ pub fn capabilities_json(features: Option<&EngineFeatures>) -> Option<Value> {
         "controlnetPreprocessors": f.controlnet_preprocessors,
         "inpaint": f.inpaint,
         "img2img": f.img2img,
+        "referenceEdit": f.reference_edit,
         "flux_gguf": f.gguf_node,
     }))
 }
@@ -295,6 +297,7 @@ mod tests {
             controlnet_preprocessors: vec![Preprocessor::Canny],
             inpaint: true,
             img2img: true,
+            reference_edit: true,
         };
         let v = capabilities_json(Some(&f)).unwrap();
         assert_eq!(v["faceFix"], false);

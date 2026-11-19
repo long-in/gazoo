@@ -156,6 +156,30 @@ fn default_img2img_denoise() -> f64 {
     0.6
 }
 
+/// 参照画像の枚数の上限(docs/24 §4.1。ノードは 16 枚まで受けるが、VRAM と速度の都合でアプリ側は 4 枚)。
+pub const MAX_REFERENCE_IMAGES: usize = 4;
+/// 参照画像の大きさ(`TextEncodeQwenImage21` の `resolution`。総画素の基準)として許す値(docs/24 Q-120)。
+pub const REFERENCE_RESOLUTIONS: [u32; 3] = [768, 1024, 1536];
+
+/// 参照画像つき生成(Qwen-Image 2.1 の画像編集。docs/24 §4.1)。`qwen_image` のみ。
+/// 1 枚目が編集される画像で、出力サイズも 1 枚目で決まる。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ReferenceParams {
+    #[serde(default)]
+    pub enabled: bool,
+    /// 参照画像(`inputs/<uuid>.png`)。1 枚目が編集対象。
+    #[serde(default)]
+    pub images: Vec<String>,
+    /// 参照画像の総画素の基準(768 / 1024 / 1536)。
+    #[serde(default = "default_reference_resolution")]
+    pub resolution: u32,
+}
+
+fn default_reference_resolution() -> u32 {
+    1024
+}
+
 fn default_inpaint_denoise() -> f64 {
     0.7
 }
@@ -249,9 +273,17 @@ pub struct GenerationParams {
     /// 画像から生成(img2img)。無ければ無効。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub img2img: Option<Img2imgParams>,
+    /// 参照画像つき生成(Qwen-Image 2.1 の画像編集。docs/24)。無ければ無効。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reference: Option<ReferenceParams>,
 }
 
 impl GenerationParams {
+    /// 有効な参照画像の設定(無効・未指定なら `None`)。
+    pub fn active_reference(&self) -> Option<&ReferenceParams> {
+        self.reference.as_ref().filter(|r| r.enabled)
+    }
+
     /// 有効な img2img の設定(無効・未指定なら `None`)。
     pub fn active_img2img(&self) -> Option<&Img2imgParams> {
         self.img2img.as_ref().filter(|i| i.enabled)
@@ -263,7 +295,7 @@ impl GenerationParams {
     }
 
     /// エンジンへ送る画像の数。順序は ControlNet の各ユニット、Inpaint の画像、Inpaint のマスク、
-    /// img2img の元画像(Inpaint と img2img は排他)。
+    /// img2img の元画像(Inpaint と img2img は排他)、参照画像つき生成の画像(他の画像入力とは排他)。
     pub fn upload_count(&self) -> usize {
         self.active_controlnet_units().len()
             + if self.active_inpaint().is_some() {
@@ -272,6 +304,7 @@ impl GenerationParams {
                 0
             }
             + usize::from(self.active_img2img().is_some())
+            + self.active_reference().map_or(0, |r| r.images.len())
     }
 
     /// 有効な ControlNet のユニット(無効・未指定・ユニットなしなら空)。
@@ -368,6 +401,43 @@ impl GenerationParams {
         }
         if let Some(i2i) = self.active_img2img() {
             self.validate_img2img(i2i)?;
+        }
+        if let Some(r) = self.active_reference() {
+            self.validate_reference(r)?;
+        }
+        Ok(())
+    }
+
+    /// docs/24 §4.2。種別・他の画像入力機能との排他・枚数・パス・大きさ。
+    fn validate_reference(&self, r: &ReferenceParams) -> AppResult<()> {
+        let bad = |field: &str, msg: &str| Err(AppError::validation(field, msg));
+        if self.model.kind != ModelKind::QwenImage {
+            return bad("reference", "参照画像は Qwen-Image 2.1 のみ対応です");
+        }
+        if self.active_inpaint().is_some()
+            || self.active_img2img().is_some()
+            || !self.active_controlnet_units().is_empty()
+            || self.active_face_detailer().is_some()
+        {
+            return bad(
+                "reference",
+                "参照画像は他の画像入力機能(Inpaint・img2img・ControlNet・顔補正)と併用できません",
+            );
+        }
+        if r.images.is_empty() {
+            return bad("reference.images", "参照画像を選択してください");
+        }
+        if r.images.len() > MAX_REFERENCE_IMAGES {
+            return bad("reference.images", "参照画像は 4 枚まで指定できます");
+        }
+        if r.images.iter().any(|i| !is_valid_input_path(i)) {
+            return bad("reference.images", "参照画像のパスが不正です");
+        }
+        if !REFERENCE_RESOLUTIONS.contains(&r.resolution) {
+            return bad(
+                "reference.resolution",
+                "参照画像の大きさは 768 / 1024 / 1536 のいずれかで指定してください",
+            );
         }
         Ok(())
     }
@@ -500,6 +570,7 @@ pub fn sample(kind: ModelKind) -> GenerationParams {
         controlnet: None,
         inpaint: None,
         img2img: None,
+        reference: None,
     }
 }
 
@@ -825,6 +896,80 @@ mod tests {
         }
         let i: Img2imgParams = serde_json::from_str(r#"{"enabled":true}"#).unwrap();
         assert_eq!(i.denoise, 0.6);
+    }
+
+    fn with_reference(kind: ModelKind, images: &[&str]) -> GenerationParams {
+        let mut p = sample(kind);
+        p.reference = Some(ReferenceParams {
+            enabled: true,
+            images: images.iter().map(|s| (*s).to_string()).collect(),
+            resolution: 1024,
+        });
+        p
+    }
+
+    #[test]
+    fn reference_is_valid_only_for_qwen_image_and_counts_one_upload_per_image() {
+        let p = with_reference(ModelKind::QwenImage, &["inputs/a.png", "inputs/b.png"]);
+        assert!(p.validate().is_ok());
+        assert_eq!(p.upload_count(), 2);
+        for k in [
+            ModelKind::Sd15,
+            ModelKind::Sdxl,
+            ModelKind::Flux,
+            ModelKind::FluxGguf,
+            ModelKind::Anima,
+            ModelKind::Krea2,
+        ] {
+            assert_eq!(
+                field_of(with_reference(k, &["inputs/a.png"]).validate()),
+                "reference",
+                "{k:?}"
+            );
+        }
+        // 無効なら、他の種別でも検証しない
+        let mut off = with_reference(ModelKind::Flux, &["inputs/a.png"]);
+        off.reference.as_mut().unwrap().enabled = false;
+        assert!(off.validate().is_ok());
+        assert_eq!(off.upload_count(), 0);
+    }
+
+    #[test]
+    fn reference_rejects_bad_counts_paths_and_resolutions() {
+        let none = with_reference(ModelKind::QwenImage, &[]);
+        assert_eq!(field_of(none.validate()), "reference.images");
+        let five = with_reference(ModelKind::QwenImage, &["inputs/a.png"; 5]);
+        assert_eq!(field_of(five.validate()), "reference.images");
+        let four = with_reference(ModelKind::QwenImage, &["inputs/a.png"; 4]);
+        assert!(four.validate().is_ok());
+        let bad_path = with_reference(ModelKind::QwenImage, &["inputs/a.png", "../x.png"]);
+        assert_eq!(field_of(bad_path.validate()), "reference.images");
+        for res in [0, 512, 1000, 2048] {
+            let mut p = with_reference(ModelKind::QwenImage, &["inputs/a.png"]);
+            p.reference.as_mut().unwrap().resolution = res;
+            assert_eq!(field_of(p.validate()), "reference.resolution", "{res}");
+        }
+        for res in REFERENCE_RESOLUTIONS {
+            let mut p = with_reference(ModelKind::QwenImage, &["inputs/a.png"]);
+            p.reference.as_mut().unwrap().resolution = res;
+            assert!(p.validate().is_ok());
+        }
+        let r: ReferenceParams = serde_json::from_str(r#"{"enabled":true}"#).unwrap();
+        assert_eq!((r.resolution, r.images.len()), (1024, 0));
+    }
+
+    #[test]
+    fn reference_cannot_be_combined_with_other_image_inputs() {
+        // Qwen-Image 2.1 では他の画像入力機能そのものが使えないので、どれを足しても拒否される
+        let mut p = with_reference(ModelKind::QwenImage, &["inputs/a.png"]);
+        p.img2img = with_img2img(ModelKind::QwenImage).img2img;
+        assert!(p.validate().is_err());
+        let mut p = with_reference(ModelKind::QwenImage, &["inputs/a.png"]);
+        p.controlnet = with_cn(ModelKind::QwenImage).controlnet;
+        assert!(p.validate().is_err());
+        let mut p = with_reference(ModelKind::QwenImage, &["inputs/a.png"]);
+        p.inpaint = with_inpaint(ModelKind::QwenImage).inpaint;
+        assert!(p.validate().is_err());
     }
 
     #[test]

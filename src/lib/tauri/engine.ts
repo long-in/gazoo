@@ -17,6 +17,8 @@ export interface EngineStatus {
     inpaint: boolean;
     /** 画像から生成(img2img)に必要なコアノードがそろっているか。 */
     img2img: boolean;
+    /** 参照画像つき生成(Qwen-Image 2.1 の画像編集)に使えるエンコーダの定義があるか(docs/24 §4.2)。 */
+    referenceEdit: boolean;
   };
   error?: "unreachable" | "bad_response";
 }

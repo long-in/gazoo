@@ -39,9 +39,9 @@ pub const SYSTEM_PROMPT: &str = r#"あなたは、ローカル画像生成アプ
 - sampler / scheduler: ComfyUI の名前(例: euler, dpmpp_2m, dpmpp_2m_sde, normal, karras, simple)。
 - batchSize: 1〜8。
 - faceDetailer(顔補正、SD 系のみ): enabled と denoise(0.05〜1.0。0.3〜0.5 が目安)。
-- suggest_params で提案できるのは prompt / negativePrompt / width / height / steps / cfg / guidance / sampler / scheduler / batchSize / faceDetailer だけ。seed・ControlNet・img2img・Inpaint は提案できない(必要なら本文で手順を説明する)。
+- suggest_params で提案できるのは prompt / negativePrompt / width / height / steps / cfg / guidance / sampler / scheduler / batchSize / faceDetailer だけ。seed・ControlNet・img2img・Inpaint・参照画像は提案できない(必要なら本文で手順を説明する)。
 - モデルを勧めるときは、本文で理由を説明したうえで suggest_model ツールを呼ぶ(下の「モデルガイド」にある ID だけ。1 回の回答につき 1 回まで)。
-- Inpaint または img2img が有効なときは、width / height が参照画像から決まるため提案しない。
+- Inpaint・img2img・参照画像が有効なときは、width / height が元の画像から決まるため提案しない。
 - 提案では変えたい項目だけを changes に入れる。"#;
 
 pub fn tool_definition() -> Value {
@@ -131,6 +131,14 @@ pub fn snapshot(p: &GenerationParams) -> Value {
             "enabled": true,
             "denoise": i2i.denoise,
             "hasImage": !i2i.image.is_empty(),
+        });
+    }
+    // 参照画像つき生成: 画像のパスは送らない。枚数と大きさだけ(docs/24 §8)
+    if let Some(r) = p.active_reference() {
+        v["reference"] = json!({
+            "enabled": true,
+            "imageCount": r.images.len(),
+            "resolution": r.resolution,
         });
     }
     if let Some(cn) = &p.controlnet {
@@ -525,6 +533,25 @@ mod tests {
         assert_eq!(snap["img2img"]["denoise"], 0.6);
         p.img2img.as_mut().unwrap().enabled = false;
         assert!(snapshot(&p).get("img2img").is_none());
+    }
+
+    #[test]
+    fn snapshot_reports_reference_count_without_the_image_paths() {
+        use crate::domain::params::ReferenceParams;
+        let mut p = sample(ModelKind::QwenImage);
+        p.reference = Some(ReferenceParams {
+            enabled: true,
+            images: vec!["inputs/secret-a.png".into(), "inputs/secret-b.png".into()],
+            resolution: 1024,
+        });
+        let snap = snapshot(&p);
+        let text = snap.to_string();
+        assert!(!text.contains("secret"));
+        assert!(!text.contains("inputs/"));
+        assert_eq!(snap["reference"]["imageCount"], 2);
+        assert_eq!(snap["reference"]["resolution"], 1024);
+        p.reference.as_mut().unwrap().enabled = false;
+        assert!(snapshot(&p).get("reference").is_none());
     }
 
     #[test]
