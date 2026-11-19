@@ -19,7 +19,7 @@ use crate::engine::{ImageData, Progress};
 use crate::error::{AppError, AppResult};
 use crate::services::engine::EngineService;
 use crate::services::events::EventSink;
-use crate::services::inputs::{input_abs, read_input};
+use crate::services::inputs::{check_inpaint, input_abs, read_input};
 use crate::services::settings;
 use crate::services::thumbs::{make_thumbnail, thumb_rel_path};
 use crate::util::{now_ms, year_month};
@@ -106,6 +106,10 @@ impl JobService {
                     )));
                 }
             }
+        }
+        if let Some(ip) = params.active_inpaint() {
+            let root = self.images_root().await?;
+            check_inpaint(root, &ip.image, &ip.mask).await?;
         }
         let mut jobs = Vec::with_capacity(count as usize);
         for i in 0..count {
@@ -315,6 +319,14 @@ impl JobService {
             let root = self.images_root().await?;
             let bytes = read_input(root, u.image.clone()).await?;
             uploaded.push(engine.upload_input(bytes).await?);
+        }
+        // Inpaint の画像とマスク(ControlNet の後ろ)
+        if let Some(ip) = params.active_inpaint() {
+            for rel in [&ip.image, &ip.mask] {
+                let root = self.images_root().await?;
+                let bytes = read_input(root, rel.clone()).await?;
+                uploaded.push(engine.upload_input(bytes).await?);
+            }
         }
         let remote = engine.submit(&params, &uploaded).await?;
         self.db

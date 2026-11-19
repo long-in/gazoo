@@ -163,6 +163,7 @@ pub fn run() {
             commands::inputs::input_image_pick,
             commands::inputs::input_image_from_gallery,
             commands::inputs::input_image_get,
+            commands::inputs::mask_save,
             commands::presets::preset_list,
             commands::presets::preset_save,
             commands::presets::preset_delete,

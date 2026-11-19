@@ -565,6 +565,339 @@
           }
         }
       ]
+    },
+    {
+      "id": "flux-schnell-gguf",
+      "category": "flux",
+      "name": {
+        "ja": "FLUX.1 schnell(GGUF)",
+        "en": "FLUX.1 schnell (GGUF)"
+      },
+      "description": {
+        "ja": "高速に生成できる Flux 本体(量子化版)。商用利用可(Apache-2.0)。Flux の生成には、この本体に加えてテキストエンコーダ 2 種(clip_l・t5xxl)と VAE が必要です。",
+        "en": "The fast Flux model (quantized). Commercial use allowed (Apache-2.0). Generating with Flux also needs two text encoders (clip_l and t5xxl) and the VAE."
+      },
+      "usedBy": [
+        "generate"
+      ],
+      "variants": [
+        {
+          "id": "q4ks",
+          "label": {
+            "ja": "Q4_K_S(軽量・推奨)",
+            "en": "Q4_K_S (light, recommended)"
+          },
+          "recommended": true,
+          "source": {
+            "url": "https://huggingface.co/city96/FLUX.1-schnell-gguf/resolve/f495746ed9c5efcf4661f53ef05401dceadc17d2/flux1-schnell-Q4_K_S.gguf",
+            "repo": "city96/FLUX.1-schnell-gguf"
+          },
+          "sizeBytes": 6783943712,
+          "sha256": "4fd16477b3a5296d0cf722c4b92a9fd7f30d09ac7495826e4465d8de9c9fd973",
+          "destDir": "unet",
+          "fileName": "flux1-schnell-Q4_K_S.gguf",
+          "license": {
+            "name": "Apache-2.0",
+            "url": "https://www.apache.org/licenses/LICENSE-2.0",
+            "commercialUse": true
+          },
+          "requiresConsent": false,
+          "note": {
+            "ja": "ComfyUI-GGUF ノードが必要です(開発用 ComfyUI には導入済み)。",
+            "en": "Requires the ComfyUI-GGUF node (installed in the dev ComfyUI)."
+          }
+        },
+        {
+          "id": "q5ks",
+          "label": {
+            "ja": "Q5_K_S(バランス)",
+            "en": "Q5_K_S (balanced)"
+          },
+          "recommended": false,
+          "source": {
+            "url": "https://huggingface.co/city96/FLUX.1-schnell-gguf/resolve/f495746ed9c5efcf4661f53ef05401dceadc17d2/flux1-schnell-Q5_K_S.gguf",
+            "repo": "city96/FLUX.1-schnell-gguf"
+          },
+          "sizeBytes": 8263222304,
+          "sha256": "19f63562d9a20d2123288dddd9abb3d5560554e5694ded951aaf6bfafe46b5df",
+          "destDir": "unet",
+          "fileName": "flux1-schnell-Q5_K_S.gguf",
+          "license": {
+            "name": "Apache-2.0",
+            "url": "https://www.apache.org/licenses/LICENSE-2.0",
+            "commercialUse": true
+          },
+          "requiresConsent": false,
+          "note": {
+            "ja": "ComfyUI-GGUF ノードが必要です(開発用 ComfyUI には導入済み)。",
+            "en": "Requires the ComfyUI-GGUF node (installed in the dev ComfyUI)."
+          }
+        },
+        {
+          "id": "q8",
+          "label": {
+            "ja": "Q8_0(高品質・VRAM 大)",
+            "en": "Q8_0 (high quality, needs more VRAM)"
+          },
+          "recommended": false,
+          "source": {
+            "url": "https://huggingface.co/city96/FLUX.1-schnell-gguf/resolve/f495746ed9c5efcf4661f53ef05401dceadc17d2/flux1-schnell-Q8_0.gguf",
+            "repo": "city96/FLUX.1-schnell-gguf"
+          },
+          "sizeBytes": 12687821728,
+          "sha256": "f6694941193b10148dbf1f0f498d4ccd3e9875c127fc53946213b68580c66f10",
+          "destDir": "unet",
+          "fileName": "flux1-schnell-Q8_0.gguf",
+          "license": {
+            "name": "Apache-2.0",
+            "url": "https://www.apache.org/licenses/LICENSE-2.0",
+            "commercialUse": true
+          },
+          "requiresConsent": false,
+          "note": {
+            "ja": "ComfyUI-GGUF ノードが必要です(開発用 ComfyUI には導入済み)。",
+            "en": "Requires the ComfyUI-GGUF node (installed in the dev ComfyUI)."
+          }
+        }
+      ]
+    },
+    {
+      "id": "flux-dev-gguf",
+      "category": "flux",
+      "name": {
+        "ja": "FLUX.1 dev(GGUF)",
+        "en": "FLUX.1 dev (GGUF)"
+      },
+      "description": {
+        "ja": "高品質な Flux 本体(量子化版)。非商用ライセンスです。Flux の生成には、テキストエンコーダ 2 種(clip_l・t5xxl)と VAE も必要です。",
+        "en": "The high-quality Flux model (quantized). Non-commercial license. Generating with Flux also needs two text encoders (clip_l and t5xxl) and the VAE."
+      },
+      "usedBy": [
+        "generate"
+      ],
+      "variants": [
+        {
+          "id": "q4ks",
+          "label": {
+            "ja": "Q4_K_S(軽量・推奨)",
+            "en": "Q4_K_S (light, recommended)"
+          },
+          "recommended": true,
+          "source": {
+            "url": "https://huggingface.co/city96/FLUX.1-dev-gguf/resolve/3c60ac659f4b1f2ab3ca8bd4488272069b36a148/flux1-dev-Q4_K_S.gguf",
+            "repo": "city96/FLUX.1-dev-gguf"
+          },
+          "sizeBytes": 6805988640,
+          "sha256": "75bb19459b5240c9f373b5af527584af15b675867fa142efadf7478d6abbf62b",
+          "destDir": "unet",
+          "fileName": "flux1-dev-Q4_K_S.gguf",
+          "license": {
+            "name": "FLUX.1 [dev] Non-Commercial License",
+            "url": "https://huggingface.co/black-forest-labs/FLUX.1-dev/blob/main/LICENSE.md",
+            "commercialUse": false
+          },
+          "requiresConsent": true,
+          "note": {
+            "ja": "ComfyUI-GGUF ノードが必要です(開発用 ComfyUI には導入済み)。",
+            "en": "Requires the ComfyUI-GGUF node (installed in the dev ComfyUI)."
+          }
+        },
+        {
+          "id": "q5ks",
+          "label": {
+            "ja": "Q5_K_S(バランス)",
+            "en": "Q5_K_S (balanced)"
+          },
+          "recommended": false,
+          "source": {
+            "url": "https://huggingface.co/city96/FLUX.1-dev-gguf/resolve/3c60ac659f4b1f2ab3ca8bd4488272069b36a148/flux1-dev-Q5_K_S.gguf",
+            "repo": "city96/FLUX.1-dev-gguf"
+          },
+          "sizeBytes": 8285267232,
+          "sha256": "aa76146ca0f1b09c67e0c3fcef18be3a375837ecd5aaa021d3e9ebc558bd68f9",
+          "destDir": "unet",
+          "fileName": "flux1-dev-Q5_K_S.gguf",
+          "license": {
+            "name": "FLUX.1 [dev] Non-Commercial License",
+            "url": "https://huggingface.co/black-forest-labs/FLUX.1-dev/blob/main/LICENSE.md",
+            "commercialUse": false
+          },
+          "requiresConsent": true,
+          "note": {
+            "ja": "ComfyUI-GGUF ノードが必要です(開発用 ComfyUI には導入済み)。",
+            "en": "Requires the ComfyUI-GGUF node (installed in the dev ComfyUI)."
+          }
+        },
+        {
+          "id": "q8",
+          "label": {
+            "ja": "Q8_0(高品質・VRAM 大)",
+            "en": "Q8_0 (high quality, needs more VRAM)"
+          },
+          "recommended": false,
+          "source": {
+            "url": "https://huggingface.co/city96/FLUX.1-dev-gguf/resolve/3c60ac659f4b1f2ab3ca8bd4488272069b36a148/flux1-dev-Q8_0.gguf",
+            "repo": "city96/FLUX.1-dev-gguf"
+          },
+          "sizeBytes": 12708281504,
+          "sha256": "129032f32224bf7138f16e18673d8008ba5f84c1ec74063bf4511a8bb4cf553d",
+          "destDir": "unet",
+          "fileName": "flux1-dev-Q8_0.gguf",
+          "license": {
+            "name": "FLUX.1 [dev] Non-Commercial License",
+            "url": "https://huggingface.co/black-forest-labs/FLUX.1-dev/blob/main/LICENSE.md",
+            "commercialUse": false
+          },
+          "requiresConsent": true,
+          "note": {
+            "ja": "ComfyUI-GGUF ノードが必要です(開発用 ComfyUI には導入済み)。",
+            "en": "Requires the ComfyUI-GGUF node (installed in the dev ComfyUI)."
+          }
+        }
+      ]
+    },
+    {
+      "id": "flux-clip-l",
+      "category": "flux",
+      "name": {
+        "ja": "テキストエンコーダ — clip_l",
+        "en": "Text encoder — clip_l"
+      },
+      "description": {
+        "ja": "Flux に必要なテキストエンコーダ(CLIP-L)。生成画面の「テキストエンコーダ (CLIP-L)」に選びます。",
+        "en": "The CLIP-L text encoder Flux needs. Choose it as \"Text encoder (CLIP-L)\" on the generate screen."
+      },
+      "usedBy": [
+        "generate"
+      ],
+      "variants": [
+        {
+          "id": "clip-l",
+          "label": {
+            "ja": "clip_l",
+            "en": "clip_l"
+          },
+          "precision": "fp16",
+          "recommended": true,
+          "source": {
+            "url": "https://huggingface.co/comfyanonymous/flux_text_encoders/resolve/6af2a98e3f615bdfa612fbd85da93d1ed5f69ef5/clip_l.safetensors",
+            "repo": "comfyanonymous/flux_text_encoders"
+          },
+          "sizeBytes": 246144152,
+          "sha256": "660c6f5b1abae9dc498ac2d21e1347d2abdb0cf6c0c0c8576cd796491d9a6cdd",
+          "destDir": "clip",
+          "fileName": "clip_l.safetensors",
+          "license": {
+            "name": "Apache-2.0",
+            "url": "https://www.apache.org/licenses/LICENSE-2.0",
+            "commercialUse": true
+          },
+          "requiresConsent": false
+        }
+      ]
+    },
+    {
+      "id": "flux-t5xxl",
+      "category": "flux",
+      "name": {
+        "ja": "テキストエンコーダ — t5xxl",
+        "en": "Text encoder — t5xxl"
+      },
+      "description": {
+        "ja": "Flux に必要なテキストエンコーダ(T5)。生成画面の「テキストエンコーダ (T5)」に選びます。fp8 は軽量で、ほとんどの場合これで十分です。",
+        "en": "The T5 text encoder Flux needs. Choose it as \"Text encoder (T5)\" on the generate screen. fp8 is lighter and enough in most cases."
+      },
+      "usedBy": [
+        "generate"
+      ],
+      "variants": [
+        {
+          "id": "fp8",
+          "label": {
+            "ja": "fp8(軽量・推奨)",
+            "en": "fp8 (light, recommended)"
+          },
+          "precision": "fp8",
+          "recommended": true,
+          "source": {
+            "url": "https://huggingface.co/comfyanonymous/flux_text_encoders/resolve/6af2a98e3f615bdfa612fbd85da93d1ed5f69ef5/t5xxl_fp8_e4m3fn.safetensors",
+            "repo": "comfyanonymous/flux_text_encoders"
+          },
+          "sizeBytes": 4893934904,
+          "sha256": "7d330da4816157540d6bb7838bf63a0f02f573fc48ca4d8de34bb0cbfd514f09",
+          "destDir": "clip",
+          "fileName": "t5xxl_fp8_e4m3fn.safetensors",
+          "license": {
+            "name": "Apache-2.0",
+            "url": "https://www.apache.org/licenses/LICENSE-2.0",
+            "commercialUse": true
+          },
+          "requiresConsent": false
+        },
+        {
+          "id": "fp16",
+          "label": {
+            "ja": "fp16(高精度・サイズ大)",
+            "en": "fp16 (accurate, larger)"
+          },
+          "precision": "fp16",
+          "recommended": false,
+          "source": {
+            "url": "https://huggingface.co/comfyanonymous/flux_text_encoders/resolve/6af2a98e3f615bdfa612fbd85da93d1ed5f69ef5/t5xxl_fp16.safetensors",
+            "repo": "comfyanonymous/flux_text_encoders"
+          },
+          "sizeBytes": 9787841024,
+          "sha256": "6e480b09fae049a72d2a8c5fbccb8d3e92febeb233bbe9dfe7256958a9167635",
+          "destDir": "clip",
+          "fileName": "t5xxl_fp16.safetensors",
+          "license": {
+            "name": "Apache-2.0",
+            "url": "https://www.apache.org/licenses/LICENSE-2.0",
+            "commercialUse": true
+          },
+          "requiresConsent": false
+        }
+      ]
+    },
+    {
+      "id": "flux-vae",
+      "category": "flux",
+      "name": {
+        "ja": "VAE — ae",
+        "en": "VAE — ae"
+      },
+      "description": {
+        "ja": "Flux に必要な VAE(画像の復号)。公式(Black Forest Labs)の ae.safetensors と同一のファイル(SHA-256 一致)を、認証不要の Comfy-Org の再配布から取得します。",
+        "en": "The VAE Flux needs (image decoding). The same file as the official Black Forest Labs ae.safetensors (identical SHA-256), fetched from Comfy-Org's ungated redistribution."
+      },
+      "usedBy": [
+        "generate"
+      ],
+      "variants": [
+        {
+          "id": "ae",
+          "label": {
+            "ja": "ae.safetensors",
+            "en": "ae.safetensors"
+          },
+          "precision": "fp16",
+          "recommended": true,
+          "source": {
+            "url": "https://huggingface.co/Comfy-Org/Lumina_Image_2.0_Repackaged/resolve/5b072540ef86570fecb8249c505f23d5bdeb88cd/split_files/vae/ae.safetensors",
+            "repo": "Comfy-Org/Lumina_Image_2.0_Repackaged"
+          },
+          "sizeBytes": 335304388,
+          "sha256": "afc8e28272cd15db3919bacdb6918ce9c1ed22e96cb12c4d5ed0fba823529e38",
+          "destDir": "vae",
+          "fileName": "ae.safetensors",
+          "license": {
+            "name": "Apache-2.0",
+            "url": "https://www.apache.org/licenses/LICENSE-2.0",
+            "commercialUse": true
+          },
+          "requiresConsent": false
+        }
+      ]
     }
   ]
 }

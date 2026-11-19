@@ -13,7 +13,7 @@ use crate::error::{AppError, AppResult};
 const EMBEDDED: &str = include_str!("../../../resources/models/catalog.json");
 const SCHEMA_VERSION: u32 = 1;
 /// 配置を許すファイルの拡張子(ComfyUI のモデルとして読まれる形式)。
-const ALLOWED_EXTENSIONS: &[&str] = &["safetensors", "pt", "ckpt", "pth"];
+const ALLOWED_EXTENSIONS: &[&str] = &["safetensors", "gguf", "pt", "ckpt", "pth"];
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Localized {
@@ -27,6 +27,8 @@ pub enum Category {
     Checkpoint,
     Controlnet,
     Detector,
+    /// Flux の本体(GGUF)・テキストエンコーダ・VAE。
+    Flux,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -39,6 +41,7 @@ pub enum BaseModel {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Precision {
+    Fp8,
     Fp16,
     Fp32,
 }
@@ -52,6 +55,14 @@ pub enum DestDir {
     Controlnet,
     #[serde(rename = "ultralytics/bbox")]
     UltralyticsBbox,
+    /// Flux の拡散モデル(GGUF)。ComfyUI-GGUF が `models/unet` から読む。
+    #[serde(rename = "unet")]
+    Unet,
+    /// テキストエンコーダ(CLIP / T5)。
+    #[serde(rename = "clip")]
+    Clip,
+    #[serde(rename = "vae")]
+    Vae,
 }
 
 impl DestDir {
@@ -61,6 +72,9 @@ impl DestDir {
             Self::Checkpoints => &["checkpoints"],
             Self::Controlnet => &["controlnet"],
             Self::UltralyticsBbox => &["ultralytics", "bbox"],
+            Self::Unet => &["unet"],
+            Self::Clip => &["clip"],
+            Self::Vae => &["vae"],
         }
     }
 }
@@ -256,6 +270,67 @@ mod tests {
     }
 
     #[test]
+    fn flux_set_has_everything_the_generate_screen_needs() {
+        // Flux(GGUF)の生成には、本体・テキストエンコーダ 2 種・VAE が要る(docs/12 §4.2)
+        let c = Catalog::embedded(&policy()).unwrap();
+        let place = |family: &str| -> Vec<(DestDir, String, bool, bool)> {
+            c.families
+                .iter()
+                .find(|f| f.id == family && f.category == Category::Flux)
+                .unwrap_or_else(|| panic!("{family} がカタログにない"))
+                .variants
+                .iter()
+                .map(|v| {
+                    (
+                        v.dest_dir,
+                        v.file_name.clone(),
+                        v.requires_consent,
+                        v.recommended,
+                    )
+                })
+                .collect()
+        };
+
+        for (family, quant_prefix) in [
+            ("flux-schnell-gguf", "flux1-schnell-"),
+            ("flux-dev-gguf", "flux1-dev-"),
+        ] {
+            let v = place(family);
+            assert!(v.iter().all(|(d, f, _, _)| *d == DestDir::Unet
+                && f.starts_with(quant_prefix)
+                && f.ends_with(".gguf")));
+            assert_eq!(v.iter().filter(|x| x.3).count(), 1, "推奨はちょうど 1 つ");
+        }
+        // schnell(Apache-2.0)は同意不要、dev(非商用)は同意が必要
+        assert!(place("flux-schnell-gguf").iter().all(|x| !x.2));
+        assert!(place("flux-dev-gguf").iter().all(|x| x.2));
+
+        assert_eq!(place("flux-clip-l")[0].0, DestDir::Clip);
+        assert!(
+            place("flux-t5xxl")
+                .iter()
+                .all(|x| x.0 == DestDir::Clip && x.1.starts_with("t5xxl"))
+        );
+        let vae = place("flux-vae");
+        assert_eq!(
+            (vae[0].0, vae[0].1.as_str()),
+            (DestDir::Vae, "ae.safetensors")
+        );
+    }
+
+    #[test]
+    fn flux_vae_matches_the_official_black_forest_labs_file() {
+        // 公式(gated)の ae.safetensors と同一の SHA-256。認証不要のミラーから取得する根拠(docs/12 §4.2)
+        let c = Catalog::embedded(&policy()).unwrap();
+        let (_, v) = c.find("flux-vae", "ae").unwrap();
+        assert_eq!(
+            v.sha256,
+            "afc8e28272cd15db3919bacdb6918ce9c1ed22e96cb12c4d5ed0fba823529e38"
+        );
+        assert_eq!(v.size_bytes, 335_304_388);
+    }
+
+    #[test]
     fn controlnet_file_names_carry_the_preprocessor_for_auto_switch() {
         // 前処理に応じた ControlNet の自動切り替え(docs/10 §8)が、ファイル名の語に依存する
         let c = Catalog::embedded(&policy()).unwrap();
@@ -282,7 +357,9 @@ mod tests {
                     "リビジョンを固定する: {}",
                     v.id
                 );
-                if f.category != Category::Detector {
+                // SD1.5 / SDXL 用のもの(チェックポイント・ControlNet)は、ベースモデルを必ず持つ。
+                // 検出モデルと Flux 一式は、ベースモデルの区別がない
+                if matches!(f.category, Category::Checkpoint | Category::Controlnet) {
                     assert!(v.base_model.is_some(), "{}/{}", f.id, v.id);
                 }
             }

@@ -95,7 +95,12 @@ impl AnthropicClient {
         let body = json!({
             "model": req.model,
             "max_tokens": MAX_TOKENS,
-            "system": req.system,
+            // 固定文なのでキャッシュする(相談ごとの入力コストを抑える。docs/13 §4.3)
+            "system": [{
+                "type": "text",
+                "text": req.system,
+                "cache_control": { "type": "ephemeral" }
+            }],
             "messages": messages,
             "tools": req.tools,
             "stream": true,

@@ -48,6 +48,7 @@ interface EngineStatus {
     ggufNode: boolean;               // ComfyUI-GGUF(UnetLoaderGGUF)の有無
     faceDetailer: boolean;           // Impact Pack(FaceDetailer)と Subpack(UltralyticsDetectorProvider)の有無(v0.2)
     controlnetPreprocessors: ("canny" | "depth" | "openpose")[];  // 利用できる前処理。canny はコアの Canny ノード(v0.2)
+    inpaint: boolean;                // Inpaint に必要なコアノード(13 §3.3)がすべてある(v0.5)
   };
   error?: "unreachable" | "bad_response";  // connected=false のときの理由
 }
@@ -99,6 +100,7 @@ ComfyUI のバージョンにより選択肢の形式が異なる(`[[...], {}]` 
 | `input_image_pick` | – | `InputImage \| null` | **Rust 側でファイル選択ダイアログを開き**、選ばれた PNG / JPEG を取り込む。キャンセル時は `null` |
 | `input_image_from_gallery` | `{ imageId: string }` | `InputImage` | ギャラリーの画像を参照画像として取り込む(`IMAGE_NOT_FOUND` あり) |
 | `input_image_get` | `{ path: string }` | `InputImage` | 既存の参照画像の情報を取得する(プリセット・再現の復元時に存在確認も兼ねる。無ければ `IMAGE_NOT_FOUND`) |
+| `mask_save` | リクエスト本文に PNG のバイト列(raw body) | `InputImage` | Inpaint のマスク(マスクエディタが描いた PNG)を検証し、グレースケール PNG として `inputs/` に保存する(v0.5。設計: 13 §3.4) |
 
 ```ts
 interface InputImage {
@@ -110,6 +112,8 @@ interface InputImage {
 
 - 取り込みは PNG へ再エンコードして `inputs/` に保存する。形式・サイズが不正なら `VALIDATION`(20MB、長辺 8192px まで)。
 - ファイルのパスをフロントから受け取らない設計(任意ファイル読み取りの防止)。
+- `job_enqueue` は、有効な Inpaint の画像・マスクが保存先に無ければ `IMAGE_NOT_FOUND`、縦横の不一致・全黒のマスクは `VALIDATION`(`inpaint.mask`)で断る。`params.inpaint` の形は 13 §3.2。
+- `assistant_ask` は、今の ComfyUI で使える機能(直近の接続確認の結果。通信しない)を質問に添えて送る(13 §4.2)。引数は変わらない。
 - `job_enqueue` は、有効な ControlNet の参照画像が保存先に無ければ `IMAGE_NOT_FOUND` で断る。待機中に消えた場合は、ジョブが `failed`(`IMAGE_NOT_FOUND`)になる。
 
 ### プリセット

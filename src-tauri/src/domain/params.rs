@@ -94,6 +94,44 @@ pub struct ControlnetParams {
     pub units: Vec<ControlnetUnit>,
 }
 
+/// Inpaint(docs/13 §3.2)。SD 1.5 / SDXL のみ。マスクの白い範囲だけを描き直す。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct InpaintParams {
+    #[serde(default)]
+    pub enabled: bool,
+    /// 参照画像(`inputs/<uuid>.png`)。
+    #[serde(default)]
+    pub image: String,
+    /// マスク(`inputs/<uuid>.png`。白 = 描き直す範囲)。
+    #[serde(default)]
+    pub mask: String,
+    #[serde(default = "default_inpaint_denoise")]
+    pub denoise: f64,
+    /// マスクを広げる量(px)。
+    #[serde(default = "default_inpaint_grow")]
+    pub grow_mask: u32,
+    /// 境界のぼかし(px)。
+    #[serde(default = "default_inpaint_feather")]
+    pub feather: u32,
+    /// 結果を元画像へ合成し直す(マスク外を元画像と一致させる)。
+    #[serde(default = "default_true")]
+    pub composite_back: bool,
+}
+
+fn default_inpaint_denoise() -> f64 {
+    0.7
+}
+fn default_inpaint_grow() -> u32 {
+    8
+}
+fn default_inpaint_feather() -> u32 {
+    8
+}
+fn default_true() -> bool {
+    true
+}
+
 fn default_preprocessor() -> Preprocessor {
     Preprocessor::Canny
 }
@@ -168,9 +206,27 @@ pub struct GenerationParams {
     /// ControlNet。無ければ無効。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub controlnet: Option<ControlnetParams>,
+    /// Inpaint。無ければ無効。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub inpaint: Option<InpaintParams>,
 }
 
 impl GenerationParams {
+    /// 有効な Inpaint の設定(無効・未指定なら `None`)。
+    pub fn active_inpaint(&self) -> Option<&InpaintParams> {
+        self.inpaint.as_ref().filter(|i| i.enabled)
+    }
+
+    /// エンジンへ送る画像の数。順序は ControlNet の各ユニット、Inpaint の画像、Inpaint のマスク。
+    pub fn upload_count(&self) -> usize {
+        self.active_controlnet_units().len()
+            + if self.active_inpaint().is_some() {
+                2
+            } else {
+                0
+            }
+    }
+
     /// 有効な ControlNet のユニット(無効・未指定・ユニットなしなら空)。
     pub fn active_controlnet_units(&self) -> &[ControlnetUnit] {
         match &self.controlnet {
@@ -255,6 +311,38 @@ impl GenerationParams {
         if self.controlnet.as_ref().is_some_and(|c| c.enabled) {
             self.validate_controlnet()?;
         }
+        if let Some(ip) = self.active_inpaint() {
+            self.validate_inpaint(ip)?;
+        }
+        Ok(())
+    }
+
+    fn validate_inpaint(&self, ip: &InpaintParams) -> AppResult<()> {
+        let bad = |field: &str, msg: &str| Err(AppError::validation(field, msg));
+        if self.model.kind.is_flux() {
+            return bad("inpaint", "Inpaint は SD 1.5 / SDXL のみ対応です");
+        }
+        if self.active_face_detailer().is_some() {
+            return bad("inpaint", "Inpaint と顔補正は同時に使えません");
+        }
+        if !is_valid_input_path(&ip.image) {
+            return bad("inpaint.image", "参照画像を選択してください");
+        }
+        if !is_valid_input_path(&ip.mask) {
+            return bad("inpaint.mask", "マスクを描いてください");
+        }
+        if !(0.05..=1.0).contains(&ip.denoise) || !ip.denoise.is_finite() {
+            return bad("inpaint.denoise", "強さは 0.05〜1.0 で指定してください");
+        }
+        if ip.grow_mask > 64 {
+            return bad(
+                "inpaint.growMask",
+                "マスクの拡張は 0〜64 で指定してください",
+            );
+        }
+        if ip.feather > 31 {
+            return bad("inpaint.feather", "境界のぼかしは 0〜31 で指定してください");
+        }
         Ok(())
     }
 
@@ -335,6 +423,7 @@ pub fn sample(kind: ModelKind) -> GenerationParams {
         batch_size: 1,
         face_detailer: None,
         controlnet: None,
+        inpaint: None,
     }
 }
 
@@ -499,6 +588,79 @@ mod tests {
         p.controlnet.as_mut().unwrap().enabled = false;
         p.validate().unwrap();
         assert!(p.active_controlnet_units().is_empty());
+    }
+
+    fn with_inpaint(kind: ModelKind) -> GenerationParams {
+        let mut p = sample(kind);
+        p.inpaint = Some(InpaintParams {
+            enabled: true,
+            image: "inputs/a.png".into(),
+            mask: "inputs/m.png".into(),
+            denoise: 0.7,
+            grow_mask: 8,
+            feather: 8,
+            composite_back: true,
+        });
+        p
+    }
+
+    #[test]
+    fn inpaint_valid_for_sd_and_rejected_for_flux_or_with_face_detailer() {
+        for k in [ModelKind::Sd15, ModelKind::Sdxl] {
+            assert!(with_inpaint(k).validate().is_ok());
+        }
+        for k in [ModelKind::Flux, ModelKind::FluxGguf] {
+            assert_eq!(field_of(with_inpaint(k).validate()), "inpaint");
+        }
+        let mut p = with_inpaint(ModelKind::Sd15);
+        p.face_detailer = Some(FaceDetailerParams {
+            enabled: true,
+            detector: "bbox/face.pt".into(),
+            denoise: 0.4,
+            prompt: String::new(),
+            confidence: 0.5,
+        });
+        assert_eq!(field_of(p.validate()), "inpaint");
+        // 無効なら何も検証しない(Flux でも通る)
+        let mut off = with_inpaint(ModelKind::Flux);
+        off.inpaint.as_mut().unwrap().enabled = false;
+        assert!(off.validate().is_ok());
+    }
+
+    #[test]
+    fn inpaint_rejects_bad_values() {
+        type Tweak = fn(&mut InpaintParams);
+        let cases: [(&str, Tweak); 6] = [
+            ("inpaint.image", |i| i.image = "../x.png".into()),
+            ("inpaint.mask", |i| i.mask = String::new()),
+            ("inpaint.denoise", |i| i.denoise = 0.0),
+            ("inpaint.denoise", |i| i.denoise = f64::NAN),
+            ("inpaint.growMask", |i| i.grow_mask = 65),
+            ("inpaint.feather", |i| i.feather = 32),
+        ];
+        for (field, f) in cases {
+            let mut p = with_inpaint(ModelKind::Sd15);
+            f(p.inpaint.as_mut().unwrap());
+            assert_eq!(field_of(p.validate()), field);
+        }
+    }
+
+    #[test]
+    fn upload_count_covers_controlnet_and_inpaint() {
+        assert_eq!(sample(ModelKind::Sd15).upload_count(), 0);
+        let mut p = with_inpaint(ModelKind::Sd15);
+        assert_eq!(p.upload_count(), 2);
+        p.controlnet = with_cn(ModelKind::Sd15).controlnet;
+        assert_eq!(p.upload_count(), 3);
+    }
+
+    #[test]
+    fn inpaint_defaults_apply_to_a_minimal_json() {
+        let ip: InpaintParams = serde_json::from_str(r#"{"enabled":true}"#).unwrap();
+        assert_eq!(
+            (ip.denoise, ip.grow_mask, ip.feather, ip.composite_back),
+            (0.7, 8, 8, true)
+        );
     }
 
     #[test]

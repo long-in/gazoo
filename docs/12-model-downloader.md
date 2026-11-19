@@ -16,7 +16,7 @@ ComfyUI の `models/` フォルダへ、必要なモデルを **アプリ内か�
 
 **やらないこと(v0.4)**
 - 任意の URL・Civitai・Hugging Face の検索や、アカウント認証が必要な(gated)モデルの取得(§12 Q-33)。
-- LoRA / VAE / Flux 系の取得(カタログに足せば対応できる作りにするが、初期カタログには含めない。Flux は GGUF・テキストエンコーダ・VAE の組み合わせと、dev の非商用ライセンスの扱いが別途必要なため)。
+- LoRA の取得、および Flux 本体(safetensors。約 24GB)の取得(Flux は GGUF 版のみ対象。§4.2)。
 - ComfyUI 本体・カスタムノードの導入(08 の開発用スクリプトの範囲のまま)。
 - モデルの削除・移動(§12 Q-36)。
 
@@ -56,7 +56,7 @@ interface ModelCatalog { schemaVersion: 1; families: ModelFamily[] }
 
 interface ModelFamily {
   id: string;                    // 例 "controlnet-canny"
-  category: "checkpoint" | "controlnet" | "detector";
+  category: "checkpoint" | "controlnet" | "detector" | "flux";
   name: { ja: string; en: string };
   description: { ja: string; en: string };
   usedBy?: string[];             // 例 ["F-12 ControlNet"]。UI でどの機能に必要かを示す
@@ -67,7 +67,7 @@ interface ModelVariant {
   id: string;                    // 例 "sdxl-fp16"
   label: { ja: string; en: string };   // 例「SDXL 用 / fp16」
   baseModel?: "sd15" | "sdxl";   // フィルタ・不一致の警告に使う
-  precision?: "fp16" | "fp32";
+  precision?: "fp8" | "fp16" | "fp32";
   recommended?: boolean;
   source: {
     url: string;                 // https の固定 URL(リビジョン固定の resolve/<commit>/…)
@@ -75,7 +75,7 @@ interface ModelVariant {
   };
   sizeBytes: number;
   sha256: string;                // 取得後に必ず照合する
-  destDir: "checkpoints" | "controlnet" | "ultralytics/bbox";
+  destDir: "checkpoints" | "controlnet" | "ultralytics/bbox" | "unet" | "clip" | "vae";
   fileName: string;              // 配置するファイル名(固定)
   license: { name: string; url: string; commercialUse: boolean | "see-license" };
   requiresConsent: boolean;      // true なら取得前に確認ダイアログ(§7)
@@ -114,10 +114,26 @@ interface ModelVariant {
 
 - **最新性の確認(2026-11-19)**: SD1.5 用 ControlNet v1.1、SD 1.5、SDXL base 1.0 は、それぞれの系列の **最終版**(後継のバージョンアップはない)。SDXL 用 ControlNet は、上表の xinsir 版が diffusers / thibaud 版より新しく(2024 年)、配布元の自己申告では精度も高い。ComfyUI の `ControlNetLoader` でそのまま使える(アプリのワークフローを変えずに済む)ため、SDXL は **xinsir 版を推奨・旧版を代替** とする。比較の根拠は配布元の自己申告のため、実装時に実機で生成結果を確認してから推奨を確定する。
 - **xinsir の Union 版(1 ファイルで全種類)は初期カタログに含めない**。ComfyUI 側で `SetUnionControlNetType` ノードが追加で必要で、10 §5 のワークフローの変更を伴うため(別件の設計変更として検討)。
-- SD3.5 / Flux など別系列のベースモデルとその ControlNet は、10 の対象外(`sd15` / `sdxl` のみ)のため含めない。
+- SD3.5 など別系列のベースモデルと、Flux 用の ControlNet は、10 の対象外(ControlNet は `sd15` / `sdxl` のみ)のため含めない。
 
 - ControlNet ファイルは、アプリの「前処理に応じた自動切り替え」(10 §8)が働くよう、**ファイル名に `canny` / `depth` / `openpose` を含める**(`fileName` で固定)。
 - SD1.5 用の comfyanonymous 配布分は、配布元にライセンス表記がない。元の lllyasviel/ControlNet-v1-1(OpenRAIL 系)を出典として明記し、ライセンス欄は「出典の表記に従う」(`commercialUse: "see-license"`)にする。実装時に再確認し、確認できないものはカタログに入れない。
+
+**Flux(`unet/` `clip/` `vae/`)**(生成画面の「Flux(GGUF)」で使う。**ページの「Flux」タブ**にまとめる)。Flux の生成には、本体(GGUF)・テキストエンコーダ 2 種・VAE の **すべて** が要るため、ファミリーの説明に必要な組み合わせを書く。生成画面で Flux のモデルが足りないときは、この「Flux」タブへ案内する。
+
+| ファミリー | 配置先 | variant | サイズ | 配布元 / ライセンス |
+|---|---|---|---|---|
+| FLUX.1 schnell(GGUF) | `unet/` | Q4_K_S(推奨)/ Q5_K_S / Q8_0 | 6.8GB / 8.3GB / 12.7GB | city96/FLUX.1-schnell-gguf、Apache-2.0(同意不要) |
+| FLUX.1 dev(GGUF) | `unet/` | Q4_K_S(推奨)/ Q5_K_S / Q8_0 | 6.8GB / 8.3GB / 12.7GB | city96/FLUX.1-dev-gguf、**FLUX.1 [dev] Non-Commercial License(非商用。同意ダイアログあり)** |
+| テキストエンコーダ clip_l | `clip/` | clip_l | 246MB | comfyanonymous/flux_text_encoders、Apache-2.0 |
+| テキストエンコーダ t5xxl | `clip/` | fp8(推奨)/ fp16 | 4.9GB / 9.8GB | 同上 |
+| VAE ae | `vae/` | ae.safetensors | 335MB | Comfy-Org/Lumina_Image_2.0_Repackaged、Apache-2.0 |
+
+- 公式の `ae.safetensors`(black-forest-labs/FLUX.1-schnell・dev)は **認証が必要(gated)** で、アプリは認証が要るモデルを扱わない(Q-33)。代わりに、Comfy-Org の再配布(認証不要)を使う。**公式と SHA-256 が完全に一致する**(`afc8e282…9e38`、335,304,388 バイト。公式・Comfy-Org の 3 つのリポジトリで一致を確認)ので、同一のファイルである。この一致はカタログのテストでも固定している。
+- GGUF の量子化は、Q4_K_S を推奨(開発用の RTX 2060 12GB・Mac 16GB でも扱いやすい。08 §5)。Q8_0 は高品質だがサイズが大きく、VRAM に余裕が要る。
+- GGUF を使うには、ComfyUI に ComfyUI-GGUF ノードが必要(08 のセットアップで導入済み)。variant の `note` で案内する。
+- 画面の対応は、clip_l →「テキストエンコーダ (CLIP-L)」、t5xxl →「テキストエンコーダ (T5)」、ae →「VAE」。
+- Flux 本体の safetensors 版(約 24GB)は対象外(§1)。
 
 **検出モデル(`ultralytics/bbox/`)**(顔補正 F-11。配布元は Bingsu/adetailer、Apache-2.0)
 
@@ -249,7 +265,7 @@ interface DownloadState {
 |---|---|---|
 | Q-32 | カタログの更新方法 | **アプリ同梱の JSON、更新はアプリのリリースで**。実行時に外部からカタログを取らない(プライバシー・安全性を優先)。新しいモデルの追加はアプリ更新が必要になる |
 | Q-33 | 任意 URL・Civitai・Hugging Face トークン(gated モデル)の対応 | **v0.4 では対応しない**(厳選カタログのみ)。需要があれば後続で、トークンの保管方法(11 の API キー同様に平文か資格情報ストアか)と合わせて設計する |
-| Q-34 | 初期カタログの範囲 | **§4.2 のとおり**(SD1.5 / SDXL のベース、ControlNet 3 種 ×(SD1.5 / SDXL)、顔・手の検出モデル)。Flux・LoRA・VAE は含めない |
+| Q-34 | 初期カタログの範囲 | **§4.2 のとおり**(SD1.5 / SDXL のベース、ControlNet 3 種 ×(SD1.5 / SDXL)、顔・手の検出モデル、**Flux(schnell / dev の GGUF、テキストエンコーダ、VAE)**)。LoRA・Flux 本体(safetensors)は含めない。Flux は「モデルがありません」の報告を受けて追加(2026-11-19、ユーザーが schnell と dev の両方を指定) |
 | Q-35 | モデルフォルダの特定方法 | **設定の指定 > `/system_stats` の `argv` から自動検出**。リモート ComfyUI は取得機能の対象外 |
 | Q-36 | 導入済みモデルの削除・検証・移動 | **削除・移動は v0.4 では作らない**(誤削除の影響が大きく、フォルダを直接操作できる)。**検証(ハッシュ照合)のみ提供**。同名ファイルがある場合は上書きしない |
 | Q-37 | ライセンス同意 | **`requiresConsent` の variant だけ、初回に確認ダイアログ**。同意は variant ごとに保存 |

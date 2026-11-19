@@ -64,7 +64,7 @@ impl ComfyUiClient {
         params: &GenerationParams,
         inputs: &[String],
     ) -> AppResult<String> {
-        let needed = params.active_controlnet_units().len();
+        let needed = params.upload_count();
         if inputs.len() != needed {
             return Err(AppError::internal(format!(
                 "参照画像の数が一致しません(必要 {needed}、指定 {})",
@@ -809,6 +809,76 @@ mod tests {
             px(&with_cn[0]),
             px(&without[0]),
             "ControlNet が効いていない"
+        );
+    }
+
+    /// 実機: Inpaint が完了し、合成ありならマスク外が元画像と一致、マスク内は変わること。
+    /// SDXL のみ導入されている環境向けに `COMFYUI_SD15_MODEL` と `COMFYUI_INPAINT_SIZE` を使える。
+    #[tokio::test]
+    #[ignore = "requires a running ComfyUI with a checkpoint (COMFYUI_SD15_MODEL)"]
+    async fn real_comfyui_inpaint_keeps_unmasked_pixels_identical() {
+        use crate::domain::params::InpaintParams;
+        use image::{GrayImage, ImageFormat, Luma};
+        let c = ComfyUiClient::new(&real_url()).unwrap();
+        let size: u32 = std::env::var("COMFYUI_INPAINT_SIZE")
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(512);
+
+        // 参照画像(size に拡大)と、左半分を描き直すマスク
+        let reference = image::load_from_memory(&reference_png())
+            .unwrap()
+            .resize_exact(size, size, image::imageops::FilterType::Nearest);
+        let mut ref_png = Vec::new();
+        reference
+            .write_to(&mut std::io::Cursor::new(&mut ref_png), ImageFormat::Png)
+            .unwrap();
+        let mask = GrayImage::from_fn(size, size, |x, _| {
+            Luma([if x < size / 2 { 255 } else { 0 }])
+        });
+        let mut mask_png = Vec::new();
+        mask.write_to(&mut std::io::Cursor::new(&mut mask_png), ImageFormat::Png)
+            .unwrap();
+        let image_name = c.upload_input(ref_png).await.expect("upload image");
+        let mask_name = c.upload_input(mask_png).await.expect("upload mask");
+
+        let mut p = real_sd15_params(12, 5);
+        p.width = size;
+        p.height = size;
+        p.prompt = "a wooden table with a bowl of fruit, studio photo".into();
+        p.inpaint = Some(InpaintParams {
+            enabled: true,
+            image: "inputs/ref.png".into(),
+            mask: "inputs/mask.png".into(),
+            denoise: 0.8,
+            grow_mask: 0,
+            feather: 0,
+            composite_back: true,
+        });
+        let id = c
+            .submit(&p, &[image_name, mask_name])
+            .await
+            .expect("submit");
+        let out = c.wait(&id, &|_| {}).await.expect("wait");
+        assert_eq!(out.len(), 1);
+        let got = image::load_from_memory(&out[0].bytes).unwrap().to_rgb8();
+        let orig = reference.to_rgb8();
+        assert_eq!(got.dimensions(), orig.dimensions());
+        // 右半分(マスク外。境界から離れた範囲)は元画像と完全一致
+        let mut diff_left = 0u64;
+        for y in 0..size {
+            for x in 0..size {
+                let same = got.get_pixel(x, y) == orig.get_pixel(x, y);
+                if x >= size / 2 + 2 {
+                    assert!(same, "マスク外の画素が変わった: ({x}, {y})");
+                } else if x < size / 2 - 2 && !same {
+                    diff_left += 1;
+                }
+            }
+        }
+        assert!(
+            diff_left > 1000,
+            "マスク内が描き直されていない: {diff_left}"
         );
     }
 

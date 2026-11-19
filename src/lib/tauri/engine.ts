@@ -13,6 +13,8 @@ export interface EngineStatus {
     faceDetailer: boolean;
     /** 利用できる ControlNet の前処理。Canny はコア、Depth / OpenPose は comfyui_controlnet_aux が必要。 */
     controlnetPreprocessors: ("canny" | "depth" | "openpose")[];
+    /** Inpaint に必要なコアノードがそろっているか。 */
+    inpaint: boolean;
   };
   error?: "unreachable" | "bad_response";
 }

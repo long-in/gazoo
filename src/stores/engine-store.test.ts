@@ -27,7 +27,7 @@ const MODELS: EngineModels = {
 const status = (over: Partial<EngineStatus> = {}): EngineStatus => ({
   connected: true,
   url: "http://127.0.0.1:8188",
-  features: { ggufNode: false, faceDetailer: false, controlnetPreprocessors: [] },
+  features: { ggufNode: false, faceDetailer: false, controlnetPreprocessors: [], inpaint: false },
   ...over,
 });
 

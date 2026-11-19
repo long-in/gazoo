@@ -42,6 +42,14 @@ impl EngineService {
             .map_err(|_| AppError::internal("engine lock poisoned"))
     }
 
+    /// 直近に確認できた機能の有無(未確認・未接続なら `None`)。通信はしない。
+    pub fn last_features(&self) -> Option<crate::engine::EngineFeatures> {
+        let g = self.last_emitted.lock().ok()?;
+        g.as_ref()
+            .filter(|s| s.connected)
+            .map(|s| s.features.clone())
+    }
+
     /// 接続先 URL を差し替える。変更があれば `true`。
     pub fn set_url(&self, url: &str) -> AppResult<bool> {
         let url = url.trim_end_matches('/');
@@ -130,6 +138,7 @@ mod tests {
                 gguf_node: true,
                 face_detailer: true,
                 controlnet_preprocessors: vec![Preprocessor::Canny],
+                inpaint: true,
             },
             error: None,
         }

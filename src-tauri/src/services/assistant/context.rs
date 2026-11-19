@@ -31,7 +31,8 @@ pub const SYSTEM_PROMPT: &str = r#"あなたは、ローカル画像生成アプ
 - sampler / scheduler: ComfyUI の名前(例: euler, dpmpp_2m, dpmpp_2m_sde, normal, karras, simple)。
 - batchSize: 1〜8。
 - faceDetailer(顔補正、SD 系のみ): enabled と denoise(0.05〜1.0。0.3〜0.5 が目安)。
-- 提案できるのは prompt / negativePrompt / width / height / steps / cfg / guidance / sampler / scheduler / batchSize / faceDetailer だけ。モデルの切替・seed・ControlNet は提案できない(必要なら本文で手順を説明する)。
+- 提案できるのは prompt / negativePrompt / width / height / steps / cfg / guidance / sampler / scheduler / batchSize / faceDetailer だけ。モデルの切替・seed・ControlNet・Inpaint は提案できない(必要なら本文で手順を説明する)。
+- Inpaint が有効なときは、width / height が参照画像から決まるため提案しない。
 - 提案では変えたい項目だけを changes に入れる。"#;
 
 pub fn tool_definition() -> Value {
@@ -93,6 +94,17 @@ pub fn snapshot(p: &GenerationParams) -> Value {
             "confidence": fd.confidence,
         });
     }
+    // Inpaint: 画像・マスクのパスは送らない(ControlNet と同じ)。マスクの有無だけ
+    if let Some(ip) = p.active_inpaint() {
+        v["inpaint"] = json!({
+            "enabled": true,
+            "denoise": ip.denoise,
+            "growMask": ip.grow_mask,
+            "feather": ip.feather,
+            "compositeBack": ip.composite_back,
+            "hasMask": !ip.mask.is_empty(),
+        });
+    }
     if let Some(cn) = &p.controlnet {
         v["controlnet"] = json!({
             "enabled": cn.enabled,
@@ -108,9 +120,17 @@ pub fn snapshot(p: &GenerationParams) -> Value {
 }
 
 /// 最新の質問に付けるユーザーメッセージ本文。
-pub fn user_content(snapshot: &Value, question: &str) -> String {
+pub fn user_content(snapshot: &Value, capabilities: Option<&Value>, question: &str) -> String {
+    let caps = capabilities
+        .map(|c| {
+            format!(
+                "\n\n今の ComfyUI で使える機能(capabilities):\n```json\n{}\n```",
+                serde_json::to_string_pretty(c).unwrap_or_default()
+            )
+        })
+        .unwrap_or_default();
     format!(
-        "現在のフォーム:\n```json\n{}\n```\n\n質問:\n{}",
+        "現在のフォーム:\n```json\n{}\n```{caps}\n\n質問:\n{}",
         serde_json::to_string_pretty(snapshot).unwrap_or_default(),
         question
     )
@@ -366,6 +386,38 @@ mod tests {
         assert!(!text.contains("inputs/"));
         assert!(!text.contains("987654321"));
         assert!(text.contains("canny"));
+    }
+
+    #[test]
+    fn snapshot_reports_inpaint_without_paths_and_content_adds_capabilities() {
+        use crate::domain::params::InpaintParams;
+        let mut p = sample(ModelKind::Sdxl);
+        p.inpaint = Some(InpaintParams {
+            enabled: true,
+            image: "inputs/secret-image.png".into(),
+            mask: "inputs/secret-mask.png".into(),
+            denoise: 0.7,
+            grow_mask: 8,
+            feather: 8,
+            composite_back: true,
+        });
+        let snap = snapshot(&p);
+        let text = snap.to_string();
+        assert!(!text.contains("secret"));
+        assert!(!text.contains("inputs/"));
+        assert_eq!(snap["inpaint"]["hasMask"], true);
+        assert_eq!(snap["inpaint"]["denoise"], 0.7);
+
+        // 無効なら載せない
+        p.inpaint.as_mut().unwrap().enabled = false;
+        assert!(snapshot(&p).get("inpaint").is_none());
+
+        let caps = json!({ "inpaint": false });
+        let with = user_content(&snap, Some(&caps), "質問です");
+        assert!(with.contains("capabilities"));
+        assert!(with.contains("\"inpaint\": false"));
+        assert!(with.ends_with("質問です"));
+        assert!(!user_content(&snap, None, "q").contains("capabilities"));
     }
 
     #[test]

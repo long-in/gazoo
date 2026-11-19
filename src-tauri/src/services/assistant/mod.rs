@@ -13,6 +13,7 @@ use crate::domain::params::GenerationParams;
 use crate::error::{AppError, AppResult};
 
 pub mod anthropic;
+pub mod capabilities;
 pub mod context;
 
 use anthropic::{AnthropicClient, MessageRequest, StreamEnd, StreamEvent};
@@ -147,11 +148,23 @@ impl AssistantService {
     }
 
     /// 相談を開始する。応答はイベントで流れ、完了後に会話へ保存される。
+    #[cfg(test)]
     pub async fn ask(
         self: &Arc<Self>,
         conversation_id: Option<String>,
         text: String,
         params: GenerationParams,
+    ) -> AppResult<AskStarted> {
+        self.ask_with(conversation_id, text, params, None).await
+    }
+
+    /// `capabilities`: 今の ComfyUI で使える機能(docs/13 §4.2)。接続状態が不明なら `None`。
+    pub async fn ask_with(
+        self: &Arc<Self>,
+        conversation_id: Option<String>,
+        text: String,
+        params: GenerationParams,
+        capabilities: Option<serde_json::Value>,
     ) -> AppResult<AskStarted> {
         let text = text.trim().to_string();
         if text.is_empty() || text.chars().count() > MAX_QUESTION_CHARS {
@@ -200,13 +213,14 @@ impl AssistantService {
         let mut messages = history;
         messages.push((
             "user".to_string(),
-            context::user_content(&context::snapshot(&params), &text),
+            context::user_content(&context::snapshot(&params), capabilities.as_ref(), &text),
         ));
         tokio::spawn(async move {
             let tools = context::tool_definition();
+            let system = capabilities::system_prompt();
             let req = MessageRequest {
                 model: &status.model,
-                system: context::SYSTEM_PROMPT,
+                system: &system,
                 messages: &messages,
                 tools,
             };

@@ -6,7 +6,8 @@ use tauri::State;
 use crate::db::assistant::{AssistantStatus, Conversation, ConversationSummary};
 use crate::domain::params::GenerationParams;
 use crate::error::AppResult;
-use crate::services::assistant::{AskStarted, AssistantPatch, AssistantService};
+use crate::services::assistant::{AskStarted, AssistantPatch, AssistantService, capabilities};
+use crate::services::engine::EngineService;
 
 type Svc<'a> = State<'a, Arc<AssistantService>>;
 
@@ -45,11 +46,16 @@ pub async fn assistant_update(svc: Svc<'_>, patch: AssistantPatch) -> AppResult<
 #[tauri::command]
 pub async fn assistant_ask(
     svc: Svc<'_>,
+    engine: State<'_, Arc<EngineService>>,
     conversation_id: Option<String>,
     text: String,
     params: GenerationParams,
 ) -> AppResult<AskStarted> {
-    svc.inner().ask(conversation_id, text, params).await
+    // 今の ComfyUI で使える機能も添える(通信はしない。docs/13 §4.2)
+    let caps = capabilities::capabilities_json(engine.last_features().as_ref());
+    svc.inner()
+        .ask_with(conversation_id, text, params, caps)
+        .await
 }
 
 #[tauri::command]

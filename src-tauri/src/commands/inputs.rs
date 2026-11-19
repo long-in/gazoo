@@ -40,6 +40,18 @@ pub async fn input_image_from_gallery(
     inputs.import_gallery(&image_id).await
 }
 
+/// マスクエディタが描いた PNG(リクエスト本文のバイト列)を検証して保存する(docs/13 §3.5)。
+#[tauri::command]
+pub async fn mask_save(
+    request: tauri::ipc::Request<'_>,
+    inputs: State<'_, Arc<InputService>>,
+) -> AppResult<InputImage> {
+    let tauri::ipc::InvokeBody::Raw(bytes) = request.body() else {
+        return Err(AppError::validation("mask", "マスクのデータが不正です"));
+    };
+    inputs.save_mask(bytes.clone()).await
+}
+
 /// 既存の参照画像の情報を取得する(存在確認を兼ねる。無ければ `IMAGE_NOT_FOUND`)。
 #[tauri::command]
 pub async fn input_image_get(
