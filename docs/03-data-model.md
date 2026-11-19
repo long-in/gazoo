@@ -133,6 +133,15 @@ CREATE TABLE settings (
 | `assistant.consent` | boolean | false |
 | `assistant.auto_delete` | boolean | true |
 
+### モデル取得の設定(v0.4、設計: 12 §9。レビュー待ち)
+
+| key | 型 | 既定値 |
+|---|---|---|
+| `engine.comfyui.models_dir` | string \| null | null(= ComfyUI の `/system_stats` から自動検出) |
+| `models.consents` | string[](同意済みの `familyId/variantId`) | `[]` |
+
+`settings` のキー追加のみで、マイグレーションは不要(ダウンロードの状態はメモリ上のみ)。
+
 ### マイグレーション 0003(AI サポートの会話履歴)
 
 ```sql
