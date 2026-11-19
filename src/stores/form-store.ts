@@ -18,6 +18,14 @@ import type { RecommendedPatch } from "@/lib/models/profile";
 import { animeStart, type AnimeStartOutcome, withCompositionLock, withImg2imgEnabled, withImg2imgImage } from "@/lib/generation/img2img";
 import { defaultImg2img } from "@/lib/generation/img2img-defaults";
 import { defaultInpaint, sizeForImage } from "@/lib/generation/inpaint";
+import {
+  referenceAnimeStart,
+  withReferenceEnabled,
+  withReferenceImageAdded,
+  withReferenceImageMoved,
+  withReferenceImageRemoved,
+  withReferenceResolution,
+} from "@/lib/generation/reference";
 import { applyChanges, usableChanges } from "@/lib/generation/suggestions";
 import { useModelsStore } from "@/stores/models-store";
 import type { SuggestedChanges } from "@/lib/tauri/assistant";
@@ -72,6 +80,19 @@ interface FormState {
     image: { path: string; width: number; height: number },
     ctx: { catalog: ModelCatalog | null | undefined; models: EngineModels | null; cannyAvailable: boolean },
   ) => { outcome: AnimeStartOutcome; compositionLocked: boolean };
+  /** 参照画像つき生成(Qwen-Image 2.1。docs/24)を切り替える。 */
+  setReferenceEnabled: (enabled: boolean) => void;
+  /** 参照画像を末尾に足す(上限 4 枚)。1 枚目を足すときは生成サイズを画像に合わせる。 */
+  addReferenceImage: (path: string, width: number, height: number) => void;
+  removeReferenceImage: (index: number) => void;
+  moveReferenceImage: (index: number, delta: -1 | 1) => void;
+  setReferenceResolution: (resolution: number) => void;
+  /** 「指示でアニメ調に」: Qwen-Image 2.1 の種別へ切り替え、参照画像・プロンプトの雛形を設定する(docs/24 §3.1)。 */
+  startReferenceAnime: (
+    image: { path: string; width: number; height: number },
+    template: string,
+    models: EngineModels | null,
+  ) => void;
   /** ネガティブを種別の既定値に戻す(docs/21 §2.1)。 */
   resetNegative: () => void;
   /** プロンプト・サイズ等を推奨値に戻し、拡張機能を外す。モデルの選択は保持する(docs/21 §2.2)。 */
@@ -177,6 +198,23 @@ export const useFormStore = create<FormState>((set, get) => ({
           inpaint: { ...(s.params.inpaint ?? defaultInpaint()), image: path, mask: "" },
         },
       };
+    }),
+
+  setReferenceEnabled: (enabled) => set((s) => ({ params: withReferenceEnabled(s.params, enabled) })),
+
+  addReferenceImage: (path, width, height) =>
+    set((s) => ({ params: withReferenceImageAdded(s.params, path, width, height) })),
+
+  removeReferenceImage: (index) => set((s) => ({ params: withReferenceImageRemoved(s.params, index) })),
+
+  moveReferenceImage: (index, delta) => set((s) => ({ params: withReferenceImageMoved(s.params, index, delta) })),
+
+  setReferenceResolution: (resolution) => set((s) => ({ params: withReferenceResolution(s.params, resolution) })),
+
+  startReferenceAnime: (image, template, models) =>
+    set((s) => {
+      const switched = autofill(switchKind(s.params, "qwen_image"), models, catalogNow());
+      return { params: referenceAnimeStart(switched, image, template), hydrated: true };
     }),
 
   resetNegative: () => set((s) => ({ params: { ...s.params, negativePrompt: defaultNegative(s.params.model.kind) } })),

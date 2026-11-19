@@ -70,6 +70,15 @@ export interface Img2imgParams {
   denoise: number;
 }
 
+/** 参照画像つき生成(Qwen-Image 2.1 の画像編集。docs/24 §4.1)。Qwen-Image 2.1 のみ。 */
+export interface ReferenceParams {
+  enabled: boolean;
+  /** 参照画像("inputs/<uuid>.png")。1〜4 枚。1 枚目が編集される画像で、出力サイズも 1 枚目で決まる。 */
+  images: string[];
+  /** 参照画像の総画素の基準。768 / 1024 / 1536。 */
+  resolution: number;
+}
+
 /** docs/03-data-model.md の params_json と同一。 */
 export interface GenerationParams {
   schemaVersion: number;
@@ -94,6 +103,8 @@ export interface GenerationParams {
   inpaint?: InpaintParams;
   /** 無ければ画像から生成は無効。 */
   img2img?: Img2imgParams;
+  /** 無ければ参照画像つき生成は無効。 */
+  reference?: ReferenceParams;
 }
 
 export type JobStatus = "queued" | "running" | "completed" | "failed" | "cancelled";

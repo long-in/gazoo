@@ -32,6 +32,8 @@ pub struct EngineFeatures {
     pub inpaint: bool,
     /// 画像から生成(img2img)に必要なコアノードがすべて使えるか(docs/19 §5)。
     pub img2img: bool,
+    /// 参照画像つき生成(Qwen-Image 2.1 の画像編集)に使えるエンコーダ定義があるか(docs/24 §4.2)。
+    pub reference_edit: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]

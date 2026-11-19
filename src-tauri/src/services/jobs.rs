@@ -130,6 +130,16 @@ impl JobService {
                 )));
             }
         }
+        if let Some(r) = params.active_reference() {
+            let root = self.images_root().await?;
+            for rel in &r.images {
+                if !input_abs(&root, rel)?.is_file() {
+                    return Err(AppError::ImageNotFound(format!(
+                        "参照画像がありません: {rel}"
+                    )));
+                }
+            }
+        }
         let mut jobs = Vec::with_capacity(count as usize);
         for i in 0..count {
             let mut p = params.clone();
@@ -390,6 +400,14 @@ impl JobService {
             let root = self.images_root().await?;
             let bytes = read_input(root, i2i.image.clone()).await?;
             uploaded.push(engine.upload_input(bytes).await?);
+        }
+        // 参照画像つき生成(Qwen-Image 2.1。他の画像入力と排他)。順序は 1 枚目(編集対象)から
+        if let Some(r) = params.active_reference() {
+            for rel in &r.images {
+                let root = self.images_root().await?;
+                let bytes = read_input(root, rel.clone()).await?;
+                uploaded.push(engine.upload_input(bytes).await?);
+            }
         }
         let remote = engine.submit(&params, &uploaded).await?;
         self.db

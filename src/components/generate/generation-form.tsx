@@ -33,6 +33,7 @@ import {
 } from "@/lib/generation/defaults";
 import { img2imgReady } from "@/lib/generation/img2img";
 import { inpaintReady } from "@/lib/generation/inpaint";
+import { referenceReady, supportsReference } from "@/lib/generation/reference";
 import type { MessageKey } from "@/lib/i18n";
 import { useErrorMessage, useT } from "@/lib/i18n/use-t";
 import { type CandidateBadge, candidateBadges } from "@/lib/models/profile";
@@ -50,6 +51,7 @@ import { ControlnetSection } from "./controlnet-section";
 import { FaceDetailerSection } from "./face-detailer-section";
 import { Img2imgSection } from "./img2img-section";
 import { InpaintSection } from "./inpaint-section";
+import { ReferenceSection } from "./reference-section";
 import { Field, NumberInput, SliderNumber } from "./fields";
 
 const BUILTIN_VAE = "__builtin__";
@@ -192,13 +194,17 @@ export function GenerationForm() {
   // 画像から生成を有効にしている間は、元画像が必要(生成サイズも元画像から決まる)
   const img2imgOn = params.img2img?.enabled === true && supportsImg2img(kind);
   const needsImg2imgInput = img2imgOn && !img2imgReady(params.img2img);
-  const sizeLocked = inpaintOn || img2imgOn;
+  // 参照画像つき生成(Qwen-Image 2.1)を有効にしている間は、参照画像が 1 枚以上必要(出力サイズは 1 枚目から決まる)
+  const referenceOn = params.reference?.enabled === true && supportsReference(kind);
+  const needsReferenceImages = referenceOn && !referenceReady(params.reference);
+  const sizeLocked = inpaintOn || img2imgOn || referenceOn;
 
   const ready =
     status?.connected === true &&
     !needsReference &&
     !needsInpaintInput &&
     !needsImg2imgInput &&
+    !needsReferenceImages &&
     params.prompt.trim() !== "" &&
     params.model.name !== "" &&
     (!flux || (params.model.clip.length === 2 && params.model.clip.every(Boolean) && !!params.model.vae)) &&
@@ -501,6 +507,8 @@ export function GenerationForm() {
       {/* 拡張機能(画像から生成・Inpaint・ControlNet・顔補正)。畳んで、フォームの縦の長さを抑えられる(docs/20 §4.2) */}
       <details open className="group flex flex-col gap-4 [&[open]>summary]:mb-4">
         <summary className="cursor-pointer text-sm font-medium">{t("generate.extras")}</summary>
+        <ReferenceSection error={err} />
+
         <Img2imgSection error={err} />
 
         <InpaintSection error={err} />
@@ -536,11 +544,13 @@ export function GenerationForm() {
           {submitting ? t("generate.submitting") : t("generate.submit")}
         </Button>
       </div>
-      {(needsReference || needsInpaintInput || needsImg2imgInput) && (
+      {(needsReference || needsInpaintInput || needsImg2imgInput || needsReferenceImages) && (
         <p role="status" className="-mt-2 text-xs text-amber-600 dark:text-amber-400">
           {needsReference
             ? t("generate.cn.needImage")
-            : needsImg2imgInput
+            : needsReferenceImages
+              ? t("generate.reference.needImage")
+              : needsImg2imgInput
               ? t("generate.img2img.needImage")
               : params.inpaint?.image
               ? t("generate.inpaint.needMask")

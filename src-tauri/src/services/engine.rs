@@ -140,6 +140,7 @@ mod tests {
                 controlnet_preprocessors: vec![Preprocessor::Canny],
                 inpaint: true,
                 img2img: true,
+                reference_edit: true,
             },
             error: None,
         }

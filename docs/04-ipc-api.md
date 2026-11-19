@@ -273,6 +273,10 @@ type SettingsPatch = Partial<Settings>;
 
 - `job_enqueue` の `params.img2img`(`{ enabled, image, denoise }`)を追加する。新しいコマンドは無し(元画像は既存の `input_image_*`)。`engine_status.features` に `img2img` を加える。Inpaint が有効なときは `VALIDATION`。詳細は [19-image-to-anime.md](19-image-to-anime.md) §4・§7。
 
+## 追記(v0.16・レビュー待ち): 参照画像(Qwen-Image 2.1)
+
+- `job_enqueue` の `params.reference`(`{ enabled, images: string[], resolution }`。`images` は 1〜4 枚、`resolution` は 768 / 1024 / 1536)を追加する。新しいコマンドは無し(参照画像は既存の `input_image_*`)。`engine_status.features` に `referenceEdit` を加える。`qwen_image` 以外・他の画像入力機能との併用・枚数や `resolution` の範囲外は `VALIDATION`。詳細は [24-qwen-reference-image.md](24-qwen-reference-image.md) §4・§6。
+
 ## 追記(v0.12・承認済み): キュー管理
 
 - `job_remove { ids }`(終了済みジョブを履歴から外す)、`queue_pause` / `queue_resume` / `queue_state`、イベント `queue://state` を追加する。`job_enqueue` は、カタログで種別が分かるモデル・エンコーダ・VAE が選択した種別と合わないとき `VALIDATION`(`details.field` は `model` / `clip` / `vae`)で断る。詳細は [20-ui-refresh.md](20-ui-refresh.md) §2.4・§3.4。

@@ -16,6 +16,7 @@ import {
   SheetTitle,
 } from "@/components/ui/sheet";
 import { supportsImg2img, supportsInpaint } from "@/lib/generation/defaults";
+import { supportsReference } from "@/lib/generation/reference";
 import { useErrorMessage, useT } from "@/lib/i18n/use-t";
 import { toAppError } from "@/lib/tauri/errors";
 import { type ImageDetail, imageExport, imageGet, imageReveal } from "@/lib/tauri/images";
@@ -123,6 +124,25 @@ export function ImageDetailSheet({ id, onClose }: { id: string | null; onClose: 
     }
   }
 
+  /** この画像を Qwen-Image 2.1 の参照画像に追加する(docs/24 §6.2)。種別が違うときは取り込むだけで、有効にはしない。 */
+  async function setAsQwenReference() {
+    if (!image) return;
+    try {
+      const input = await inputImageFromGallery(image.id);
+      const form = useFormStore.getState();
+      form.addReferenceImage(input.path, input.width, input.height);
+      if (supportsReference(form.params.model.kind)) {
+        form.setReferenceEnabled(true);
+        toast.success(t("gallery.qwenReferenceSet"));
+      } else {
+        toast.info(t("gallery.qwenReferenceOther"));
+      }
+      router.push("/");
+    } catch (e) {
+      toast.error(errorMessage(toAppError(e)));
+    }
+  }
+
   /** この画像を img2img の元画像として生成画面に設定する。anime が true なら、アニメ系のモデルと推奨値も設定する。 */
   async function setAsImg2img(anime: boolean) {
     if (!image) return;
@@ -200,6 +220,10 @@ export function ImageDetailSheet({ id, onClose }: { id: string | null; onClose: 
                   <ImagePlus />
                   {t("gallery.useAsImg2img")}
                 </Button>
+                <Button type="button" variant="outline" onClick={() => void setAsQwenReference()}>
+                  <ImagePlus />
+                  {t("gallery.useAsQwenReference")}
+                </Button>
                 <Button type="button" variant="outline" onClick={() => void setAsInpaint()}>
                   <Brush />
                   {t("gallery.useAsInpaint")}
@@ -262,6 +286,14 @@ export function ImageDetailSheet({ id, onClose }: { id: string | null; onClose: 
                     <dd className="break-all">
                       {params.controlnet.units[0].preprocessor} · {params.controlnet.units[0].model} ·{" "}
                       {params.controlnet.units[0].strength}
+                    </dd>
+                  </>
+                )}
+                {params.reference?.enabled && (
+                  <>
+                    <dt className="text-muted-foreground">{t("gallery.params.reference")}</dt>
+                    <dd>
+                      {params.reference.images.length} · {params.reference.resolution}
                     </dd>
                   </>
                 )}

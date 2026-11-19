@@ -749,6 +749,79 @@ mod tests {
         }
     }
 
+    /// 実機: Qwen-Image 2.1 の参照画像つき生成(docs/24)が、参照 2 枚で完了すること。出力サイズが 1 枚目の
+    /// 縦横比に従い、32 の倍数であることも確かめる。時間を抑えるため 8 ステップ・`resolution` 768 で行う。
+    /// `COMFYUI_SAVE_PNG` に出力先を指定すると、生成した PNG を保存する。
+    #[tokio::test]
+    #[ignore = "requires a running ComfyUI with the Qwen-Image 2.1 files (docs/17 §2, docs/24 §9)"]
+    async fn real_comfyui_qwen_image_21_reference_edit_with_two_images() {
+        use crate::domain::params::ReferenceParams;
+        use image::{ImageFormat, Rgba, RgbaImage};
+
+        let png = |w: u32, h: u32, tint: u8| {
+            let img = RgbaImage::from_fn(w, h, |x, y| {
+                let (dx, dy) = (x as i32 - (w / 2) as i32, y as i32 - (h / 3) as i32);
+                let face = dx * dx + dy * dy < 90 * 90;
+                let v = (y * 255 / h) as u8;
+                if face {
+                    Rgba([240, 200, 170, 255])
+                } else {
+                    Rgba([v, tint, 255 - v, 255])
+                }
+            });
+            let mut out = Vec::new();
+            img.write_to(&mut std::io::Cursor::new(&mut out), ImageFormat::Png)
+                .unwrap();
+            out
+        };
+
+        let c = ComfyUiClient::new(&real_url()).unwrap();
+        let first = c.upload_input(png(512, 768, 90)).await.expect("upload 1");
+        let second = c.upload_input(png(512, 512, 200)).await.expect("upload 2");
+
+        let mut p = sample(ModelKind::QwenImage);
+        p.model.name = "qwen_image_2.1_int8_convrot.safetensors".into();
+        p.model.clip = vec!["qwen3vl_8b_int8_convrot.safetensors".into()];
+        p.model.vae = Some("qwen_image_2.1_vae_bf16.safetensors".into());
+        p.prompt =
+            "Redraw <image1> as an anime-style illustration, and use the colors of <image2> \
+                    for the background."
+                .into();
+        p.negative_prompt = String::new();
+        p.width = 512;
+        p.height = 768;
+        p.steps = 8;
+        p.cfg = 1.0;
+        p.sampler = "euler".into();
+        p.scheduler = "simple".into();
+        p.seed = 20_261_120;
+        p.reference = Some(ReferenceParams {
+            enabled: true,
+            images: vec!["inputs/a.png".into(), "inputs/b.png".into()],
+            resolution: 768,
+        });
+        assert_eq!(p.upload_count(), 2);
+
+        let id = c.submit(&p, &[first, second]).await.expect("submit");
+        let images = c.wait(&id, &|_| {}).await.expect("wait");
+
+        assert_eq!(images.len(), 1);
+        assert_eq!(&images[0].bytes[..8], &PNG_MAGIC, "PNG として取得できる");
+        let decoded = image::load_from_memory(&images[0].bytes).expect("decodable");
+        let (w, h) = (decoded.width(), decoded.height());
+        println!("reference edit output: {w}x{h}");
+        assert_eq!((w % 32, h % 32), (0, 0), "32 の倍数");
+        assert!(h > w, "1 枚目(縦長)の縦横比に従う");
+        assert!(
+            (f64::from(w) / f64::from(h) - 512.0 / 768.0).abs() < 0.06,
+            "1 枚目の縦横比に近い"
+        );
+        if let Ok(path) = std::env::var("COMFYUI_SAVE_PNG") {
+            std::fs::write(&path, &images[0].bytes).expect("save png");
+            println!("saved {path}");
+        }
+    }
+
     /// 実機: Krea 2 Turbo(docs/17)で画像が生成されること。アプリの既定値(1024×1024・8 ステップ・CFG 1・euler / simple)と、
     /// FP8 scaled 版(推奨)のファイルを使う。`COMFYUI_SAVE_PNG` に出力先を指定すると、生成した PNG を保存する。
     #[tokio::test]

@@ -47,6 +47,9 @@ const INPAINT_NODES: [&str; 11] = [
 /// 画像から生成(workflow.rs の `add_img2img`)が使うコアノード(docs/19 §5)。
 const IMG2IMG_NODES: [&str; 4] = ["LoadImage", "ImageScale", "VAEEncode", "RepeatLatentBatch"];
 
+/// Qwen-Image 2.1 のエンコーダ。参照画像つき生成の可否の判定に使う(docs/24 §4.2)。
+const NODE_QWEN_ENCODE: &str = "TextEncodeQwenImage21";
+
 pub struct ComfyUiClient {
     base: String,
     http: reqwest::Client,
@@ -181,6 +184,12 @@ impl GenerationEngine for ComfyUiClient {
         };
         let (inpaint, img2img) = tokio::join!(all_core(&INPAINT_NODES), all_core(&IMG2IMG_NODES));
 
+        // 参照画像つき生成(Qwen-Image 2.1)は、エンコーダのノード定義で判定する(docs/24 §4.2)
+        let reference_edit = matches!(
+            self.node_info(NODE_QWEN_ENCODE).await,
+            Ok(i) if parse::has_reference_inputs(&i)
+        );
+
         Ok(EngineStatus {
             connected: true,
             url: self.url(),
@@ -193,6 +202,7 @@ impl GenerationEngine for ComfyUiClient {
                 controlnet_preprocessors,
                 inpaint,
                 img2img,
+                reference_edit,
             },
             error: None,
         })

@@ -34,12 +34,18 @@ pub fn build(params: &GenerationParams, filename_prefix: &str, control_images: &
             "stable_diffusion",
             Conditioning::Plain,
         ),
-        ModelKind::QwenImage => build_split(
-            params,
-            filename_prefix,
-            "qwen_image",
-            Conditioning::QwenImage21,
-        ),
+        ModelKind::QwenImage => {
+            let mut wf = build_split(
+                params,
+                filename_prefix,
+                "qwen_image",
+                Conditioning::QwenImage21,
+            );
+            if let Some(r) = params.active_reference() {
+                add_reference(&mut wf, params, r, control_images);
+            }
+            wf
+        }
         ModelKind::Krea2 => build_split(params, filename_prefix, "krea2", Conditioning::ZeroOut),
         ModelKind::Sd15 | ModelKind::Sdxl => build_sd(params, filename_prefix, control_images),
     }
@@ -456,6 +462,48 @@ fn build_flux(p: &GenerationParams, prefix: &str) -> Value {
         "9": node("VAEDecode", json!({ "samples": link("8", 0), "vae": link("3", 0) })),
         "10": node("SaveImage", json!({ "images": link("9", 0), "filename_prefix": prefix })),
     })
+}
+
+/// 参照画像の `LoadImage` の最初のノード ID(顔補正 20〜、ControlNet 30〜、Inpaint 60〜、img2img 80〜 と重ならない)。
+const REFERENCE_BASE: usize = 90;
+/// 枚数が 2 以上のときの `RepeatLatentBatch`。`LoadImage`(90〜93)の後ろ。
+const REFERENCE_REPEAT_NODE: &str = "100";
+
+/// Qwen-Image 2.1 の参照画像つき生成(docs/24 §4.3)。`TextEncodeQwenImage21` に参照画像(`images.image_N`)と
+/// VAE をつなぎ、空の潜在の代わりにそのノードの `latent` 出力(1 枚目の参照画像のサイズ)でサンプリングする。
+/// `images` は有効な参照画像の順に並べた、エンジンへアップロード済みの画像名。
+fn add_reference(
+    wf: &mut Value,
+    p: &GenerationParams,
+    r: &crate::domain::params::ReferenceParams,
+    images: &[String],
+) {
+    // 画像の並びは ControlNet・Inpaint・img2img の後ろ(参照画像は他の画像入力と排他なので先頭になる)
+    let skip = p.upload_count() - r.images.len();
+    for i in 0..r.images.len() {
+        let id = (REFERENCE_BASE + i).to_string();
+        wf[&id] = node(
+            "LoadImage",
+            json!({ "image": images.get(skip + i).cloned().unwrap_or_default() }),
+        );
+        wf["4"]["inputs"][format!("images.image_{}", i + 1)] = link(&id, 0);
+    }
+    wf["4"]["inputs"]["vae"] = link("3", 0);
+    wf["4"]["inputs"]["resolution"] = json!(r.resolution);
+
+    let mut latent = link("4", 2);
+    if p.batch_size > 1 {
+        wf[REFERENCE_REPEAT_NODE] = node(
+            "RepeatLatentBatch",
+            json!({ "samples": latent, "amount": p.batch_size }),
+        );
+        latent = link(REFERENCE_REPEAT_NODE, 0);
+    }
+    wf["7"]["inputs"]["latent_image"] = latent;
+    // 出力サイズは 1 枚目の参照画像で決まる。空の潜在はどこにもつながらないので外す
+    if let Some(nodes) = wf.as_object_mut() {
+        nodes.remove("6");
+    }
 }
 
 /// 正・負の条件づけの作り方(docs/17 §4)。
@@ -1071,6 +1119,73 @@ mod tests {
         assert_eq!(wf["7"]["inputs"]["positive"], json!(["4", 0]));
         assert_eq!(wf["7"]["inputs"]["negative"], json!(["4", 1]));
         assert!(wf.get("5").is_none());
+    }
+
+    fn reference_params(images: &[&str]) -> GenerationParams {
+        let mut p = sample(ModelKind::QwenImage);
+        p.model.name = "unet.safetensors".into();
+        p.model.clip = vec!["te.safetensors".into()];
+        p.model.vae = Some("vae.safetensors".into());
+        p.reference = Some(crate::domain::params::ReferenceParams {
+            enabled: true,
+            images: images.iter().map(|s| (*s).to_string()).collect(),
+            resolution: 768,
+        });
+        p
+    }
+
+    #[test]
+    fn reference_connects_images_and_vae_and_samples_from_the_encoder_latent() {
+        let p = reference_params(&["inputs/a.png", "inputs/b.png"]);
+        let wf = build(&p, "gazooo", &["a.png".to_string(), "b.png".to_string()]);
+        assert_well_formed(&wf);
+        assert_eq!(class_of(&wf, "90"), "LoadImage");
+        assert_eq!(wf["90"]["inputs"]["image"], "a.png");
+        assert_eq!(wf["91"]["inputs"]["image"], "b.png");
+        assert!(wf.get("92").is_none());
+        let enc = &wf["4"]["inputs"];
+        assert_eq!(enc["images.image_1"], json!(["90", 0]));
+        assert_eq!(enc["images.image_2"], json!(["91", 0]));
+        assert!(enc.get("images.image_3").is_none());
+        assert_eq!(enc["vae"], json!(["3", 0]));
+        assert_eq!(enc["resolution"], 768);
+        // 空の潜在ではなく、エンコーダの latent 出力(3 つ目)を使う。denoise は 1
+        assert!(wf.get("6").is_none());
+        assert_eq!(wf["7"]["inputs"]["latent_image"], json!(["4", 2]));
+        assert_eq!(wf["7"]["inputs"]["denoise"], 1.0);
+        assert!(wf.get("100").is_none());
+        // QwenImage21Cache は使わない(docs/24 Q-121)
+        assert!(!classes(&wf).contains(&"QwenImage21Cache"));
+        assert_eq!(wf["7"]["inputs"]["model"], json!(["1", 0]));
+    }
+
+    #[test]
+    fn reference_repeats_the_latent_for_batches() {
+        let mut p = reference_params(&["inputs/a.png"]);
+        p.batch_size = 3;
+        let wf = build(&p, "gazooo", &["a.png".to_string()]);
+        assert_well_formed(&wf);
+        assert_eq!(class_of(&wf, "100"), "RepeatLatentBatch");
+        assert_eq!(wf["100"]["inputs"]["samples"], json!(["4", 2]));
+        assert_eq!(wf["100"]["inputs"]["amount"], 3);
+        assert_eq!(wf["7"]["inputs"]["latent_image"], json!(["100", 0]));
+    }
+
+    #[test]
+    fn disabled_reference_leaves_the_text_to_image_workflow_unchanged() {
+        let plain = build(&split_params(), "gazooo", &[]);
+        let mut off = reference_params(&["inputs/a.png"]);
+        off.reference.as_mut().unwrap().enabled = false;
+        assert_eq!(build(&off, "gazooo", &[]), plain);
+        assert!(plain["4"]["inputs"].get("vae").is_none());
+    }
+
+    fn split_params() -> GenerationParams {
+        let mut p = sample(ModelKind::QwenImage);
+        p.model.name = "unet.safetensors".into();
+        p.model.clip = vec!["te.safetensors".into()];
+        p.model.vae = Some("vae.safetensors".into());
+        p
     }
 
     #[test]
