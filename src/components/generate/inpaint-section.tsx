@@ -156,6 +156,7 @@ export function InpaintSection({ error }: { error: (field: string) => string | n
             label={t("generate.inpaint.denoise")}
             htmlFor="inpaint-denoise"
             hint={t("generate.inpaint.denoise.hint")}
+            help={t("help.inpaint.denoise")}
             error={error("inpaint.denoise")}
           >
             <SliderNumber

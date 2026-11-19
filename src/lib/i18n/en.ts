@@ -633,4 +633,42 @@ export const en: Record<MessageKey, string> = {
   "error.MODELS_HASH_MISMATCH": "The downloaded file was not what was expected, so it was discarded. Please try again",
   "error.MODELS_ALREADY_INSTALLED": "This model is already installed (it will not be overwritten)",
   "error.MODELS_NOT_FOUND": "Model not found",
+  "help.aria": "help",
+  "generate.reset.prompt": "Clear",
+  "generate.reset.prompt.done": "Prompt cleared",
+  "generate.reset.undo": "Undo",
+  "generate.reset.negative": "Reset to default",
+  "generate.reset.all": "Reset all",
+  "generate.reset.all.title": "Reset the form?",
+  "generate.reset.all.desc":
+    "Prompt, negative prompt, size and other settings go back to the recommended values, and the extras (image-to-image, Inpaint, ControlNet, face fix) are turned off. Your model selection is kept. Jobs already queued are not affected.",
+  "generate.reset.all.confirm": "Reset",
+  "generate.reset.all.cancel": "Cancel",
+  "generate.reset.all.done": "Form reset",
+  "help.prompt":
+    "Describe what you want to see. Be specific, in the order subject, place, mood, style.\nSD 1.5 / SDXL work best with comma-separated English words; Flux / Qwen-Image also accept sentences. Anime models use Danbooru-style tags (see the model description).",
+  "help.negative":
+    "Describe what you do NOT want (e.g. lowres, blurry, extra fingers). Too much can ruin the picture, so keep it short at first. Not used by Flux or Krea 2.",
+  "help.kind":
+    "The model family (SD 1.5, SDXL, Flux, …). Available features and recommended settings differ by kind.",
+  "help.model": "Only files that match the kind are listed. You can add more on the Models page.",
+  "help.size":
+    "Width × height of the image in px. Straying far from the size the model was trained on tends to break the picture, and larger sizes take more time and memory. Pick a recommended size for the kind.",
+  "help.steps":
+    "How many refinement passes to run. More gives finer detail, but past a point it only gets slower. The recommended value for the kind is a good guide.",
+  "help.cfg":
+    "How strictly the image follows the prompt. Too high looks oversaturated and unnatural; too low ignores the prompt. The recommended value for the kind is a good guide.",
+  "help.guidance": "The CFG-like value for Flux. Around 3.5 is typical.",
+  "help.sampler":
+    "The calculation method used to refine the image. If unsure, keep the recommended one. Changing it slightly changes the look.",
+  "help.scheduler": "Works with the sampler to decide how noise is removed. If unsure, keep the recommended one.",
+  "help.seed":
+    "The source of randomness. The same seed and settings give nearly the same picture, so fix it to compare other settings.",
+  "help.count": "How many images to create per submission (the seed changes for each).",
+  "help.batch": "How many images one job makes at once. More uses more memory.",
+  "help.img2img.denoise":
+    "How far to move away from the source image. Low stays close to it; high becomes a different picture.",
+  "help.inpaint.denoise": "How much to redraw the masked area. 0.6–0.8 is typical.",
+  "help.face.denoise": "How much to redraw detected faces. Higher changes the face more.",
+  "help.cn.strength": "How strongly to keep the reference image's composition. Too strong makes the prompt less effective.",
 };

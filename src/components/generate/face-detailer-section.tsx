@@ -82,6 +82,7 @@ export function FaceDetailerSection({ error }: { error: (field: string) => strin
             label={t("generate.face.denoise")}
             htmlFor="face-denoise"
             hint={t("generate.face.denoise.hint")}
+            help={t("help.face.denoise")}
             error={error("faceDetailer.denoise")}
           >
             <SliderNumber

@@ -188,6 +188,7 @@ export function Img2imgSection({ error }: { error: (field: string) => string | n
             label={t("generate.img2img.denoise")}
             htmlFor="img2img-denoise"
             hint={t("generate.img2img.denoise.hint")}
+            help={t("help.img2img.denoise")}
             error={error("img2img.denoise")}
           >
             <div className="flex flex-wrap gap-1.5" role="group" aria-label={t("generate.img2img.denoise")}>

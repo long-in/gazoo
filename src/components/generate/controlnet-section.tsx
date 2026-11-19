@@ -208,7 +208,7 @@ export function ControlnetSection({ error }: { error: (field: string) => string 
             </Select>
           </Field>
 
-          <Field label={t("generate.cn.strength")} htmlFor="cn-strength" error={error("controlnet.units[0].strength")}>
+          <Field label={t("generate.cn.strength")} htmlFor="cn-strength" error={error("controlnet.units[0].strength")} help={t("help.cn.strength")}>
             <SliderNumber
               id="cn-strength"
               value={unit.strength}

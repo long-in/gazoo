@@ -7,6 +7,8 @@ import {
   defaultControlnet,
   defaultControlnetUnit,
   defaultFaceDetailer,
+  defaultNegative,
+  resetParams,
   pickControlnetModel,
   defaultParams,
   isFlux,
@@ -318,5 +320,36 @@ describe("Anima / Qwen-Image 2.1 / Krea 2(docs/17)", () => {
     expect(next.model.kind).toBe("anima");
     expect(next.prompt).toBe("1girl");
     expect(next.faceDetailer?.enabled).toBe(false);
+  });
+});
+
+describe("初期化(docs/21)", () => {
+  it("defaultNegative: Anima は品質タグ、他は空", () => {
+    expect(defaultNegative("anima")).toContain("worst quality");
+    expect(defaultNegative("sdxl")).toBe("");
+  });
+
+  it("resetParams: モデル選択を保持し、他は推奨値に戻り、拡張機能は外れる", () => {
+    const current = {
+      ...defaultParams("sdxl"),
+      model: { kind: "sdxl" as const, name: "x.safetensors", clip: [], vae: "v.safetensors" },
+      prompt: "cat",
+      negativePrompt: "bad",
+      steps: 50,
+      seed: 123,
+      seedRandomize: false,
+      faceDetailer: { ...defaultFaceDetailer(), enabled: true },
+      controlnet: { ...defaultControlnet(), enabled: true, units: [{ ...defaultControlnetUnit(), image: "a.png" }] },
+    };
+    const r = resetParams(current);
+    expect(r.model).toEqual(current.model);
+    expect(r.prompt).toBe("");
+    expect(r.negativePrompt).toBe("");
+    expect(r.steps).toBe(defaultParams("sdxl").steps);
+    expect(r.seedRandomize).toBe(true);
+    expect(r.faceDetailer).toBeUndefined();
+    expect(r.controlnet).toBeUndefined();
+    expect(r.img2img).toBeUndefined();
+    expect(r.inpaint).toBeUndefined();
   });
 });

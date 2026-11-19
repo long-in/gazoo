@@ -1,11 +1,33 @@
 "use client";
 
+import { CircleHelp } from "lucide-react";
 import type { ReactNode } from "react";
 import { useState } from "react";
 
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { useT } from "@/lib/i18n/use-t";
 import { Slider } from "@/components/ui/slider";
+
+/** 項目の説明を開く「?」ボタン。クリック・キーボードで開閉できる(docs/21 §3.1)。 */
+export function HelpTip({ label, text }: { label: string; text: string }) {
+  const t = useT();
+  return (
+    <Popover>
+      <PopoverTrigger
+        type="button"
+        aria-label={`${label} ${t("help.aria")}`}
+        className="inline-flex size-4 shrink-0 items-center justify-center rounded-full text-muted-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
+      >
+        <CircleHelp className="size-3.5" aria-hidden />
+      </PopoverTrigger>
+      <PopoverContent>
+        <p className="whitespace-pre-line">{text}</p>
+      </PopoverContent>
+    </Popover>
+  );
+}
 
 export function Field({
   label,
@@ -13,16 +35,26 @@ export function Field({
   error,
   children,
   hint,
+  help,
+  action,
 }: {
   label: string;
   htmlFor?: string;
   error?: string | null;
   children: ReactNode;
   hint?: string;
+  /** 説明(翻訳済みの文)。指定するとラベルの横に「?」を出す。 */
+  help?: string;
+  /** ラベルの右端に置く操作(クリア・初期値に戻す など)。 */
+  action?: ReactNode;
 }) {
   return (
     <div className="flex flex-col gap-1.5">
-      <Label htmlFor={htmlFor}>{label}</Label>
+      <div className="flex items-center gap-1.5">
+        <Label htmlFor={htmlFor}>{label}</Label>
+        {help && <HelpTip label={label} text={help} />}
+        {action && <div className="ml-auto flex items-center gap-1">{action}</div>}
+      </div>
       {children}
       {hint && <p className="text-xs text-muted-foreground">{hint}</p>}
       {error && (
