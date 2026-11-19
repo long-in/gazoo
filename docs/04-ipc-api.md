@@ -209,6 +209,21 @@ type SettingsPatch = Partial<Settings>;
 | `engine_process_logs` | `{ lines?: number }` | `{ lines: string[] }` |
 
 - 型は 15 が正。イベント `engine://proc-state` / `engine://log`。エラー: `ENGINE_PORT_IN_USE` / `ENGINE_LAUNCH_FAILED` / `ENGINE_START_TIMEOUT` / `ENGINE_BUSY` / `ENGINE_NOT_MANAGED`。
+- (v0.14・設計: 22)`engine_managed_get` の `suggestions` に、任意の `source`(`running` / `app` / `manual` / `portable` / `desktop` / `dev`。候補の出どころ)が加わる。起動中の ComfyUI がないときは、アプリ内蔵の既知の場所の一覧(アプリが導入したものが最優先)から候補を求める。
+
+### ComfyUI のインストール(v0.15、設計: 23。承認済み)
+
+| コマンド | 引数 | 戻り値 |
+|---|---|---|
+| `engine_install_status` | – | `InstallView`(状態・導入の記録・更新の有無・導入先・基本/コンポーネントの一覧(サイズ・ライセンス)・接続する取得元ホスト) |
+| `engine_install_preflight` | `{ components: string[] }` | `Preflight`(対応 OS・空き容量と必要量・GPU の有無・導入先)。**何もダウンロードしない** |
+| `engine_install_start` | `{ request: { components: string[]; accepted: boolean } }` | `InstallState`(バックグラウンドで進む。`accepted` が `false` なら `VALIDATION`。実行中のジョブ・起動中の ComfyUI があると `ENGINE_BUSY`、容量不足は `ENGINE_INSTALL_DISK_FULL`) |
+| `engine_install_cancel` | – | – |
+| `engine_install_remove` | `{ keepData: boolean }` | `InstallView`(`keepData` なら `data/` を残す。管理設定が削除した導入を指していれば無効に戻す) |
+| `engine_install_logs` | `{ lines?: number }` | `{ lines: string[] }`(最新 500 行まで) |
+
+- 型は 23 が正。イベント `engine://install-state`(`InstallState`)/ `engine://install-log`(`{ line }`)。
+- エラー: `ENGINE_INSTALL_CANCELLED` / `ENGINE_INSTALL_DISK_FULL` / `ENGINE_INSTALL_HASH_MISMATCH` / `ENGINE_INSTALL_HOST_NOT_ALLOWED` / `ENGINE_INSTALL_DOWNLOAD_FAILED` / `ENGINE_INSTALL_EXTRACT_FAILED` / `ENGINE_INSTALL_ARCHIVE_UNSAFE` / `ENGINE_INSTALL_COMMAND_FAILED` / `ENGINE_INSTALL_VERIFY_FAILED` / `ENGINE_INSTALL_UNSUPPORTED` / `ENGINE_INSTALL_REMOVE_FAILED`、共通で `ENGINE_BUSY`。
 
 
 ## イベント(Rust → フロント)
@@ -227,6 +242,8 @@ type SettingsPatch = Partial<Settings>;
 | `assistant://error` | `{ requestId; code; message }` | 失敗 |
 | `models://progress` | `DownloadState`(12 §8) | モデル取得の進捗(最大 4 回/秒。v0.4) |
 | `models://done` | `DownloadState` | 取得の完了・失敗・キャンセル。完了時はフロントが `engine_list_models` を再取得する |
+| `engine://install-state` | `InstallState`(23) | ComfyUI のインストールの状態・手順・ダウンロード進捗の変化(v0.15) |
+| `engine://install-log` | `{ line }` | インストールのログ 1 行(pip などの出力。最新 500 行をアプリが保持) |
 
 ## エラーコード(初期)
 

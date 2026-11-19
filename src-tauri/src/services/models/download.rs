@@ -42,6 +42,14 @@ impl DownloadPolicy {
         }
     }
 
+    /// 指定ホスト(とそのサブドメイン)への https のみ(ComfyUI の導入。docs/23 §5)。
+    pub fn with_hosts(hosts: Vec<String>) -> Self {
+        Self {
+            allowed_hosts: hosts,
+            https_only: true,
+        }
+    }
+
     /// テスト用: 指定ホストへの http を許可する。
     #[cfg(test)]
     pub fn for_test(host: &str) -> Self {

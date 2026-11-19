@@ -137,6 +137,9 @@ pub struct Suggestions {
     pub python: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub base_directory: Option<String>,
+    /// 候補の出どころ(`running` / `app` / `manual` / `portable` / `desktop` / `dev`)。表示用。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source: Option<&'static str>,
 }
 
 /// 起動中の ComfyUI の `argv`(`/system_stats`)から候補を求める。
@@ -171,6 +174,7 @@ pub fn suggest(argv: &[String]) -> Suggestions {
             .filter(|p| p.is_file())
             .map(|p| p.to_string_lossy().into_owned());
         out.main_py = Some(main.to_string_lossy().into_owned());
+        out.source = Some("running");
     }
     out
 }
@@ -187,6 +191,7 @@ fn suggest_from_root(root: &Path, main: &Path) -> Suggestions {
         main_py: Some(main.to_string_lossy().into_owned()),
         python: py.is_file().then(|| py.to_string_lossy().into_owned()),
         base_directory: data.is_dir().then(|| data.to_string_lossy().into_owned()),
+        source: Some("dev"),
     }
 }
 

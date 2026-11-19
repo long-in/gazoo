@@ -8,7 +8,9 @@ use tauri::{AppHandle, Manager, State};
 use crate::db::Db;
 use crate::error::{AppError, AppResult};
 use crate::services::engine::EngineService;
+use crate::services::engine_install::EngineInstaller;
 use crate::services::engine_process::config::{ManagedEngineConfig, Suggestions, detect, suggest};
+use crate::services::engine_process::known::{KnownDirs, detect_known};
 use crate::services::engine_process::{EngineProcState, EngineProcess};
 use crate::services::jobs::JobService;
 use crate::services::models::is_local_engine;
@@ -29,7 +31,26 @@ async fn load_config(db: &Db) -> AppResult<ManagedEngineConfig> {
     db.call(|c| settings::get_managed_engine(c)).await
 }
 
-async fn view(db: &Db, engine: &EngineService, proc: &EngineProcess) -> AppResult<ManagedView> {
+/// OS の標準フォルダと、アプリが導入した ComfyUI の場所(docs/22 §3)。
+fn known_dirs(app: &AppHandle, installer: &EngineInstaller) -> KnownDirs {
+    let p = app.path();
+    KnownDirs {
+        app_comfyui: Some(installer.layout().root.clone()),
+        home: p.home_dir().ok(),
+        documents: p.document_dir().ok(),
+        desktop: p.desktop_dir().ok(),
+        downloads: p.download_dir().ok(),
+        local_data: p.local_data_dir().ok(),
+    }
+}
+
+async fn view(
+    app: &AppHandle,
+    installer: &EngineInstaller,
+    db: &Db,
+    engine: &EngineService,
+    proc: &EngineProcess,
+) -> AppResult<ManagedView> {
     let mut config = load_config(db).await?;
     let engine = engine.engine()?;
     let from_running = if is_local_engine(&engine.url()) {
@@ -41,10 +62,16 @@ async fn view(db: &Db, engine: &EngineService, proc: &EngineProcess) -> AppResul
     } else {
         Suggestions::default()
     };
+    // 優先順位(docs/22 §2): 起動中の ComfyUI → 既知の場所の一覧(アプリが導入したものが最優先)→ 実行ファイル周辺(開発用)
     let suggestions = if from_running.main_py.is_some() {
         from_running
     } else {
-        detect(&search_starts())
+        let known = detect_known(&known_dirs(app, installer));
+        if known.main_py.is_some() {
+            known
+        } else {
+            detect(&search_starts())
+        }
     };
     // 未設定の項目は、見つかった候補を初期値として入れる(docs/15 §9。保存はユーザーの操作で行う)
     if config.main_py.is_empty() {
@@ -77,16 +104,19 @@ fn search_starts() -> Vec<std::path::PathBuf> {
 
 #[tauri::command]
 pub async fn engine_managed_get(
+    app: AppHandle,
+    installer: State<'_, Arc<EngineInstaller>>,
     db: State<'_, Db>,
     engine: State<'_, Arc<EngineService>>,
     proc: Proc<'_>,
 ) -> AppResult<ManagedView> {
-    view(&db, &engine, &proc).await
+    view(&app, &installer, &db, &engine, &proc).await
 }
 
 #[tauri::command]
 pub async fn engine_managed_set(
     app: AppHandle,
+    installer: State<'_, Arc<EngineInstaller>>,
     db: State<'_, Db>,
     engine: State<'_, Arc<EngineService>>,
     proc: Proc<'_>,
@@ -119,7 +149,7 @@ pub async fn engine_managed_set(
             }
         });
     }
-    view(&db, &engine, &proc).await
+    view(&app, &installer, &db, &engine, &proc).await
 }
 
 #[tauri::command]

@@ -89,6 +89,17 @@ impl crate::services::models::ModelSink for TauriSink {
     }
 }
 
+impl crate::services::engine_install::InstallSink for TauriSink {
+    fn state(&self, state: &crate::services::engine_install::InstallState) {
+        let _ = self.0.emit("engine://install-state", state);
+    }
+    fn log(&self, line: &str) {
+        let _ = self
+            .0
+            .emit("engine://install-log", serde_json::json!({ "line": line }));
+    }
+}
+
 impl crate::services::engine_process::ProcSink for TauriSink {
     fn state(&self, state: &crate::services::engine_process::EngineProcState) {
         let _ = self.0.emit("engine://proc-state", state);

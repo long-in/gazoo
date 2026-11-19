@@ -12,6 +12,8 @@ import {
   onAssistantError,
   onAssistantSuggestion,
   onEngineLog,
+  onEngineInstallLog,
+  onEngineInstallState,
   onEngineProcState,
   onEngineStatus,
   onImageCreated,
@@ -24,6 +26,7 @@ import {
 } from "@/lib/tauri/events";
 import { toAppError } from "@/lib/tauri/errors";
 import { useAssistantStore } from "@/stores/assistant-store";
+import { useEngineInstallStore } from "@/stores/engine-install-store";
 import { useEngineProcessStore } from "@/stores/engine-process-store";
 import { useEngineStore } from "@/stores/engine-store";
 import { useGalleryStore } from "@/stores/gallery-store";
@@ -160,6 +163,29 @@ function EngineProcessBootstrap() {
   return null;
 }
 
+/** ComfyUI のアプリ内インストールの状態・ログの購読(画面を移動しても取りこぼさないよう、アプリ全体で 1 回だけ)。 */
+function EngineInstallBootstrap() {
+  useEffect(() => {
+    let cancelled = false;
+    const unlisteners: (() => void)[] = [];
+    const st = () => useEngineInstallStore.getState();
+    void Promise.all([
+      onEngineInstallState((s) => st().applyState(s)),
+      onEngineInstallLog((p) => st().appendLog(p.line)),
+    ]).then((fns) => {
+      if (cancelled) fns.forEach((fn) => fn());
+      else unlisteners.push(...fns);
+    });
+    void st().load();
+    void st().loadLogs();
+    return () => {
+      cancelled = true;
+      unlisteners.forEach((fn) => fn());
+    };
+  }, []);
+  return null;
+}
+
 /**
  * モデル取得の進捗・完了イベントの購読(画面を移動しても取りこぼさないよう、アプリ全体で 1 回だけ)。
  * 完了すると、生成画面で選べるモデル一覧も取り直される(models-store)。
@@ -193,6 +219,7 @@ export function Providers({ children }: { children: ReactNode }) {
         <AssistantBootstrap />
         <ModelsBootstrap />
         <EngineProcessBootstrap />
+        <EngineInstallBootstrap />
         {children}
         <Toaster richColors />
       </TooltipProvider>
