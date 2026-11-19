@@ -1,4 +1,4 @@
-//! gazoo の機能カタログ(docs/13 §4)。AI サポートのシステムプロンプトに連結して渡す。
+//! gazooo の機能カタログ(docs/13 §4)。AI サポートのシステムプロンプトに連結して渡す。
 //!
 //! 機能を追加・変更したら、**このファイルを更新する**(docs/09 のチェックリストにも項目がある)。
 //! 画面名・ボタン名は UI の文言(`src/lib/i18n/ja.ts`)と一致させる。
@@ -15,7 +15,7 @@ use crate::services::models::catalog::{
 use crate::services::models::download::DownloadPolicy;
 
 pub const CAPABILITIES: &str = r#"
-# gazoo でできること(画面名・ボタン名はアプリの表示どおり)
+# gazooo でできること(画面名・ボタン名はアプリの表示どおり)
 - 画像生成(生成画面): プロンプト・ネガティブ・モデル種別(SD 1.5 / SDXL / Flux / Flux GGUF / Anima / Qwen-Image 2.1 / Krea 2)・サイズ・steps・CFG(Flux は guidance)・サンプラー・シード・枚数を指定して生成する。「生成」でキューに入る。
 - 顔補正(生成画面のスイッチ。SD 1.5 / SDXL のみ): 生成画像の顔を検出し、その部分だけを再生成して整える。強さ(denoise)で変化の大きさを調整する。ComfyUI に Impact Pack / Subpack と検出モデルが必要。
 - ControlNet(生成画面のスイッチ。SD 1.5 / SDXL のみ、1 つまで): 参照画像から輪郭(Canny)・深度・ポーズを取り出し、構図の条件にする。ベースモデルに合う ControlNet モデルが必要。
@@ -28,7 +28,7 @@ pub const CAPABILITIES: &str = r#"
 - アニメ系モデルの使い方: NoobAI-XL・Animagine XL 4.0 は自然な文章ではなく Danbooru タグ(1girl, solo, …)で書く。品質タグ(例: masterpiece, best quality)を入れ、ネガティブに lowres, bad anatomy, worst quality などを入れる。サイズは 832×1216 か 1024×1024、steps 28 前後、CFG 5 前後、サンプラーは euler_ancestral が目安。成人向けの表現はタグ(Animagine は rating: safe / sensitive / nsfw / explicit)で制御し、避けたいときはネガティブに nsfw を入れる。顔補正・ControlNet・Inpaint はそのまま使える。
 - AI に相談(このパネル): フォームの設定へのアドバイス。提案はユーザーが「適用」を押して初めてフォームに反映される。
 
-# gazoo にまだ無い機能(「ある」と案内しない。必要なら ComfyUI を直接使う方法を勧める)
+# gazooo にまだ無い機能(「ある」と案内しない。必要なら ComfyUI を直接使う方法を勧める)
 - LoRA、生成中のプレビュー画像、元画像からのプロンプト自動生成、画像編集モデルによる指示だけの変換、アウトペイント(キャンバスの拡張)、複数の ControlNet、動画生成。
 - Flux 系・Anima・Qwen-Image 2.1・Krea 2 では画像から生成・Inpaint・顔補正・ControlNet を使えない(SD 1.5 / SDXL のみ)。
 - あなた(AI)はアプリを操作できない。シード・ControlNet・img2img・Inpaint の画像やマスクは、提案ではなく手順を本文で説明する。モデルの切替は suggest_model で提案できる(切り替えるのはユーザーが「このモデルに切り替える」を押したとき)。
@@ -178,7 +178,7 @@ mod tests {
     #[test]
     fn unsupported_features_are_listed_and_not_claimed() {
         let (supported, unsupported) = CAPABILITIES
-            .split_once("# gazoo にまだ無い機能")
+            .split_once("# gazooo にまだ無い機能")
             .expect("セクションが分かれている");
         for name in NOT_SUPPORTED {
             assert!(!supported.contains(name), "{name} が「できること」にある");

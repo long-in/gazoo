@@ -9,7 +9,9 @@ use crate::error::{AppError, AppResult};
 
 pub const FILE_NAME: &str = "extra_model_paths.yaml";
 /// アプリが書いたファイルの印(先頭行)。
-pub const MARKER: &str = "# managed by gazoo";
+pub const MARKER: &str = "# managed by gazooo";
+/// アプリ名変更前(gazoo)の印。旧印のファイルも「アプリが書いたもの」として扱う(docs/07 Q-52b)。
+const LEGACY_MARKER: &str = "# managed by gazoo";
 
 /// ComfyUI のフォルダ名 → `base_path` からの相対位置(12 §4.2 の取得先と一致させる)。
 const SECTIONS: &[(&str, &str)] = &[
@@ -53,7 +55,7 @@ fn quote(s: &str) -> AppResult<String> {
 pub fn render(models_dir: &Path) -> AppResult<String> {
     let base = quote(&models_dir.to_string_lossy())?;
     let mut out = format!(
-        "{MARKER}\n# 設定の「ComfyUI に反映」で作成されました。手で編集しても構いませんが、印の行を消すと上書きされなくなります。\ngazoo:\n  base_path: {base}\n"
+        "{MARKER}\n# 設定の「ComfyUI に反映」で作成されました。手で編集しても構いませんが、印の行を消すと上書きされなくなります。\ngazooo:\n  base_path: {base}\n"
     );
     for (name, rel) in SECTIONS {
         out.push_str(&format!("  {name}: {rel}/\n"));
@@ -64,7 +66,10 @@ pub fn render(models_dir: &Path) -> AppResult<String> {
 /// アプリが書いたファイルか(先頭行が印)。ファイルが無ければ `None`。
 pub fn is_managed(file: &Path) -> AppResult<Option<bool>> {
     match std::fs::read_to_string(file) {
-        Ok(s) => Ok(Some(s.lines().next().is_some_and(|l| l.trim() == MARKER))),
+        Ok(s) => Ok(Some(s.lines().next().is_some_and(|l| {
+            let l = l.trim();
+            l == MARKER || l == LEGACY_MARKER
+        }))),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
         // 読めない(UTF-8 でない等)ものは、ユーザーのファイルとして扱う
         Err(_) => Ok(Some(false)),
@@ -103,7 +108,7 @@ pub fn apply(file: &Path, models_dir: &Path) -> AppResult<()> {
         return Err(foreign());
     }
     let body = render(models_dir)?;
-    let tmp = file.with_file_name(format!("{FILE_NAME}.gazoo-tmp"));
+    let tmp = file.with_file_name(format!("{FILE_NAME}.gazooo-tmp"));
     std::fs::write(&tmp, body).map_err(|e| write_failed(&e))?;
     std::fs::rename(&tmp, file).map_err(|e| {
         let _ = std::fs::remove_file(&tmp);
@@ -139,7 +144,7 @@ mod tests {
     use super::*;
 
     fn tmpdir(name: &str) -> PathBuf {
-        let d = std::env::temp_dir().join(format!("gazoo-ep-{name}-{}", uuid::Uuid::now_v7()));
+        let d = std::env::temp_dir().join(format!("gazooo-ep-{name}-{}", uuid::Uuid::now_v7()));
         std::fs::create_dir_all(&d).unwrap();
         d
     }
@@ -181,7 +186,7 @@ mod tests {
         assert!(!is_applied(&file, &engine)); // 別の保存先とは一致しない
         apply(&file, &engine).unwrap(); // 自分のファイルは更新できる
         assert!(is_applied(&file, &engine));
-        assert!(!engine.join(format!("{FILE_NAME}.gazoo-tmp")).exists());
+        assert!(!engine.join(format!("{FILE_NAME}.gazooo-tmp")).exists());
 
         clear(&file).unwrap();
         assert!(!file.exists());
@@ -216,5 +221,31 @@ mod tests {
     fn same_dir_ignores_separators() {
         assert!(same_dir(Path::new("C:\\a\\b\\"), Path::new("C:/a/b")));
         assert!(!same_dir(Path::new("C:\\a\\b"), Path::new("C:\\a\\c")));
+    }
+
+    #[test]
+    fn legacy_marker_is_still_recognised_as_managed() {
+        let d = std::env::temp_dir().join(format!("gazooo-ep-legacy-{}", uuid::Uuid::now_v7()));
+        std::fs::create_dir_all(&d).unwrap();
+        let old = d.join("old.yaml");
+        std::fs::write(
+            &old,
+            "# managed by gazoo
+gazoo:
+  base_path: x
+",
+        )
+        .unwrap();
+        assert_eq!(is_managed(&old).unwrap(), Some(true));
+        let other = d.join("other.yaml");
+        std::fs::write(
+            &other,
+            "# my own settings
+",
+        )
+        .unwrap();
+        assert_eq!(is_managed(&other).unwrap(), Some(false));
+        assert_eq!(is_managed(&d.join("none.yaml")).unwrap(), None);
+        let _ = std::fs::remove_dir_all(&d);
     }
 }

@@ -346,7 +346,7 @@ impl ModelService {
             if !dir.is_dir() {
                 return Err(AppError::validation("path", "フォルダが見つかりません"));
             }
-            let probe = dir.join(format!(".gazoo-write-test-{}", uuid::Uuid::now_v7()));
+            let probe = dir.join(format!(".gazooo-write-test-{}", uuid::Uuid::now_v7()));
             std::fs::write(&probe, b"")
                 .and_then(|()| std::fs::remove_file(&probe))
                 .map_err(|_| AppError::validation("path", "このフォルダには書き込めません"))?;

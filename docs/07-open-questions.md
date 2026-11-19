@@ -7,7 +7,7 @@
 | ID | 論点 | 選択肢 | 推奨 |
 |---|---|---|---|
 | Q-01 | **画像生成エンジンの方式** | (a) 既存 ComfyUI に HTTP/WS で接続<br>(b) アプリが ComfyUI を同梱・自動起動<br>(c) Rust 組み込み推論(stable-diffusion.cpp / candle 等) | **(a) を MVP、(b) を v0.2**。(c) は Flux 対応・GPU 最適化の工数が大きく、エンジン抽象を挟んで将来拡張 |
-| Q-02 | アプリ名 / 識別子 | 例 `gazoo` / `dev.gazoo.app` | `gazoo` / `dev.gazoo.app` → **識別子は Q-18 で `dev.gazoo.desktop` に変更** → **名称は Q-52 で `gazooo` / `dev.gazooo.desktop` に変更(レビュー待ち)** |
+| Q-02 | アプリ名 / 識別子 | 例 `gazoo` / `dev.gazoo.app` | `gazoo` / `dev.gazoo.app` → **識別子は Q-18 で `dev.gazoo.desktop` に変更** → **名称は Q-52 で `gazooo` / `dev.gazooo.desktop` に変更(承認済み・実装済み)** |
 | Q-03 | パッケージマネージャ | pnpm / npm / bun | pnpm → **npm に変更**(2026-11-18、ユーザー指示。下記 D・E 参照) |
 | Q-04 | 状態管理 | zustand / Redux 等 / TanStack Query 併用 | zustand のみ(05 §5) |
 | Q-05 | ブランチ戦略の補足 | `main` を設けるか(リリース用)/ `develop` のみ | `develop` 起点。`main` はリリース時に導入(MVP 完了時に再検討) |

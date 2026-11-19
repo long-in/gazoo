@@ -1226,7 +1226,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "gazoo"
+name = "gazooo"
 version = "0.1.0"
 dependencies = [
  "async-trait",

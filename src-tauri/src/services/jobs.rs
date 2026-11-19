@@ -685,7 +685,7 @@ mod tests {
                     });
                     Ok(vec![
                         ImageData {
-                            filename: "gazoo_00001_.png".into(),
+                            filename: "gazooo_00001_.png".into(),
                             bytes: b"PNG-1".to_vec(),
                         },
                         ImageData {
@@ -741,7 +741,7 @@ mod tests {
     }
 
     fn harness() -> Harness {
-        let dir = std::env::temp_dir().join(format!("gazoo-jobs-{}", uuid::Uuid::now_v7()));
+        let dir = std::env::temp_dir().join(format!("gazooo-jobs-{}", uuid::Uuid::now_v7()));
         let engine = Arc::new(FakeEngine::default());
         let events = Arc::new(Recorder::default());
         let svc = JobService::new(
@@ -1233,7 +1233,7 @@ mod tests {
 
     fn real_harness() -> RealHarness {
         let url = std::env::var("COMFYUI_URL").unwrap_or_else(|_| "http://127.0.0.1:8188".into());
-        let dir = std::env::temp_dir().join(format!("gazoo-real-{}", uuid::Uuid::now_v7()));
+        let dir = std::env::temp_dir().join(format!("gazooo-real-{}", uuid::Uuid::now_v7()));
         let events = Arc::new(Recorder::default());
         let svc = JobService::new(
             Db::open_in_memory().unwrap(),

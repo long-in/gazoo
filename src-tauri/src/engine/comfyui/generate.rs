@@ -29,7 +29,7 @@ impl ComfyUiClient {
     /// 参照画像を `POST /upload/image`(multipart、`type=input`)で送り、`LoadImage` に渡す名前を返す。
     /// ファイル名は UUID を含めて衝突・上書きを避ける(ComfyUI 側の input に残るファイルは削除しない)。
     pub(super) async fn upload_image(&self, png: Vec<u8>) -> AppResult<String> {
-        let filename = format!("gazoo-{}.png", uuid::Uuid::now_v7());
+        let filename = format!("gazooo-{}.png", uuid::Uuid::now_v7());
         let part = reqwest::multipart::Part::bytes(png)
             .file_name(filename)
             .mime_str("image/png")
@@ -72,7 +72,7 @@ impl ComfyUiClient {
             )));
         }
         let body = json!({
-            "prompt": workflow::build(params, "gazoo", inputs),
+            "prompt": workflow::build(params, "gazooo", inputs),
             "client_id": self.client_id,
         });
         let resp = self
@@ -284,14 +284,14 @@ mod tests {
         let m = spawn(vec![Route::post(
             "/upload/image",
             200,
-            r#"{"name":"gazoo-x.png","subfolder":"","type":"input"}"#,
+            r#"{"name":"gazooo-x.png","subfolder":"","type":"input"}"#,
         )])
         .await;
         let name = client(&m.url)
             .upload_input(b"PNGDATA".to_vec())
             .await
             .unwrap();
-        assert_eq!(name, "gazoo-x.png");
+        assert_eq!(name, "gazooo-x.png");
 
         let reqs = m.requests.lock().unwrap();
         let req = reqs
@@ -301,7 +301,7 @@ mod tests {
         assert!(req.contains("name=\"image\""), "{req}");
         assert!(req.contains("PNGDATA"));
         assert!(req.contains("name=\"type\"") && req.contains("input"));
-        assert!(req.contains("filename=\"gazoo-"), "ファイル名は UUID 入り");
+        assert!(req.contains("filename=\"gazooo-"), "ファイル名は UUID 入り");
     }
 
     #[tokio::test]
@@ -336,7 +336,7 @@ mod tests {
         assert_eq!(c.submit(&p, &[]).await.unwrap_err().code(), "INTERNAL");
         assert!(m.requests.lock().unwrap().is_empty());
 
-        let id = c.submit(&p, &["gazoo-x.png".to_string()]).await.unwrap();
+        let id = c.submit(&p, &["gazooo-x.png".to_string()]).await.unwrap();
         assert_eq!(id, "cn1");
         let reqs = m.requests.lock().unwrap();
         let body = reqs
@@ -344,7 +344,7 @@ mod tests {
             .find(|r| r.starts_with("POST /prompt "))
             .unwrap();
         assert!(body.contains("ControlNetApplyAdvanced"));
-        assert!(body.contains("gazoo-x.png"));
+        assert!(body.contains("gazooo-x.png"));
     }
 
     #[tokio::test]
@@ -570,7 +570,7 @@ mod tests {
             let mut p = sample(kind);
             p.model.name = "not-installed.safetensors".into();
             let body =
-                json!({ "prompt": workflow::build(&p, "gazoo", &[]), "client_id": c.client_id });
+                json!({ "prompt": workflow::build(&p, "gazooo", &[]), "client_id": c.client_id });
             let resp = c
                 .http
                 .post(format!("{}/prompt", c.base))
@@ -1130,7 +1130,7 @@ mod tests {
             let mut p = real_sd15_params(8, 1);
             p.controlnet = Some(cn_unit("definitely-not-installed.safetensors", pre));
             let body = json!({
-                "prompt": workflow::build(&p, "gazoo", std::slice::from_ref(&name)),
+                "prompt": workflow::build(&p, "gazooo", std::slice::from_ref(&name)),
                 "client_id": c.client_id,
             });
             let v: Value = c

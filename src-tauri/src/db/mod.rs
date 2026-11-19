@@ -79,7 +79,7 @@ fn configure(conn: &Connection) -> AppResult<()> {
     Ok(())
 }
 
-/// 既存 DB のスキーマが古い場合、マイグレーション前に `gazoo.db.bak-<version>` を作る。
+/// 既存 DB のスキーマが古い場合、マイグレーション前に `gazooo.db.bak-<version>` を作る。
 fn backup_before_migration(conn: &Connection, path: &Path) -> AppResult<()> {
     let current: u32 = conn.query_row("PRAGMA user_version", [], |r| r.get(0))?;
     if current == 0 || current as usize >= MIGRATION_SLICE.len() {
@@ -154,8 +154,8 @@ mod tests {
 
     #[test]
     fn file_db_uses_wal_and_persists() {
-        let dir = std::env::temp_dir().join(format!("gazoo-test-{}", uuid::Uuid::now_v7()));
-        let path = dir.join("gazoo.db");
+        let dir = std::env::temp_dir().join(format!("gazooo-test-{}", uuid::Uuid::now_v7()));
+        let path = dir.join("gazooo.db");
         {
             let db = Db::open(&path).unwrap();
             let mode: String = db

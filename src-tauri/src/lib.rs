@@ -61,7 +61,7 @@ pub fn run() {
             std::fs::create_dir_all(&data_dir)?;
             std::fs::create_dir_all(&log_dir)?;
 
-            let appender = tracing_appender::rolling::daily(&log_dir, "gazoo.log");
+            let appender = tracing_appender::rolling::daily(&log_dir, "gazooo.log");
             let (writer, guard) = tracing_appender::non_blocking(appender);
             tracing_subscriber::fmt()
                 .with_writer(writer)
@@ -70,7 +70,7 @@ pub fn run() {
                 .init();
             app.manage(LogGuard(guard));
 
-            let db = Db::open(&data_dir.join("gazoo.db"))?;
+            let db = Db::open(&data_dir.join("gazooo.db"))?;
             let paths = AppPaths { data_dir };
 
             // 画像保存先を asset プロトコルのスコープに許可する(それ以外は読めない)
@@ -158,7 +158,7 @@ pub fn run() {
                 jobs.run_worker().await;
             });
 
-            tracing::info!("gazoo started");
+            tracing::info!("gazooo started");
             app.manage(db);
             app.manage(paths);
             Ok(())

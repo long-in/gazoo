@@ -1,8 +1,8 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
-  "productName": "gazoo",
+  "productName": "gazooo",
   "version": "0.1.0",
-  "identifier": "dev.gazoo.desktop",
+  "identifier": "dev.gazooo.desktop",
   "build": {
     "frontendDist": "../out",
     "devUrl": "http://localhost:3000",
@@ -13,7 +13,7 @@
     "windows": [
       {
         "label": "main",
-        "title": "gazoo",
+        "title": "gazooo",
         "width": 1280,
         "height": 800,
         "minWidth": 960,
@@ -60,7 +60,7 @@
     },
     "category": "GraphicsAndDesign",
     "shortDescription": "Local image generation desktop app",
-    "longDescription": "gazoo is a desktop app for generating images locally with Stable Diffusion and Flux.1 via ComfyUI, and managing the results in a searchable gallery.",
+    "longDescription": "gazooo is a desktop app for generating images locally with Stable Diffusion and Flux.1 via ComfyUI, and managing the results in a searchable gallery.",
     "macOS": {
       "minimumSystemVersion": "13.0",
       "signingIdentity": "-"

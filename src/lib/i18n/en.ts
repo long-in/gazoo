@@ -1,7 +1,7 @@
 import type { MessageKey } from "./ja";
 
 export const en: Record<MessageKey, string> = {
-  "app.name": "gazoo",
+  "app.name": "gazooo",
   "nav.generate": "Generate",
   "nav.gallery": "Gallery",
   "nav.queue": "Queue",
@@ -506,7 +506,7 @@ export const en: Record<MessageKey, string> = {
   "nav.models": "Models",
   "models.title": "Get models",
   "models.desc": "Download the models you need from their source and place them in ComfyUI's models folder. When a model comes in several versions, choose the one you want.",
-  "models.net.notice": "gazoo connects to the source (Hugging Face) only when you press Download. A file is placed only if it matches its pinned hash.",
+  "models.net.notice": "gazooo connects to the source (Hugging Face) only when you press Download. A file is placed only if it matches its pinned hash.",
   "models.loading": "Loading…",
   "models.loadFailed": "Could not load the model list",
   "models.dir.label": "Destination (ComfyUI models folder)",

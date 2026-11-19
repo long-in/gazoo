@@ -2,5 +2,5 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 fn main() {
-    gazoo_lib::run();
+    gazooo_lib::run();
 }

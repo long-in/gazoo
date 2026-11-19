@@ -52,7 +52,7 @@ struct TmpDir(PathBuf);
 
 impl TmpDir {
     fn new() -> Self {
-        let p = std::env::temp_dir().join(format!("gazoo-models-{}", uuid::Uuid::now_v7()));
+        let p = std::env::temp_dir().join(format!("gazooo-models-{}", uuid::Uuid::now_v7()));
         std::fs::create_dir_all(&p).unwrap();
         Self(p)
     }

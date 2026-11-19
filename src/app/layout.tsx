@@ -6,7 +6,7 @@ import { Providers } from "@/components/providers";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "gazoo",
+  title: "gazooo",
   description: "Local image generation desktop app",
 };
 

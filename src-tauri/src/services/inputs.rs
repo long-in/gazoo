@@ -253,7 +253,7 @@ mod tests {
     use crate::services::thumbs::png_bytes;
 
     fn temp_root() -> PathBuf {
-        std::env::temp_dir().join(format!("gazoo-inputs-{}", uuid::Uuid::now_v7()))
+        std::env::temp_dir().join(format!("gazooo-inputs-{}", uuid::Uuid::now_v7()))
     }
 
     fn jpeg_bytes(w: u32, h: u32) -> Vec<u8> {

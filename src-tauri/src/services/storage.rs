@@ -189,7 +189,7 @@ impl StorageService {
         let probe_root = new_root.clone();
         tokio::task::spawn_blocking(move || -> AppResult<()> {
             std::fs::create_dir_all(&probe_root).map_err(|e| storage_err(&probe_root, e))?;
-            let probe = probe_root.join(format!(".gazoo-write-test-{}", uuid::Uuid::now_v7()));
+            let probe = probe_root.join(format!(".gazooo-write-test-{}", uuid::Uuid::now_v7()));
             std::fs::write(&probe, b"").map_err(|_| {
                 AppError::validation(
                     "newDir",
@@ -268,7 +268,7 @@ mod tests {
     }
 
     fn harness() -> Harness {
-        let dir = std::env::temp_dir().join(format!("gazoo-storage-{}", uuid::Uuid::now_v7()));
+        let dir = std::env::temp_dir().join(format!("gazooo-storage-{}", uuid::Uuid::now_v7()));
         let db = Db::open_in_memory().unwrap();
         let trash = Arc::new(FakeTrash::default());
         let paths = AppPaths {

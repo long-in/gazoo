@@ -1,5 +1,5 @@
 export const ja = {
-  "app.name": "gazoo",
+  "app.name": "gazooo",
   "nav.generate": "生成",
   "nav.gallery": "ギャラリー",
   "nav.queue": "キュー",

@@ -22,7 +22,7 @@ const MAX_REASON_CHARS: usize = 300;
 /// 導入済みとして受け付けるファミリー ID の最大数(カタログの大きさに比べて十分に大きい上限)。
 const MAX_INSTALLED_FAMILIES: usize = 64;
 
-pub const SYSTEM_PROMPT: &str = r#"あなたは、ローカル画像生成アプリ「gazoo」に組み込まれた、画像生成の設定アドバイザーです。
+pub const SYSTEM_PROMPT: &str = r#"あなたは、ローカル画像生成アプリ「gazooo」に組み込まれた、画像生成の設定アドバイザーです。
 画像生成エンジンは ComfyUI(Stable Diffusion 1.5 / SDXL / Flux)で、ユーザーは生成フォームの設定について相談します。
 
 # 守ること
