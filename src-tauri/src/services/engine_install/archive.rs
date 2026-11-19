@@ -37,6 +37,10 @@ fn safe_relative(path: &Path, strip: usize) -> AppResult<Option<PathBuf>> {
     let mut parts = Vec::new();
     for c in path.components() {
         match c {
+            // `C:` のようなドライブ指定は、OS によって通常の名前として通ってしまうので、どの OS でも拒否する
+            Component::Normal(p) if p.to_string_lossy().contains(':') => {
+                return Err(unsafe_archive(&path.to_string_lossy()));
+            }
             Component::Normal(p) => parts.push(p.to_os_string()),
             Component::CurDir => {}
             _ => return Err(unsafe_archive(&path.to_string_lossy())),

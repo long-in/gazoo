@@ -166,7 +166,7 @@ function InstallWizard({ onOpenChange }: { onOpenChange: (o: boolean) => void })
   const [gpuOk, setGpuOk] = useState(false);
   const [starting, setStarting] = useState(false);
 
-  const components = view?.components ?? [];
+  const components = useMemo(() => view?.components ?? [], [view?.components]);
   // 既定はすべてオン。導入済みなら、導入した構成を初期値にする
   const ids = useMemo(
     () => selected ?? view?.record?.components ?? components.map((c) => c.id),
