@@ -13,7 +13,7 @@ import type {
 /** ベースモデルによる絞り込み。`all` は絞り込まない。 */
 export type BaseFilter = "all" | BaseModel;
 
-export const CATEGORIES: ModelCategory[] = ["checkpoint", "controlnet", "detector"];
+export const CATEGORIES: ModelCategory[] = ["checkpoint", "controlnet", "detector", "flux"];
 
 export const variantKey = (familyId: string, variantId: string) => `${familyId}/${variantId}`;
 

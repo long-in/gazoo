@@ -1,7 +1,7 @@
 "use client";
 
 import { save } from "@tauri-apps/plugin-dialog";
-import { Copy, Download, FolderOpen, ImagePlus, Sparkles, Star, Trash2 } from "lucide-react";
+import { Brush, Copy, Download, FolderOpen, ImagePlus, Sparkles, Star, Trash2 } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
@@ -15,6 +15,7 @@ import {
   SheetHeader,
   SheetTitle,
 } from "@/components/ui/sheet";
+import { supportsInpaint } from "@/lib/generation/defaults";
 import { useErrorMessage, useT } from "@/lib/i18n/use-t";
 import { toAppError } from "@/lib/tauri/errors";
 import { type ImageDetail, imageExport, imageGet, imageReveal } from "@/lib/tauri/images";
@@ -102,6 +103,25 @@ export function ImageDetailSheet({ id, onClose }: { id: string | null; onClose: 
     }
   }
 
+  /** この画像を Inpaint の参照画像として生成画面に設定する(マスクは生成画面で描く)。 */
+  async function setAsInpaint() {
+    if (!image) return;
+    try {
+      const input = await inputImageFromGallery(image.id);
+      const form = useFormStore.getState();
+      form.setInpaintImage(input.path, input.width, input.height);
+      if (supportsInpaint(form.params.model.kind)) {
+        form.setInpaintEnabled(true);
+        toast.success(t("gallery.inpaintSet"));
+      } else {
+        toast.info(t("gallery.inpaintFlux"));
+      }
+      router.push("/");
+    } catch (e) {
+      toast.error(errorMessage(toAppError(e)));
+    }
+  }
+
   return (
     <>
       <Sheet open={id !== null} onOpenChange={(open) => !open && onClose()}>
@@ -131,6 +151,10 @@ export function ImageDetailSheet({ id, onClose }: { id: string | null; onClose: 
                 <Button type="button" variant="outline" onClick={() => void setAsReference()}>
                   <ImagePlus />
                   {t("gallery.useAsReference")}
+                </Button>
+                <Button type="button" variant="outline" onClick={() => void setAsInpaint()}>
+                  <Brush />
+                  {t("gallery.useAsInpaint")}
                 </Button>
                 <Button
                   type="button"
@@ -190,6 +214,14 @@ export function ImageDetailSheet({ id, onClose }: { id: string | null; onClose: 
                     <dd className="break-all">
                       {params.controlnet.units[0].preprocessor} · {params.controlnet.units[0].model} ·{" "}
                       {params.controlnet.units[0].strength}
+                    </dd>
+                  </>
+                )}
+                {params.inpaint?.enabled && (
+                  <>
+                    <dt className="text-muted-foreground">{t("gallery.params.inpaint")}</dt>
+                    <dd>
+                      denoise {params.inpaint.denoise} · grow {params.inpaint.growMask} · blur {params.inpaint.feather}
                     </dd>
                   </>
                 )}

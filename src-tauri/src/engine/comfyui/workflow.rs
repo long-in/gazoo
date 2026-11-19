@@ -4,7 +4,7 @@
 use serde_json::{Value, json};
 
 use crate::domain::params::{
-    ControlnetUnit, FaceDetailerParams, GenerationParams, ModelKind, Preprocessor,
+    ControlnetUnit, FaceDetailerParams, GenerationParams, InpaintParams, ModelKind, Preprocessor,
 };
 
 /// 顔補正(`FaceDetailer`)のノード ID。進捗の段階判定(generate.rs)でも使う。
@@ -76,10 +76,131 @@ fn build_sd(p: &GenerationParams, prefix: &str, control_images: &[String]) -> Va
     }
     // ControlNet は本体のサンプリングにだけ効かせる(顔補正は元の conditioning を使う)
     add_controlnet(&mut wf, p, control_images);
+    if let Some(ip) = p.active_inpaint() {
+        // 画像の並びは ControlNet のユニットの後ろ: [画像, マスク]
+        let n = p.active_controlnet_units().len();
+        let name = |i: usize| control_images.get(n + i).cloned().unwrap_or_default();
+        add_inpaint(&mut wf, p, ip, &vae_link, &name(0), &name(1));
+    }
     if let Some(fd) = p.active_face_detailer() {
         add_face_detailer(&mut wf, p, fd, &vae_link);
     }
     wf
+}
+
+/// Inpaint の最初のノード ID(ControlNet の 30〜、顔補正の 20〜22 と重ならない)。
+const INPAINT_BASE: usize = 60;
+
+/// 参照画像を VAE エンコードして、マスク範囲だけをサンプリングし直す(docs/13 §3.3)。
+/// マスクは生成サイズへ合わせ、拡張・ぼかしを掛ける。結果は元画像へ合成し直せる。
+/// コアノードだけで組む。
+fn add_inpaint(
+    wf: &mut Value,
+    p: &GenerationParams,
+    ip: &InpaintParams,
+    vae: &Value,
+    image: &str,
+    mask: &str,
+) {
+    let id = |k: usize| (INPAINT_BASE + k).to_string();
+    let batch = p.batch_size;
+
+    // 参照画像(生成サイズ。比率が違っても引き伸ばして全体を使う)
+    wf[id(0)] = node("LoadImage", json!({ "image": image }));
+    wf[id(1)] = node(
+        "ImageScale",
+        json!({
+            "image": link(&id(0), 0),
+            "upscale_method": "lanczos",
+            "width": p.width,
+            "height": p.height,
+            "crop": "disabled",
+        }),
+    );
+    wf[id(2)] = node(
+        "VAEEncode",
+        json!({ "pixels": link(&id(1), 0), "vae": vae }),
+    );
+    let mut latent = link(&id(2), 0);
+    if batch > 1 {
+        wf[id(3)] = node(
+            "RepeatLatentBatch",
+            json!({ "samples": latent, "amount": batch }),
+        );
+        latent = link(&id(3), 0);
+    }
+
+    // マスク: 生成サイズへ → 拡張 → ぼかし
+    wf[id(4)] = node("LoadImageMask", json!({ "image": mask, "channel": "red" }));
+    wf[id(5)] = node("MaskToImage", json!({ "mask": link(&id(4), 0) }));
+    wf[id(6)] = node(
+        "ImageScale",
+        json!({
+            "image": link(&id(5), 0),
+            "upscale_method": "bilinear",
+            "width": p.width,
+            "height": p.height,
+            "crop": "disabled",
+        }),
+    );
+    wf[id(7)] = node(
+        "ImageToMask",
+        json!({ "image": link(&id(6), 0), "channel": "red" }),
+    );
+    let mut mask_link = link(&id(7), 0);
+    if ip.grow_mask > 0 {
+        wf[id(8)] = node(
+            "GrowMask",
+            json!({ "mask": mask_link, "expand": ip.grow_mask, "tapered_corners": true }),
+        );
+        mask_link = link(&id(8), 0);
+    }
+    if ip.feather > 0 {
+        wf[id(9)] = node("MaskToImage", json!({ "mask": mask_link }));
+        wf[id(10)] = node(
+            "ImageBlur",
+            json!({
+                "image": link(&id(9), 0),
+                "blur_radius": ip.feather,
+                "sigma": (f64::from(ip.feather) / 2.0).clamp(0.1, 10.0),
+            }),
+        );
+        wf[id(11)] = node(
+            "ImageToMask",
+            json!({ "image": link(&id(10), 0), "channel": "red" }),
+        );
+        mask_link = link(&id(11), 0);
+    }
+    wf[id(12)] = node(
+        "SetLatentNoiseMask",
+        json!({ "samples": latent, "mask": mask_link }),
+    );
+    wf["5"]["inputs"]["latent_image"] = link(&id(12), 0);
+    wf["5"]["inputs"]["denoise"] = json!(ip.denoise);
+
+    // 元画像への合成(マスク外を元画像と一致させる)
+    if ip.composite_back {
+        let mut dest = link(&id(1), 0);
+        if batch > 1 {
+            wf[id(13)] = node(
+                "RepeatImageBatch",
+                json!({ "image": dest, "amount": batch }),
+            );
+            dest = link(&id(13), 0);
+        }
+        wf[id(14)] = node(
+            "ImageCompositeMasked",
+            json!({
+                "destination": dest,
+                "source": link("6", 0),
+                "x": 0,
+                "y": 0,
+                "resize_source": false,
+                "mask": mask_link,
+            }),
+        );
+        wf["8"]["inputs"]["images"] = link(&id(14), 0);
+    }
 }
 
 /// 参照画像を生成サイズへ中央クロップでリサイズし、前処理を通して ControlNet を適用する。
@@ -542,6 +663,100 @@ mod tests {
         p.height = 512;
         assert_eq!(build(&p, "gazoo", &[]), plain);
         assert!(!classes(&plain).contains(&"ControlNetApplyAdvanced"));
+    }
+
+    fn inpaint_params(kind: ModelKind) -> GenerationParams {
+        let mut p = sample(kind);
+        p.inpaint = Some(InpaintParams {
+            enabled: true,
+            image: "inputs/a.png".into(),
+            mask: "inputs/m.png".into(),
+            denoise: 0.65,
+            grow_mask: 8,
+            feather: 8,
+            composite_back: true,
+        });
+        p
+    }
+
+    const INP: [&str; 2] = ["img.png", "mask.png"];
+
+    #[test]
+    fn inpaint_resamples_only_the_masked_latent_and_composites_back() {
+        for kind in [ModelKind::Sd15, ModelKind::Sdxl] {
+            let wf = build(&inpaint_params(kind), "gazoo", &INP.map(String::from));
+            assert_well_formed(&wf);
+            assert_eq!(wf["60"]["inputs"]["image"], "img.png");
+            assert_eq!(wf["64"]["inputs"]["image"], "mask.png");
+            assert_eq!(class_of(&wf, "62"), "VAEEncode");
+            assert_eq!(wf["62"]["inputs"]["vae"], json!(["1", 2]));
+            // KSampler は、ノイズマスク付きの潜在と inpaint の denoise を使う
+            let ks = &wf["5"]["inputs"];
+            assert_eq!(ks["latent_image"], json!(["72", 0]));
+            assert_eq!(ks["denoise"], 0.65);
+            assert_eq!(class_of(&wf, "72"), "SetLatentNoiseMask");
+            assert_eq!(wf["72"]["inputs"]["samples"], json!(["62", 0]));
+            // 拡張とぼかしを経たマスクを使う
+            assert_eq!(wf["8"]["inputs"]["images"], json!(["74", 0]));
+            let comp = &wf["74"]["inputs"];
+            assert_eq!(class_of(&wf, "74"), "ImageCompositeMasked");
+            assert_eq!(comp["destination"], json!(["61", 0]));
+            assert_eq!(comp["source"], json!(["6", 0]));
+            assert_eq!(comp["mask"], json!(["71", 0]));
+            assert_eq!(wf["68"]["inputs"]["expand"], 8);
+            assert_eq!(wf["70"]["inputs"]["blur_radius"], 8);
+        }
+    }
+
+    #[test]
+    fn inpaint_options_drop_unneeded_nodes() {
+        let mut p = inpaint_params(ModelKind::Sd15);
+        let ip = p.inpaint.as_mut().unwrap();
+        ip.grow_mask = 0;
+        ip.feather = 0;
+        ip.composite_back = false;
+        let wf = build(&p, "gazoo", &INP.map(String::from));
+        assert_well_formed(&wf);
+        for id in ["68", "69", "70", "71", "73", "74"] {
+            assert!(wf.get(id).is_none(), "{id}");
+        }
+        assert_eq!(wf["72"]["inputs"]["mask"], json!(["67", 0]));
+        // 合成しないので、保存されるのは VAEDecode の出力
+        assert_eq!(wf["8"]["inputs"]["images"], json!(["6", 0]));
+    }
+
+    #[test]
+    fn inpaint_repeats_latent_and_destination_for_batches() {
+        let mut p = inpaint_params(ModelKind::Sd15);
+        p.batch_size = 3;
+        let wf = build(&p, "gazoo", &INP.map(String::from));
+        assert_well_formed(&wf);
+        assert_eq!(wf["63"]["inputs"]["amount"], 3);
+        assert_eq!(wf["72"]["inputs"]["samples"], json!(["63", 0]));
+        assert_eq!(wf["73"]["inputs"]["amount"], 3);
+        assert_eq!(wf["74"]["inputs"]["destination"], json!(["73", 0]));
+    }
+
+    #[test]
+    fn inpaint_images_follow_controlnet_images() {
+        let mut p = cn_params(ModelKind::Sd15, Preprocessor::Canny);
+        p.inpaint = inpaint_params(ModelKind::Sd15).inpaint;
+        let imgs = ["cn.png", "img.png", "mask.png"].map(String::from);
+        let wf = build(&p, "gazoo", &imgs);
+        assert_well_formed(&wf);
+        assert_eq!(wf["30"]["inputs"]["image"], "cn.png");
+        assert_eq!(wf["60"]["inputs"]["image"], "img.png");
+        assert_eq!(wf["64"]["inputs"]["image"], "mask.png");
+        // ControlNet の条件付けと両立する
+        assert_eq!(wf["5"]["inputs"]["positive"], json!(["34", 0]));
+    }
+
+    #[test]
+    fn disabled_inpaint_leaves_workflow_unchanged() {
+        let plain = build(&sample(ModelKind::Sd15), "gazoo", &[]);
+        let mut p = inpaint_params(ModelKind::Sd15);
+        p.inpaint.as_mut().unwrap().enabled = false;
+        assert_eq!(build(&p, "gazoo", &[]), plain);
     }
 
     #[test]

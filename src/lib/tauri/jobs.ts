@@ -45,6 +45,22 @@ export interface ControlnetParams {
   units: ControlnetUnit[];
 }
 
+/** Inpaint(docs/13 §3.2)。SD 1.5 / SDXL のみ。顔補正とは同時に使えない。 */
+export interface InpaintParams {
+  enabled: boolean;
+  /** 参照画像("inputs/<uuid>.png")。 */
+  image: string;
+  /** マスク("inputs/<uuid>.png"。白 = 描き直す範囲)。 */
+  mask: string;
+  /** 0.05〜1 */
+  denoise: number;
+  /** 0〜64 px */
+  growMask: number;
+  /** 0〜31 px */
+  feather: number;
+  compositeBack: boolean;
+}
+
 /** docs/03-data-model.md の params_json と同一。 */
 export interface GenerationParams {
   schemaVersion: number;
@@ -65,6 +81,8 @@ export interface GenerationParams {
   faceDetailer?: FaceDetailerParams;
   /** 無ければ ControlNet は無効。 */
   controlnet?: ControlnetParams;
+  /** 無ければ Inpaint は無効。 */
+  inpaint?: InpaintParams;
 }
 
 export type JobStatus = "queued" | "running" | "completed" | "failed" | "cancelled";

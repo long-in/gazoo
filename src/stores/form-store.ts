@@ -11,6 +11,7 @@ import {
   supportsControlnet,
   switchKind,
 } from "@/lib/generation/defaults";
+import { defaultInpaint, sizeForImage } from "@/lib/generation/inpaint";
 import { applyChanges, usableChanges } from "@/lib/generation/suggestions";
 import type { SuggestedChanges } from "@/lib/tauri/assistant";
 import type { EngineModels } from "@/lib/tauri/engine";
@@ -18,6 +19,7 @@ import type {
   ControlnetUnit,
   FaceDetailerParams,
   GenerationParams,
+  InpaintParams,
   ModelKind,
   ModelSpec,
 } from "@/lib/tauri/jobs";
@@ -41,6 +43,11 @@ interface FormState {
   patchControlnetUnit: (patch: Partial<ControlnetUnit>, controlnets?: string[]) => void;
   /** 参照画像を設定して ControlNet を有効にする(非対応の種別では無効のまま。有効にできたかを返す)。 */
   setReferenceImage: (path: string, controlnets?: string[]) => boolean;
+  /** Inpaint を切り替える。有効にすると顔補正は無効にする(同時に使えない。docs/13 §3.2)。 */
+  setInpaintEnabled: (enabled: boolean) => void;
+  patchInpaint: (patch: Partial<InpaintParams>) => void;
+  /** Inpaint の参照画像を設定する。生成サイズを画像に合わせ、前のマスクは捨てる。 */
+  setInpaintImage: (path: string, width: number, height: number) => void;
   setKind: (kind: ModelKind) => void;
   setCount: (count: number) => void;
   /** ギャラリーの「この設定で生成」: 画像のパラメータをフォームに読み込む(シードは固定して再現する)。 */
@@ -96,6 +103,31 @@ export const useFormStore = create<FormState>((set, get) => ({
     get().setControlnetEnabled(enabled);
     return enabled;
   },
+
+  setInpaintEnabled: (enabled) =>
+    set((s) => ({
+      params: {
+        ...s.params,
+        inpaint: { ...(s.params.inpaint ?? defaultInpaint()), enabled },
+        ...(enabled && s.params.faceDetailer && { faceDetailer: { ...s.params.faceDetailer, enabled: false } }),
+      },
+    })),
+
+  patchInpaint: (patch) =>
+    set((s) => ({ params: { ...s.params, inpaint: { ...(s.params.inpaint ?? defaultInpaint()), ...patch } } })),
+
+  setInpaintImage: (path, width, height) =>
+    set((s) => {
+      const size = sizeForImage(width, height);
+      return {
+        params: {
+          ...s.params,
+          width: size.width,
+          height: size.height,
+          inpaint: { ...(s.params.inpaint ?? defaultInpaint()), image: path, mask: "" },
+        },
+      };
+    }),
 
   setKind: (kind) => set((s) => ({ params: switchKind(s.params, kind) })),
 

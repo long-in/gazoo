@@ -29,6 +29,21 @@ const NODE_OPENPOSE: &str = "OpenposePreprocessor";
 const NODE_FACE_DETAILER: &str = "FaceDetailer";
 const NODE_FACE_DETECTOR: &str = "UltralyticsDetectorProvider";
 
+/// Inpaint のワークフロー(workflow.rs の `add_inpaint`)が使うコアノード。
+const INPAINT_NODES: [&str; 11] = [
+    "LoadImageMask",
+    "MaskToImage",
+    "ImageToMask",
+    "GrowMask",
+    "ImageBlur",
+    "ImageScale",
+    "VAEEncode",
+    "SetLatentNoiseMask",
+    "RepeatLatentBatch",
+    "RepeatImageBatch",
+    "ImageCompositeMasked",
+];
+
 pub struct ComfyUiClient {
     base: String,
     http: reqwest::Client,
@@ -153,6 +168,15 @@ impl GenerationEngine for ComfyUiClient {
         .map(|(kind, _, _)| kind)
         .collect();
 
+        // Inpaint はコアノードだけで組む。すべて揃っているときだけ使える
+        let inpaint = {
+            let infos = futures_util::future::join_all(INPAINT_NODES.iter().map(|n| async move {
+                matches!(self.node_info(n).await, Ok(i) if parse::has_node(&i, n))
+            }))
+            .await;
+            infos.into_iter().all(|ok| ok)
+        };
+
         Ok(EngineStatus {
             connected: true,
             url: self.url(),
@@ -163,6 +187,7 @@ impl GenerationEngine for ComfyUiClient {
                 gguf_node,
                 face_detailer,
                 controlnet_preprocessors,
+                inpaint,
             },
             error: None,
         })

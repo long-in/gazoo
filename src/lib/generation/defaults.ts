@@ -4,9 +4,12 @@ import type {
   ControlnetUnit,
   FaceDetailerParams,
   GenerationParams,
+  InpaintParams,
   ModelKind,
   Preprocessor,
 } from "@/lib/tauri/jobs";
+
+import { defaultInpaint } from "./inpaint";
 
 export const MODEL_KINDS: ModelKind[] = ["sd15", "sdxl", "flux", "flux_gguf"];
 
@@ -56,6 +59,9 @@ export function defaultControlnet(): ControlnetParams {
 /** ControlNet に対応するモデル種別(SD 1.5 / SDXL)。 */
 export const supportsControlnet = (kind: ModelKind) => !isFlux(kind);
 
+/** Inpaint に対応するモデル種別(SD 1.5 / SDXL)。 */
+export const supportsInpaint = (kind: ModelKind) => !isFlux(kind);
+
 const MODEL_HINT: Record<Preprocessor, RegExp | undefined> = {
   canny: /canny/i,
   depth: /depth/i,
@@ -93,6 +99,10 @@ export function switchKind(current: GenerationParams, kind: ModelKind): Generati
     // ControlNet も同様(参照画像などの設定は残し、非対応の種別では無効にする)
     ...(current.controlnet && {
       controlnet: { ...current.controlnet, enabled: current.controlnet.enabled && supportsControlnet(kind) },
+    }),
+    // Inpaint も同様(参照画像・マスクは残し、非対応の種別では無効にする)
+    ...(current.inpaint && {
+      inpaint: { ...current.inpaint, enabled: current.inpaint.enabled && supportsInpaint(kind) },
     }),
   };
 }
@@ -185,6 +195,7 @@ export function restoreParams(saved: Partial<GenerationParams> | null | undefine
         units: (saved.controlnet.units ?? []).slice(0, 1).map((u) => ({ ...defaultControlnetUnit(), ...u })),
       },
     }),
+    ...(saved.inpaint && { inpaint: { ...defaultInpaint(), ...saved.inpaint } satisfies InpaintParams }),
   };
 }
 

@@ -472,3 +472,42 @@ async fn real_huggingface_download_of_the_smallest_model() {
         placed.display()
     );
 }
+
+/// 実機検証: Flux の VAE(約 335MB)を、認証不要のミラー(Comfy-Org)から取得できるか。
+/// 公式(Black Forest Labs)の `ae.safetensors` と同一の SHA-256 であることは、取得後の照合で確かめられる。
+#[tokio::test]
+#[ignore = "外部ネットワークに接続する(Hugging Face。約 335MB)"]
+async fn real_huggingface_flux_vae_matches_the_official_hash() {
+    let policy = DownloadPolicy::production();
+    let catalog = Catalog::embedded(&policy).unwrap();
+    let sink = Arc::new(TestSink::default());
+    let svc = ModelService::new(
+        Db::open_in_memory().unwrap(),
+        Arc::new(EngineService::new("http://127.0.0.1:1").unwrap()),
+        Arc::new(catalog),
+        policy,
+        Arc::clone(&sink) as Arc<dyn ModelSink>,
+    )
+    .unwrap();
+    let models = TmpDir::new();
+    svc.set_dir(Some(models.0.to_string_lossy().into_owned()))
+        .await
+        .unwrap();
+    tokio::spawn(Arc::clone(&svc).run_worker());
+
+    svc.start("flux-vae", "ae", false).await.unwrap();
+    let done = tokio::time::timeout(Duration::from_secs(600), async {
+        loop {
+            if let Some(d) = sink.done_states().first() {
+                return d.clone();
+            }
+            tokio::time::sleep(Duration::from_millis(200)).await;
+        }
+    })
+    .await
+    .expect("実際のダウンロードが終わらない");
+
+    assert_eq!(done.status, Status::Done, "{:?}", done.error);
+    assert!(models.0.join("vae").join("ae.safetensors").is_file());
+    assert!(svc.verify("flux-vae", "ae").await.unwrap());
+}

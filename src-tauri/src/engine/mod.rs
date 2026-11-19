@@ -28,6 +28,8 @@ pub struct EngineFeatures {
     pub face_detailer: bool,
     /// 利用できる ControlNet の前処理(`Preprocessor::None` は含めない。docs/10 §3)。
     pub controlnet_preprocessors: Vec<Preprocessor>,
+    /// Inpaint に必要なコアノードがすべて使えるか(docs/13 §3.3)。
+    pub inpaint: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]

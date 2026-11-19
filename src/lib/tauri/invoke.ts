@@ -5,7 +5,7 @@ import { type AppError, toAppError } from "./errors";
 /** Tauri コマンド呼び出しの唯一の入口。失敗時は常に `AppError` を throw する。 */
 export async function invoke<T>(
   command: string,
-  args?: Record<string, unknown>,
+  args?: Record<string, unknown> | Uint8Array,
 ): Promise<T> {
   if (!isTauri()) {
     const err: AppError = {

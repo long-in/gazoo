@@ -109,6 +109,7 @@ CREATE TABLE settings (
 - `preprocessor`: `canny | depth | openpose | none`。`units` は 0〜1 件(v0.2)。
 - `controlnet.units[].image` は **画像保存先からの相対パス**(`/` 区切り)。
 - 両フィールドとも `sd15` / `sdxl` のときのみ指定できる(検証は 10 §7)。
+- v0.5: `inpaint: { enabled, image, mask, denoise, growMask, feather, compositeBack }`(13 §3.2)。`image` / `mask` は `inputs/<uuid>.png`。`sd15` / `sdxl` のみ、`faceDetailer` とは同時に有効にできない。`params_json` の拡張のみでマイグレーションは不要。
 
 - `model.kind`: `sd15 | sdxl | flux | flux_gguf`。種別ごとに使われるフィールドが異なる(Flux は `cfg=1.0` 固定で `guidance` を使用、ネガティブ不使用)。
 - `schemaVersion` により後方互換を管理。未知フィールドは保持する。

@@ -151,3 +151,53 @@ describe("applySuggestion / undoSuggestion", () => {
     expect(useFormStore.getState().suggestionUndo).toBeNull();
   });
 });
+
+describe("inpaint", () => {
+  beforeEach(() => {
+    useFormStore.setState({ params: defaultParams("sdxl"), suggestionUndo: null });
+  });
+
+  it("setInpaintImage adopts the image size (64-multiples) and drops the previous mask", () => {
+    const s = useFormStore.getState();
+    s.patchInpaint({ mask: "inputs/old-mask.png" });
+    s.setInpaintImage("inputs/a.png", 1000, 600);
+    const p = useFormStore.getState().params;
+    expect([p.width, p.height]).toEqual([1024, 576]);
+    expect(p.inpaint).toMatchObject({ image: "inputs/a.png", mask: "" });
+  });
+
+  it("enabling inpaint turns face fix off (they cannot be combined)", () => {
+    const s = useFormStore.getState();
+    s.patchFace({ enabled: true, detector: "bbox/face.pt" });
+    s.setInpaintEnabled(true);
+    const p = useFormStore.getState().params;
+    expect(p.inpaint?.enabled).toBe(true);
+    expect(p.faceDetailer).toMatchObject({ enabled: false, detector: "bbox/face.pt" });
+  });
+
+  it("switching to Flux disables inpaint but keeps its settings", () => {
+    const s = useFormStore.getState();
+    s.setInpaintImage("inputs/a.png", 512, 512);
+    s.patchInpaint({ mask: "inputs/m.png" });
+    s.setInpaintEnabled(true);
+    s.setKind("flux");
+    expect(useFormStore.getState().params.inpaint).toMatchObject({
+      enabled: false,
+      image: "inputs/a.png",
+      mask: "inputs/m.png",
+    });
+  });
+
+  it("restores saved inpaint settings over the defaults", () => {
+    useFormStore.getState().applyPreset({ ...defaultParams("sdxl"), inpaint: { enabled: true, image: "inputs/a.png" } as never });
+    expect(useFormStore.getState().params.inpaint).toEqual({
+      enabled: true,
+      image: "inputs/a.png",
+      mask: "",
+      denoise: 0.7,
+      growMask: 8,
+      feather: 8,
+      compositeBack: true,
+    });
+  });
+});

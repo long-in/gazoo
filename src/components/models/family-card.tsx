@@ -134,7 +134,11 @@ export function FamilyCard({
         <p>
           {t("models.license")}: {selected.license.name}
           {" — "}
-          {selected.license.commercialUse === true ? t("models.license.free") : t("models.license.see")}
+          {selected.license.commercialUse === true
+            ? t("models.license.free")
+            : selected.license.commercialUse === false
+              ? t("models.license.noncommercial")
+              : t("models.license.see")}
           <LinkButton url={selected.license.url} label={t("models.license")} />
         </p>
         <p>

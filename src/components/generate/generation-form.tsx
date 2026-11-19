@@ -18,7 +18,9 @@ import {
   randomSeed,
   sizePresets,
   supportsControlnet,
+  supportsInpaint,
 } from "@/lib/generation/defaults";
+import { inpaintReady } from "@/lib/generation/inpaint";
 import type { MessageKey } from "@/lib/i18n";
 import { useErrorMessage, useT } from "@/lib/i18n/use-t";
 import { type AppError, toAppError } from "@/lib/tauri/errors";
@@ -32,6 +34,7 @@ import { useSettingsStore } from "@/stores/settings-store";
 
 import { ControlnetSection } from "./controlnet-section";
 import { FaceDetailerSection } from "./face-detailer-section";
+import { InpaintSection } from "./inpaint-section";
 import { Field, NumberInput, SliderNumber } from "./fields";
 
 const BUILTIN_VAE = "__builtin__";
@@ -133,9 +136,14 @@ export function GenerationForm() {
   const needsReference =
     cnParams?.enabled === true && supportsControlnet(kind) && !cnParams.units[0]?.image;
 
+  // Inpaint を有効にしている間は、参照画像とマスクが必要
+  const inpaintOn = params.inpaint?.enabled === true && supportsInpaint(kind);
+  const needsInpaintInput = inpaintOn && !inpaintReady(params.inpaint);
+
   const ready =
     status?.connected === true &&
     !needsReference &&
+    !needsInpaintInput &&
     params.prompt.trim() !== "" &&
     params.model.name !== "" &&
     (!flux || (params.model.clip.length === 2 && params.model.clip.every(Boolean) && !!params.model.vae));
@@ -228,8 +236,9 @@ export function GenerationForm() {
       {modelNames.length === 0 && status?.connected && (
         <div className="flex flex-col gap-1">
           <p className="text-xs text-muted-foreground">{t("generate.model.none")}</p>
-          {/* Flux 系の取得は未対応(docs/12 §1)。SD 1.5 / SDXL のときだけ案内する */}
+          {/* 取得できるのは SD 1.5 / SDXL のチェックポイントと、Flux(GGUF)。Flux 本体(safetensors)は対象外(docs/12 §1) */}
           {(kind === "sd15" || kind === "sdxl") && <ModelsLink category="checkpoint" kind={kind} />}
+          {kind === "flux_gguf" && <ModelsLink category="flux" />}
         </div>
       )}
       {kind === "flux_gguf" && status?.connected && !status.features.ggufNode && (
@@ -259,6 +268,13 @@ export function GenerationForm() {
         </div>
       )}
 
+      {/* Flux(GGUF)に必要なテキストエンコーダ・VAE が無いときも、取得ページへ案内する */}
+      {kind === "flux_gguf" &&
+        status?.connected &&
+        ((models?.clips.length ?? 0) < 2 || (models?.vaes.length ?? 0) === 0) && (
+          <ModelsLink category="flux" />
+        )}
+
       {(flux || vaeOptions.length > 1) && (
         <Field label={t("generate.vae")} htmlFor="vae" error={err("vae")}>
           <Choice
@@ -280,6 +296,7 @@ export function GenerationForm() {
             max={2048}
             step={64}
             invalid={!!err("width")}
+            disabled={inpaintOn}
             onChange={(n) => patch({ width: n })}
           />
           <span aria-hidden>×</span>
@@ -290,10 +307,11 @@ export function GenerationForm() {
             max={2048}
             step={64}
             invalid={!!err("height")}
+            disabled={inpaintOn}
             onChange={(n) => patch({ height: n })}
           />
         </div>
-        <div className="flex flex-wrap gap-1.5">
+        <div className="flex flex-wrap gap-1.5" hidden={inpaintOn}>
           {sizePresets(kind).map(({ w, h }) => {
             const active = params.width === w && params.height === h;
             return (
@@ -364,6 +382,8 @@ export function GenerationForm() {
         </label>
       </Field>
 
+      <InpaintSection error={err} />
+
       <ControlnetSection error={err} />
 
       <FaceDetailerSection error={err} />
@@ -394,6 +414,15 @@ export function GenerationForm() {
           {submitting ? t("generate.submitting") : t("generate.submit")}
         </Button>
       </div>
+      {(needsReference || needsInpaintInput) && (
+        <p role="status" className="-mt-2 text-xs text-amber-600 dark:text-amber-400">
+          {needsReference
+            ? t("generate.cn.needImage")
+            : params.inpaint?.image
+              ? t("generate.inpaint.needMask")
+              : t("generate.inpaint.needImage")}
+        </p>
+      )}
       <p className={cn("-mt-2 text-xs text-muted-foreground")}>{t("generate.shortcut")}</p>
     </form>
   );

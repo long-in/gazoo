@@ -10,19 +10,19 @@ export interface Localized {
   en: string;
 }
 
-export type ModelCategory = "checkpoint" | "controlnet" | "detector";
+export type ModelCategory = "checkpoint" | "controlnet" | "detector" | "flux";
 export type BaseModel = "sd15" | "sdxl";
 
 export interface ModelVariant {
   id: string;
   label: Localized;
   baseModel?: BaseModel;
-  precision?: "fp16" | "fp32";
+  precision?: "fp8" | "fp16" | "fp32";
   recommended: boolean;
   source: { url: string; repo: string };
   sizeBytes: number;
   sha256: string;
-  destDir: "checkpoints" | "controlnet" | "ultralytics/bbox";
+  destDir: "checkpoints" | "controlnet" | "ultralytics/bbox" | "unet" | "clip" | "vae";
   fileName: string;
   license: { name: string; url: string; commercialUse: boolean | "see-license" };
   requiresConsent: boolean;
