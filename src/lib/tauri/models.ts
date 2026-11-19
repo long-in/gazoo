@@ -90,6 +90,25 @@ export const modelsVerify = (familyId: string, variantId: string) =>
 export const modelsSetDir = (path: string | null) =>
   invoke<{ modelsDir: string | null; source: DirSource }>("models_set_dir", { path });
 
+export type ApplyBlock = "remote" | "engine_unknown" | "no_setting" | "foreign";
+
+/** 保存先の ComfyUI への反映状況(docs/08 §6.2)。 */
+export interface EngineDirStatus {
+  engineModelsDir: string | null;
+  applied: boolean;
+  /** 保存先が ComfyUI の参照先と異なり、未反映。 */
+  mismatch: boolean;
+  hasCustomConfig: boolean;
+  canApply: boolean;
+  reason?: ApplyBlock;
+}
+
+export const modelsEngineDirStatus = () => invoke<EngineDirStatus>("models_engine_dir_status");
+
+/** 保存先を ComfyUI に反映する(`clear` で解除)。ComfyUI の再起動は別途必要。 */
+export const modelsApplyDirToEngine = (clear?: boolean) =>
+  invoke<EngineDirStatus>("models_apply_dir_to_engine", { clear });
+
 /** フォルダ選択ダイアログ。キャンセルなら null。 */
 export async function pickModelsDir(): Promise<string | null> {
   const selected = await open({ directory: true, multiple: false });

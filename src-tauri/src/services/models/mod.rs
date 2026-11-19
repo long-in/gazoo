@@ -5,6 +5,7 @@
 
 pub mod catalog;
 pub mod download;
+pub mod engine_paths;
 #[cfg(test)]
 pub(crate) mod testserver;
 
@@ -172,6 +173,77 @@ pub fn models_dir_from_argv(argv: &[String]) -> Option<PathBuf> {
     dir.is_absolute().then_some(dir)
 }
 
+/// 反映できない理由(08 §6.2)。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ApplyBlock {
+    /// 接続先がこの PC の ComfyUI ではない。
+    Remote,
+    /// 起動引数から `main.py` の場所を特定できない。
+    EngineUnknown,
+    /// 保存先が設定されていない(自動検出のとき)。
+    NoSetting,
+    /// ユーザー自身の `extra_model_paths.yaml` が既にある。
+    Foreign,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EngineDirStatus {
+    /// ComfyUI の起動引数から求めた `models`(特定できなければ null)。
+    pub engine_models_dir: Option<String>,
+    /// アプリが書いた設定ファイルが、現在の保存先と一致している。
+    pub applied: bool,
+    /// 保存先が ComfyUI の参照先と異なり、未反映(反映を促す)。
+    pub mismatch: bool,
+    /// 起動引数に `--extra-model-paths-config` がある(アプリからは断定できない)。
+    pub has_custom_config: bool,
+    pub can_apply: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reason: Option<ApplyBlock>,
+}
+
+/// 保存先設定・起動引数・ローカルかどうかから、反映状況を求める(純粋関数)。
+pub fn engine_dir_status_of(
+    setting: Option<&Path>,
+    argv: Option<&[String]>,
+    local: bool,
+) -> EngineDirStatus {
+    let engine_dir = argv.and_then(models_dir_from_argv);
+    let file = argv.and_then(engine_paths::file_for_argv);
+    let has_custom_config = argv.is_some_and(|a| {
+        a.iter().any(|x| {
+            x == "--extra-model-paths-config" || x.starts_with("--extra-model-paths-config=")
+        })
+    });
+    let applied = matches!((setting, &file), (Some(s), Some(f)) if engine_paths::is_applied(f, s));
+    let mismatch = !applied
+        && !has_custom_config
+        && matches!((setting, &engine_dir), (Some(s), Some(e)) if !engine_paths::same_dir(s, e));
+    let reason = if !local {
+        Some(ApplyBlock::Remote)
+    } else if file.is_none() {
+        Some(ApplyBlock::EngineUnknown)
+    } else if setting.is_none() {
+        Some(ApplyBlock::NoSetting)
+    } else if file
+        .as_deref()
+        .is_some_and(|f| matches!(engine_paths::is_managed(f), Ok(Some(false))))
+    {
+        Some(ApplyBlock::Foreign)
+    } else {
+        None
+    };
+    EngineDirStatus {
+        engine_models_dir: engine_dir.map(|d| d.to_string_lossy().into_owned()),
+        applied,
+        mismatch,
+        has_custom_config,
+        can_apply: reason.is_none(),
+        reason,
+    }
+}
+
 /// 接続先がこの PC の ComfyUI か。リモートの ComfyUI のフォルダには書けない。
 pub fn is_local_engine(url: &str) -> bool {
     reqwest::Url::parse(url)
@@ -286,6 +358,54 @@ impl ModelService {
             models_dir: dir.map(|d| d.to_string_lossy().into_owned()),
             source,
         })
+    }
+
+    /// ローカルの ComfyUI の起動引数(リモート・取得失敗は `None`)と、ローカルかどうか。
+    async fn local_argv(&self) -> AppResult<(bool, Option<Vec<String>>)> {
+        let engine = self.engine.engine()?;
+        let local = is_local_engine(&engine.url());
+        let argv = if local {
+            engine.launch_args().await.ok().filter(|a| !a.is_empty())
+        } else {
+            None
+        };
+        Ok((local, argv))
+    }
+
+    /// ComfyUI が参照するフォルダと、保存先の反映状況(docs/08 §6.2)。
+    pub async fn engine_dir_status(&self) -> AppResult<EngineDirStatus> {
+        let setting = self
+            .db
+            .call(|c| settings::get_models_dir(c))
+            .await?
+            .map(PathBuf::from);
+        let (local, argv) = self.local_argv().await?;
+        Ok(engine_dir_status_of(
+            setting.as_deref(),
+            argv.as_deref(),
+            local,
+        ))
+    }
+
+    /// 保存先を ComfyUI に反映する(`clear` で解除)。ComfyUI の再起動は別途必要。
+    pub async fn apply_dir_to_engine(&self, clear: bool) -> AppResult<EngineDirStatus> {
+        let (local, argv) = self.local_argv().await?;
+        let file = argv
+            .as_deref()
+            .and_then(engine_paths::file_for_argv)
+            .filter(|_| local)
+            .ok_or_else(|| dir_unknown("ComfyUI の場所を特定できないため、反映できません"))?;
+        if clear {
+            engine_paths::clear(&file)?;
+        } else {
+            let dir = self
+                .db
+                .call(|c| settings::get_models_dir(c))
+                .await?
+                .ok_or_else(|| dir_unknown("保存先が設定されていません"))?;
+            engine_paths::apply(&file, Path::new(&dir))?;
+        }
+        self.engine_dir_status().await
     }
 
     /// ダウンロードをキューに追加する。同じモデルが取得中・待機中なら、その ID を返す。

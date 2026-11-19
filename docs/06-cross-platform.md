@@ -105,4 +105,4 @@ macOS 15(Sequoia)以降は、警告を右クリック →「開く」では回�
 | 最低 OS | Windows 10 | macOS 13(`minimumSystemVersion`) |
 | 言語 | 日本語・英語 | – |
 | アンインストール | 設定 → アプリ。**ユーザーデータ(`%APPDATA%\dev.gazoo.desktop` の DB・画像)は残る** | `.app` を削除。データ(`~/Library/Application Support/dev.gazoo.desktop`)は残る |
-| アイコン | **暫定(Tauri 既定)**。正式なアイコンは `npx tauri icon <1024px の PNG>` で差し替える | 同左 |
+| アイコン | 原画は `assets/icon.svg`(山の写真フレーム+生成の星)。更新時は `npm run tauri -- icon assets/icon.svg` で再生成し、不要な `android/` `ios/` `64x64.png` は削除する。`src/app/favicon.ico` は `icon.ico` と同一にする | 同左 |
