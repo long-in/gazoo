@@ -6,7 +6,7 @@ use serde::Serialize;
 use tauri::State;
 
 use crate::error::AppResult;
-use crate::services::models::{CatalogView, DirView, DownloadState, ModelService};
+use crate::services::models::{CatalogView, DirView, DownloadState, EngineDirStatus, ModelService};
 
 type Svc<'a> = State<'a, Arc<ModelService>>;
 
@@ -63,6 +63,19 @@ pub async fn models_verify(
     Ok(VerifyResult {
         ok: svc.verify(&family_id, &variant_id).await?,
     })
+}
+
+#[tauri::command]
+pub async fn models_engine_dir_status(svc: Svc<'_>) -> AppResult<EngineDirStatus> {
+    svc.engine_dir_status().await
+}
+
+#[tauri::command]
+pub async fn models_apply_dir_to_engine(
+    svc: Svc<'_>,
+    clear: Option<bool>,
+) -> AppResult<EngineDirStatus> {
+    svc.apply_dir_to_engine(clear.unwrap_or(false)).await
 }
 
 #[tauri::command]

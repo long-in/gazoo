@@ -10,6 +10,9 @@ import {
   modelsDownloadCancel,
   modelsDownloadList,
   modelsDownloadStart,
+  type EngineDirStatus,
+  modelsApplyDirToEngine,
+  modelsEngineDirStatus,
   modelsSetDir,
   modelsVerify,
 } from "@/lib/tauri/models";
@@ -36,6 +39,10 @@ interface ModelsState {
   start: (familyId: string, variantId: string, consent?: boolean) => Promise<void>;
   cancel: (downloadId: string, discard?: boolean) => Promise<void>;
   setDir: (path: string | null) => Promise<void>;
+  /** 保存先と ComfyUI の参照先の食い違い・反映状況(取得失敗は null のまま)。 */
+  engineDir: EngineDirStatus | null;
+  loadEngineDir: () => Promise<void>;
+  applyToEngine: (clear?: boolean) => Promise<void>;
   verify: (familyId: string, variantId: string) => Promise<boolean>;
 }
 
@@ -109,6 +116,21 @@ export const useModelsStore = create<ModelsState>((set, get) => ({
   setDir: async (path) => {
     await modelsSetDir(path);
     await get().load();
+    await get().loadEngineDir();
+  },
+
+  engineDir: null,
+
+  loadEngineDir: async () => {
+    try {
+      set({ engineDir: await modelsEngineDirStatus() });
+    } catch {
+      set({ engineDir: null });
+    }
+  },
+
+  applyToEngine: async (clear) => {
+    set({ engineDir: await modelsApplyDirToEngine(clear) });
   },
 
   verify: async (familyId, variantId) => (await modelsVerify(familyId, variantId)).ok,

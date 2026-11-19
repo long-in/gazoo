@@ -52,6 +52,7 @@ export function ModelsView() {
   useEffect(() => {
     void useModelsStore.getState().load();
     void useModelsStore.getState().loadDownloads();
+    void useModelsStore.getState().loadEngineDir();
   }, []);
 
   // 他の画面からの遷移(?category=&base=)を反映する
@@ -69,6 +70,7 @@ export function ModelsView() {
     [view, category, base],
   );
   const dirKnown = view?.modelsDir != null;
+  const engineDir = useModelsStore((s) => s.engineDir);
 
   async function startDownload(family: ModelFamily, variant: ModelVariant, agreed = false) {
     try {
@@ -89,6 +91,15 @@ export function ModelsView() {
     try {
       await useModelsStore.getState().setDir(path);
       toast.success(t("models.dir.changed"));
+    } catch (e) {
+      toast.error(errorMessage(toAppError(e)));
+    }
+  }
+
+  async function applyToEngine(clear = false) {
+    try {
+      await useModelsStore.getState().applyToEngine(clear);
+      toast.success(t(clear ? "models.engine.cleared" : "models.engine.applied"));
     } catch (e) {
       toast.error(errorMessage(toAppError(e)));
     }
@@ -155,6 +166,43 @@ export function ModelsView() {
               </div>
             </div>
           )
+        )}
+        {dirKnown && engineDir && (engineDir.mismatch || engineDir.applied || engineDir.hasCustomConfig) && (
+          <div className="mt-3 flex flex-col gap-2 rounded-md border border-amber-500/40 bg-amber-500/10 p-3 text-sm">
+            {engineDir.applied ? (
+              <>
+                <p className="text-xs">{t("models.engine.applied.note")}</p>
+                <div>
+                  <Button variant="outline" size="sm" onClick={() => void applyToEngine(true)}>
+                    {t("models.engine.clear")}
+                  </Button>
+                </div>
+              </>
+            ) : engineDir.mismatch ? (
+              <>
+                <p className="font-medium">{t("models.engine.mismatch.title")}</p>
+                <p className="text-xs">{t("models.engine.mismatch.body")}</p>
+                {engineDir.engineModelsDir && (
+                  <p className="text-xs text-muted-foreground">
+                    {t("models.engine.refers")}: <code>{engineDir.engineModelsDir}</code>
+                  </p>
+                )}
+                {engineDir.canApply ? (
+                  <div>
+                    <Button size="sm" onClick={() => void applyToEngine()}>
+                      {t("models.engine.apply")}
+                    </Button>
+                  </div>
+                ) : (
+                  <p className="text-xs">
+                    {t(`models.engine.blocked.${engineDir.reason ?? "engine_unknown"}` as MessageKey)}
+                  </p>
+                )}
+              </>
+            ) : (
+              <p className="text-xs">{t("models.engine.custom")}</p>
+            )}
+          </div>
         )}
       </section>
 

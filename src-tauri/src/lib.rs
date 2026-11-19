@@ -184,6 +184,8 @@ pub fn run() {
             commands::models::models_download_list,
             commands::models::models_verify,
             commands::models::models_set_dir,
+            commands::models::models_engine_dir_status,
+            commands::models::models_apply_dir_to_engine,
         ])
         .run(tauri::generate_context!())
         .expect("error while building tauri application");

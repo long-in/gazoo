@@ -181,6 +181,8 @@ type SettingsPatch = Partial<Settings>;
 | `models_download_list` | – | `DownloadState[]` |
 | `models_verify` | `{ familyId; variantId }` | `{ ok: boolean }`(導入済みファイルのハッシュ照合) |
 | `models_set_dir` | `{ path: string \| null }` | `{ modelsDir; source }`(null で自動検出) |
+| `models_engine_dir_status` | – | `EngineDirStatus` = `{ engineModelsDir: string \| null; applied; mismatch; hasCustomConfig; canApply; reason?: "remote" \| "engine_unknown" \| "no_setting" \| "foreign" }`(v0.6。ComfyUI の参照先と反映状況。08 §6.2) |
+| `models_apply_dir_to_engine` | `{ clear?: boolean }` | `EngineDirStatus`(v0.6。保存先を ComfyUI の `extra_model_paths.yaml` に反映 / `clear` で解除。再起動は別途必要。エラー `MODELS_EXTRA_PATHS_FOREIGN` / `MODELS_DIR_UNKNOWN`) |
 
 - 型・検証・取得の仕様は 12 が正。`settings_update` は `engine.comfyui.models_dir` を受け付けない(`models_set_dir` で検証つきで変更)。
 - イベント `models://progress` / `models://done`(下記)。エラー: `MODELS_DIR_UNKNOWN` / `MODELS_NO_CONSENT` / `MODELS_HOST_NOT_ALLOWED` / `MODELS_DISK_FULL` / `MODELS_DOWNLOAD_FAILED` / `MODELS_HASH_MISMATCH` / `MODELS_ALREADY_INSTALLED` / `MODELS_NOT_FOUND`。

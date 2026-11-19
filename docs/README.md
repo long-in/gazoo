@@ -13,7 +13,7 @@
 | 05 | [ui-design.md](05-ui-design.md) | 画面構成・状態管理・UI 方針 | 🟢 承認済み(v0.2 追記分を含む) |
 | 06 | [cross-platform.md](06-cross-platform.md) | Windows / macOS 対応・ビルド・CI | 🟢 承認済み |
 | 07 | [open-questions.md](07-open-questions.md) | 未決事項・レビューで決めてほしい点 | 🟢 決定済み(Q-19〜26 追記) |
-| 08 | [local-comfyui.md](08-local-comfyui.md) | ローカル ComfyUI 開発環境(セットアップ/起動スクリプト) | 🟢 承認済み(§6.1 追記分を含む) |
+| 08 | [local-comfyui.md](08-local-comfyui.md) | ローカル ComfyUI 開発環境(セットアップ/起動スクリプト) | 🟢 承認済み(§6.1 追記分を含む)。§6.2 保存先変更への追従(画面の [ComfyUI に反映] で `extra_model_paths.yaml` を書く)は 🟢 承認済み(2026-11-19)・実装済み(04・12 §3 に追記) |
 | 09 | [release-checklist.md](09-release-checklist.md) | リリース前の手動検証チェックリスト(Windows / macOS) | 🟢 承認済み |
 | 10 | [assist-features.md](10-assist-features.md) | 生成補助機能(顔補正・ControlNet)の設計(v0.2) | 🟢 承認済み |
 | 11 | [ai-assistant.md](11-ai-assistant.md) | AI サポート(Claude API による設定アドバイス)の設計(v0.3) | 🟢 承認済み |
@@ -21,6 +21,7 @@
 | 12 | [model-downloader.md](12-model-downloader.md) | モデル取得機能(専用ページ・カタログ・ダウンロード)の設計(v0.4) | 🟡 レビュー待ち(01・03・04・05・07 B4・08・10 の追記分を含む) |
 
 | 13 | [inpaint-and-ai-capabilities.md](13-inpaint-and-ai-capabilities.md) | Inpaint(F-15)と、AI サポートへのアプリ機能の提示(v0.5) | 🟢 承認済み(2026-11-19。07 Q-39〜41 は推奨どおり。01・03・04・05・11 の追記分を含む) |
+| 14 | [flux-controlnet.md](14-flux-controlnet.md) | Flux 系の ControlNet(Union Pro 2.0・コアノードのみ)の設計(v0.6) | 🟡 レビュー待ち(07 Q-42〜44) |
 
 ステータス凡例: 🟡 レビュー待ち / 🟢 承認済み / 🔴 要修正
 

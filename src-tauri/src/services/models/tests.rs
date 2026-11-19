@@ -511,3 +511,43 @@ async fn real_huggingface_flux_vae_matches_the_official_hash() {
     assert!(models.0.join("vae").join("ae.safetensors").is_file());
     assert!(svc.verify("flux-vae", "ae").await.unwrap());
 }
+
+#[test]
+fn engine_dir_status_detects_mismatch_and_blocks() {
+    let s = |v: &[&str]| v.iter().map(|x| x.to_string()).collect::<Vec<_>>();
+    let argv = if cfg!(windows) {
+        s(&[r"C:\w\ComfyUI\main.py", "--base-directory", r"C:\w\data"])
+    } else {
+        s(&["/w/ComfyUI/main.py", "--base-directory", "/w/data"])
+    };
+    let (same, other) = if cfg!(windows) {
+        (r"C:\w\data\models", r"D:\models")
+    } else {
+        ("/w/data/models", "/other/models")
+    };
+
+    // 保存先が ComfyUI の参照先と同じ → 注意なし
+    let st = engine_dir_status_of(Some(Path::new(same)), Some(&argv), true);
+    assert!(!st.mismatch && !st.applied && st.can_apply);
+
+    // 異なる → 未反映の食い違い
+    let st = engine_dir_status_of(Some(Path::new(other)), Some(&argv), true);
+    assert!(st.mismatch && st.can_apply && st.engine_models_dir.is_some());
+
+    // 自動検出(設定なし)は反映できない
+    let st = engine_dir_status_of(None, Some(&argv), true);
+    assert_eq!(st.reason, Some(ApplyBlock::NoSetting));
+    assert!(!st.mismatch);
+
+    // リモート・場所不明
+    let st = engine_dir_status_of(Some(Path::new(other)), None, false);
+    assert_eq!(st.reason, Some(ApplyBlock::Remote));
+    let st = engine_dir_status_of(Some(Path::new(other)), None, true);
+    assert_eq!(st.reason, Some(ApplyBlock::EngineUnknown));
+
+    // --extra-model-paths-config があれば断定しない
+    let mut custom = argv.clone();
+    custom.push("--extra-model-paths-config".into());
+    let st = engine_dir_status_of(Some(Path::new(other)), Some(&custom), true);
+    assert!(st.has_custom_config && !st.mismatch);
+}
