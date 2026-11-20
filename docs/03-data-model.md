@@ -134,6 +134,11 @@ CREATE TABLE settings (
 | `assistant.model` | string(`claude-haiku-5-5` / `claude-sonnet-5-5` / `claude-opus-5-5`) | `claude-sonnet-5-5` |
 | `assistant.consent` | boolean | false |
 | `assistant.auto_delete` | boolean | true |
+| `assistant.provider` | `"anthropic" \| "local" \| "local_external"` | `anthropic`(v0.23。11 §13・30 §6) |
+| `assistant.local_base_url` | string | `http://127.0.0.1:11434/v1`(`local_external` の接続先。ループバックのみ) |
+| `assistant.local_model` | string | `qwen3.5:9b`(`local_external` のモデル名) |
+| `llm.idle_minutes` | number | 5(0 / 1 / 5 / 15 / 30。0 = 自動停止なし。30 §5) |
+| `llm.release_before_generation` | boolean | true(生成開始前に LLM を停止する。30 §5) |
 
 ### モデル取得の設定(v0.4、設計: 12 §9。レビュー待ち)
 

@@ -6,6 +6,7 @@ import type { EngineStatus } from "./engine";
 import type { InstallState } from "./engine-install";
 import type { EngineProcState } from "./engine-process";
 import type { ImageItem, Job, JobProgress } from "./jobs";
+import type { LlmInstallState, LlmState } from "./llm";
 import type { DownloadState } from "./models";
 
 /** Tauri イベント購読の集約先(docs/04-ipc-api.md「イベント」)。Tauri 外では何もしない。 */
@@ -56,6 +57,12 @@ export const onAssistantDone = (handler: (p: { requestId: string; cancelled: boo
 export const onAssistantError = (
   handler: (p: { requestId: string; code: string; message: string }) => void,
 ) => subscribe<{ requestId: string; code: string; message: string }>("assistant://error", handler);
+
+export const onLlmState = (handler: (p: { state: LlmState; message: string | null }) => void) =>
+  subscribe<{ state: LlmState; message: string | null }>("llm://state", handler);
+
+export const onLlmInstall = (handler: (s: LlmInstallState) => void) =>
+  subscribe<LlmInstallState>("llm://install-progress", handler);
 
 export const onModelsProgress = (handler: (s: DownloadState) => void) =>
   subscribe<DownloadState>("models://progress", handler);

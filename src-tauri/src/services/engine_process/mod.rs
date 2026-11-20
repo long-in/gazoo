@@ -128,7 +128,12 @@ pub struct EngineProcess {
     log_path: Option<PathBuf>,
     probe: Probe,
     ready_timeout: Duration,
+    /// メッセージに出す名前(既定は「ComfyUI」。ローカル LLM の管理でも再利用する。docs/30 §4)。
+    name: &'static str,
 }
+
+/// ローカル LLM(docs/30)の管理で使う、`llama-server` 用の起動管理。
+pub const NAME_LLM: &str = "ローカル LLM";
 
 fn launch_failed(message: impl Into<String>) -> AppError {
     AppError::engine_proc("ENGINE_LAUNCH_FAILED", message)
@@ -190,6 +195,17 @@ impl EngineProcess {
         probe: Probe,
         ready_timeout: Duration,
     ) -> Arc<Self> {
+        Self::with_name(sink, log_path, probe, ready_timeout, "ComfyUI")
+    }
+
+    /// 管理する対象の名前を指定して作る(メッセージ用)。
+    pub fn with_name(
+        sink: Arc<dyn ProcSink>,
+        log_path: Option<PathBuf>,
+        probe: Probe,
+        ready_timeout: Duration,
+        name: &'static str,
+    ) -> Arc<Self> {
         Arc::new(Self {
             inner: Mutex::new(Inner {
                 state: EngineProcState::stopped(),
@@ -203,6 +219,7 @@ impl EngineProcess {
             log_path,
             probe,
             ready_timeout,
+            name,
         })
     }
 
@@ -285,7 +302,7 @@ impl EngineProcess {
     ) -> AppResult<EngineProcState> {
         self.stop().await?;
         if !wait_port_free(port, PORT_FREE_TIMEOUT).await {
-            return Err(port_in_use_error(port));
+            return Err(port_in_use_error(self.name, port));
         }
         self.start_spec(spec, port).await
     }
@@ -303,7 +320,10 @@ impl EngineProcess {
                 ProcStatus::Stopping => {
                     return Err(AppError::engine_proc(
                         "ENGINE_BUSY",
-                        "ComfyUI を停止しています。完了してからやり直してください",
+                        format!(
+                            "{} を停止しています。完了してからやり直してください",
+                            self.name
+                        ),
                     ));
                 }
                 ProcStatus::Stopped | ProcStatus::Crashed => {}
@@ -322,7 +342,7 @@ impl EngineProcess {
         self.changed.notify_waiters();
 
         if port_in_use(port).await {
-            let err = port_in_use_error(port);
+            let err = port_in_use_error(self.name, port);
             self.set_state(epoch, EngineProcState::crashed(err.to_string(), None));
             return Err(err);
         }
@@ -345,7 +365,7 @@ impl EngineProcess {
         let mut child = match builder.kill_on_drop(true).spawn() {
             Ok(c) => c,
             Err(e) => {
-                let err = launch_failed(format!("ComfyUI を起動できません: {e}"));
+                let err = launch_failed(format!("{} を起動できません: {e}", self.name));
                 self.set_state(epoch, EngineProcState::crashed(err.to_string(), None));
                 return Err(err);
             }
@@ -408,13 +428,16 @@ impl EngineProcess {
         let new = match reason {
             Some(StopReason::Requested) => EngineProcState::stopped(),
             Some(StopReason::StartTimeout) => EngineProcState::crashed(
-                "起動の確認がタイムアウトしました(ComfyUI の準備に時間がかかっています)",
+                format!(
+                    "起動の確認がタイムアウトしました({} の準備に時間がかかっています)",
+                    self.name
+                ),
                 code,
             ),
             None => EngineProcState::crashed(
                 match code {
-                    Some(c) => format!("ComfyUI が予期せず終了しました(終了コード {c})"),
-                    None => "ComfyUI が予期せず終了しました".to_string(),
+                    Some(c) => format!("{} が予期せず終了しました(終了コード {c})", self.name),
+                    None => format!("{} が予期せず終了しました", self.name),
                 },
                 code,
             ),
@@ -526,11 +549,11 @@ fn strip_ansi(s: &str) -> String {
     out
 }
 
-fn port_in_use_error(port: u16) -> AppError {
+fn port_in_use_error(name: &str, port: u16) -> AppError {
     AppError::engine_proc(
         "ENGINE_PORT_IN_USE",
         format!(
-            "ポート {port} は既に使われています。別の ComfyUI が起動している可能性があります(他のプロセスは終了しません)"
+            "ポート {port} は既に使われています。別の {name} が起動している可能性があります(他のプロセスは終了しません)"
         ),
     )
 }

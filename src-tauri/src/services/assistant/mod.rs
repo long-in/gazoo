@@ -15,11 +15,16 @@ use crate::error::{AppError, AppResult};
 pub mod anthropic;
 pub mod capabilities;
 pub mod context;
+pub mod openai_compat;
 
 use anthropic::{AnthropicClient, MessageRequest, StreamEnd, StreamEvent};
+use openai_compat::{LocalCheck, OpenAiClient};
+use store::Provider;
 
 const MAX_QUESTION_CHARS: usize = 8000;
 const MAX_KEY_CHARS: usize = 512;
+/// カスタムのシステムプロンプトの最大文字数(docs/11 §12.2)。
+pub const MAX_SYSTEM_PROMPT_CHARS: usize = 30_000;
 
 /// フロントエンドへの通知(docs/04「イベント」)。テストで差し替えられるようトレイトにしている。
 pub trait AssistantSink: Send + Sync {
@@ -29,12 +34,52 @@ pub trait AssistantSink: Send + Sync {
     fn error(&self, request_id: &str, error: &AppError);
 }
 
+/// アプリ管理のローカル LLM の接続先(docs/30 §6)。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LocalEndpoint {
+    /// `http://127.0.0.1:<port>/v1`
+    pub base_url: String,
+    pub model: String,
+}
+
+/// アプリが管理するローカル LLM(`services::llm`)。テストで差し替えられるようトレイトにしている。
+#[async_trait::async_trait]
+pub trait LocalRuntime: Send + Sync {
+    /// 導入済みか(未導入なら送信前に `LLM_NOT_INSTALLED`)。
+    fn installed(&self) -> bool;
+    /// 止まっていれば起動し、準備完了まで待つ。
+    async fn ensure_ready(&self) -> AppResult<LocalEndpoint>;
+    /// 回答の生成の開始・終了(実行中はアイドル停止しない)。
+    fn use_started(&self);
+    fn use_finished(&self);
+}
+
+/// 送信先(`prepare` で、設定から決める)。
+enum Target {
+    Anthropic { key: String, model: String },
+    External { base: String, model: String },
+    Managed,
+}
+
+/// 編集欄に出す内容(docs/11 §12.5)。
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PromptState {
+    pub text: String,
+    pub default_text: String,
+    pub customized: bool,
+    pub model_guide: String,
+}
+
 #[derive(Debug, Default, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AssistantPatch {
     pub model: Option<String>,
     pub consent: Option<bool>,
     pub auto_delete: Option<bool>,
+    pub provider: Option<Provider>,
+    pub local_base_url: Option<String>,
+    pub local_model: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -54,8 +99,11 @@ struct Running {
 pub struct AssistantService {
     db: Db,
     client: AnthropicClient,
+    openai: OpenAiClient,
     sink: Arc<dyn AssistantSink>,
     running: Mutex<Option<Running>>,
+    /// アプリ管理のローカル LLM(起動後に設定する)。
+    runtime: std::sync::OnceLock<Arc<dyn LocalRuntime>>,
 }
 
 impl AssistantService {
@@ -63,9 +111,30 @@ impl AssistantService {
         Arc::new(Self {
             db,
             client,
+            openai: OpenAiClient::new(),
             sink,
             running: Mutex::new(None),
+            runtime: std::sync::OnceLock::new(),
         })
+    }
+
+    /// アプリ管理のローカル LLM を接続する(起動時に 1 回)。
+    pub fn set_runtime(&self, runtime: Arc<dyn LocalRuntime>) {
+        let _ = self.runtime.set(runtime);
+    }
+
+    /// 外部サーバへの接続を確認する(docs/11 §13.4)。省略した項目は保存値を使う。
+    pub async fn local_check(
+        &self,
+        base_url: Option<String>,
+        model: Option<String>,
+    ) -> AppResult<LocalCheck> {
+        let status = self.status().await?;
+        let base = openai_compat::validate_base_url(
+            base_url.as_deref().unwrap_or(&status.local_base_url),
+        )?;
+        let model = model.unwrap_or(status.local_model);
+        Ok(self.openai.check(&base, model.trim()).await)
     }
 
     pub async fn status(&self) -> AppResult<AssistantStatus> {
@@ -109,9 +178,75 @@ impl AssistantService {
                         store::enforce_limit(c)?;
                     }
                 }
+                if let Some(p) = patch.provider {
+                    store::set_provider(c, p)?;
+                }
+                if patch.local_base_url.is_some() || patch.local_model.is_some() {
+                    let url = patch
+                        .local_base_url
+                        .as_deref()
+                        .map(openai_compat::validate_base_url)
+                        .transpose()?;
+                    let model = patch.local_model.as_deref().map(str::trim);
+                    if let Some(m) = model
+                        && (m.is_empty()
+                            || m.chars().count() > 200
+                            || m.chars().any(char::is_control))
+                    {
+                        return Err(AppError::validation(
+                            "localModel",
+                            "モデル名は 1〜200 文字で入力してください",
+                        ));
+                    }
+                    store::set_local_server(c, url.as_deref(), model)?;
+                }
                 store::status(c)
             })
             .await
+    }
+
+    /// 編集欄に出す内容(docs/11 §12.5)。
+    pub async fn prompt_get(&self) -> AppResult<PromptState> {
+        let custom = self.db.call(|c| store::system_prompt(c)).await?;
+        let default_text = capabilities::default_prompt();
+        Ok(PromptState {
+            customized: custom.is_some(),
+            text: custom.unwrap_or_else(|| default_text.clone()),
+            default_text,
+            model_guide: capabilities::model_guide_text(),
+        })
+    }
+
+    /// 検証して保存する。初期値と完全一致なら未設定に戻す(= 未編集扱い)。
+    pub async fn prompt_set(&self, text: String) -> AppResult<bool> {
+        if text.trim().is_empty() {
+            return Err(AppError::validation(
+                "text",
+                "システムプロンプトを空にはできません(初期値に戻すには「初期値に戻す」を使ってください)",
+            ));
+        }
+        if text.chars().count() > MAX_SYSTEM_PROMPT_CHARS {
+            return Err(AppError::validation(
+                "text",
+                "システムプロンプトが長すぎます(30,000 文字まで)",
+            ));
+        }
+        let same = text == capabilities::default_prompt();
+        self.db
+            .call(move |c| {
+                if same {
+                    store::clear_system_prompt(c)
+                } else {
+                    store::set_system_prompt(c, &text)
+                }
+            })
+            .await?;
+        Ok(!same)
+    }
+
+    pub async fn prompt_reset(&self) -> AppResult<String> {
+        self.db.call(|c| store::clear_system_prompt(c)).await?;
+        Ok(capabilities::default_prompt())
     }
 
     pub async fn conversation_list(&self) -> AppResult<Vec<ConversationSummary>> {
@@ -198,7 +333,7 @@ impl AssistantService {
         }
 
         let prepared = self.prepare(conversation_id, &text, &params).await;
-        let (conversation_id, status, key, history) = match prepared {
+        let (conversation_id, target, history, custom_prompt) = match prepared {
             Ok(p) => p,
             Err(e) => {
                 self.release();
@@ -235,45 +370,97 @@ impl AssistantService {
         ));
         tokio::spawn(async move {
             let tools = context::tool_definition();
-            let system = capabilities::system_prompt();
-            let req = MessageRequest {
-                model: &status.model,
-                system: &system,
-                messages: &messages,
-                tools,
-            };
+            let system = capabilities::system_prompt(custom_prompt.as_deref());
             let mut answer = String::new();
             let mut suggestions: Vec<StoredSuggestion> = Vec::new();
             let sink = Arc::clone(&me.sink);
             let rid = request_id.clone();
-            let result = me
-                .client
-                .stream(&key, &req, &mut cancel_rx, |ev| match ev {
-                    StreamEvent::Text(t) => {
-                        answer.push_str(&t);
-                        sink.delta(&rid, &t);
+            let mut on_event = |ev: StreamEvent| match ev {
+                StreamEvent::Text(t) => {
+                    answer.push_str(&t);
+                    sink.delta(&rid, &t);
+                }
+                StreamEvent::ToolUse { name, input } => {
+                    // 回答 1 回につき、設定の提案とモデルの提案をそれぞれ 1 件まで
+                    let has_params = suggestions.iter().any(|s| s.model.is_none());
+                    let has_model = suggestions.iter().any(|s| s.model.is_some());
+                    let accepted = if name == context::TOOL_NAME && !has_params {
+                        context::sanitize(&input, &params)
+                    } else if name == context::TOOL_MODEL_NAME
+                        && !has_model
+                        && let Some(c) = capabilities::catalog()
+                    {
+                        context::sanitize_model(&input, c, current_family.as_deref())
+                    } else {
+                        None
+                    };
+                    if let Some(s) = accepted {
+                        sink.suggestion(&rid, suggestions.len(), &s);
+                        suggestions.push(s);
                     }
-                    StreamEvent::ToolUse { name, input } => {
-                        // 回答 1 回につき、設定の提案とモデルの提案をそれぞれ 1 件まで
-                        let has_params = suggestions.iter().any(|s| s.model.is_none());
-                        let has_model = suggestions.iter().any(|s| s.model.is_some());
-                        let accepted = if name == context::TOOL_NAME && !has_params {
-                            context::sanitize(&input, &params)
-                        } else if name == context::TOOL_MODEL_NAME
-                            && !has_model
-                            && let Some(c) = capabilities::catalog()
-                        {
-                            context::sanitize_model(&input, c, current_family.as_deref())
-                        } else {
-                            None
+                }
+            };
+            let result = match &target {
+                Target::Anthropic { key, model } => {
+                    let req = MessageRequest {
+                        model,
+                        system: &system,
+                        messages: &messages,
+                        tools,
+                    };
+                    me.client
+                        .stream(key, &req, &mut cancel_rx, &mut on_event)
+                        .await
+                }
+                Target::External { base, model } => {
+                    let req = MessageRequest {
+                        model,
+                        system: &system,
+                        messages: &messages,
+                        tools,
+                    };
+                    me.openai
+                        .stream(base, model, &req, &mut cancel_rx, &mut on_event)
+                        .await
+                }
+                Target::Managed => match me.runtime.get() {
+                    None => Err(AppError::assistant(
+                        "LLM_NOT_INSTALLED",
+                        "ローカル LLM が利用できません",
+                    )),
+                    Some(rt) => {
+                        // 回答の生成中はアイドル停止の対象にしない(起動の待ち時間も含める)
+                        rt.use_started();
+                        let started = tokio::select! {
+                            _ = anthropic::cancelled(&mut cancel_rx) => None,
+                            r = rt.ensure_ready() => Some(r),
                         };
-                        if let Some(s) = accepted {
-                            sink.suggestion(&rid, suggestions.len(), &s);
-                            suggestions.push(s);
-                        }
+                        let result = match started {
+                            None => Ok(StreamEnd::Cancelled),
+                            Some(Err(e)) => Err(e),
+                            Some(Ok(ep)) => {
+                                let req = MessageRequest {
+                                    model: &ep.model,
+                                    system: &system,
+                                    messages: &messages,
+                                    tools,
+                                };
+                                me.openai
+                                    .stream(
+                                        &ep.base_url,
+                                        &ep.model,
+                                        &req,
+                                        &mut cancel_rx,
+                                        &mut on_event,
+                                    )
+                                    .await
+                            }
+                        };
+                        rt.use_finished();
+                        result
                     }
-                })
-                .await;
+                },
+            };
 
             // 途中までの内容も含め、あれば保存する
             if !answer.trim().is_empty() || !suggestions.is_empty() {
@@ -317,21 +504,44 @@ impl AssistantService {
         conversation_id: Option<String>,
         text: &str,
         params: &GenerationParams,
-    ) -> AppResult<(String, AssistantStatus, String, Vec<(String, String)>)> {
+    ) -> AppResult<(String, Target, Vec<(String, String)>, Option<String>)> {
         let params_json = serde_json::to_string(&context::snapshot(params))?;
         let text = text.to_string();
+        let local_installed = self.runtime.get().is_some_and(|r| r.installed());
         self.db
             .call(move |c| {
                 let status = store::status(c)?;
-                if !status.consent {
-                    return Err(AppError::assistant(
-                        "ASSISTANT_NO_CONSENT",
-                        "AI サポートの利用に同意してください",
-                    ));
-                }
-                let key = store::api_key(c)?.ok_or_else(|| {
-                    AppError::assistant("ASSISTANT_NO_KEY", "API キーが登録されていません")
-                })?;
+                // 送信先ごとの前提を、会話を保存する前に確認する(docs/11 §13.2・docs/30 §6)
+                let target = match status.provider {
+                    Provider::Anthropic => {
+                        if !status.consent {
+                            return Err(AppError::assistant(
+                                "ASSISTANT_NO_CONSENT",
+                                "AI サポートの利用に同意してください",
+                            ));
+                        }
+                        let key = store::api_key(c)?.ok_or_else(|| {
+                            AppError::assistant("ASSISTANT_NO_KEY", "API キーが登録されていません")
+                        })?;
+                        Target::Anthropic {
+                            key,
+                            model: status.model.clone(),
+                        }
+                    }
+                    Provider::LocalExternal => Target::External {
+                        base: openai_compat::validate_base_url(&status.local_base_url)?,
+                        model: status.local_model.clone(),
+                    },
+                    Provider::Local => {
+                        if !local_installed {
+                            return Err(AppError::assistant(
+                                "LLM_NOT_INSTALLED",
+                                "ローカル LLM が導入されていません。設定の「AI サポート」から導入してください",
+                            ));
+                        }
+                        Target::Managed
+                    }
+                };
                 let tx = c.transaction()?;
                 let cid = match conversation_id {
                     Some(id) => {
@@ -356,7 +566,8 @@ impl AssistantService {
                 tx.commit()?;
                 // 最新の質問は、フォームの内容を付けて別に組み立てる
                 rows.pop();
-                Ok((cid, status, key, context::build_history(rows)))
+                let custom = store::system_prompt(c)?;
+                Ok((cid, target, context::build_history(rows), custom))
             })
             .await
     }
@@ -496,6 +707,57 @@ data: {\"type\":\"message_stop\"}
             tokio::time::sleep(Duration::from_millis(10)).await;
         }
         panic!("did not finish: {:?}", rec.all());
+    }
+
+    #[tokio::test]
+    async fn system_prompt_is_editable_resettable_and_validated() {
+        let (svc, _rec, db, _mock) = setup(vec![]).await;
+        // 未設定は初期値
+        let g = svc.prompt_get().await.unwrap();
+        assert!(!g.customized);
+        assert_eq!(g.text, g.default_text);
+        assert!(g.model_guide.contains("# モデルガイド"));
+        // 空・上限超えは拒否
+        assert_eq!(
+            svc.prompt_set(
+                "  
+"
+                .into()
+            )
+            .await
+            .unwrap_err()
+            .code(),
+            "VALIDATION"
+        );
+        let long = "あ".repeat(MAX_SYSTEM_PROMPT_CHARS + 1);
+        assert_eq!(svc.prompt_set(long).await.unwrap_err().code(), "VALIDATION");
+        // 保存すると編集済みになり、DB に入る
+        assert!(svc.prompt_set("カスタム".into()).await.unwrap());
+        let g = svc.prompt_get().await.unwrap();
+        assert!(g.customized && g.text == "カスタム");
+        assert_eq!(
+            db.call(|c| store::system_prompt(c))
+                .await
+                .unwrap()
+                .as_deref(),
+            Some("カスタム")
+        );
+        // 初期値と一致なら未設定に戻る
+        assert!(!svc.prompt_set(g.default_text.clone()).await.unwrap());
+        assert!(!svc.prompt_get().await.unwrap().customized);
+        // リセット
+        svc.prompt_set("もう一度".into()).await.unwrap();
+        assert_eq!(svc.prompt_reset().await.unwrap(), g.default_text);
+        assert!(
+            db.call(|c| store::system_prompt(c))
+                .await
+                .unwrap()
+                .is_none()
+        );
+        // status に本文は含まれない
+        svc.prompt_set("秘密の文面".into()).await.unwrap();
+        let st = format!("{:?}", svc.status().await.unwrap());
+        assert!(!st.contains("秘密の文面"));
     }
 
     #[tokio::test]
@@ -760,5 +1022,308 @@ data: {\"type\":\"message_stop\"}
             .unwrap();
         assert!(second.contains("最初の質問") && second.contains("steps を増やすと良いです"));
         assert!(second.contains("続きの質問"));
+    }
+
+    // ---------------------------------------------------------------- ローカル LLM(docs/11 §13・docs/30)
+
+    /// OpenAI 互換の SSE(回答 + `suggest_params` の断片化した引数 + 思考)。
+    const OPENAI_SSE: &str = concat!(
+        "data: {\"choices\":[{\"delta\":{\"reasoning_content\":\"秘密の思考\"}}]}\n\n",
+        "data: {\"choices\":[{\"delta\":{\"content\":\"<think>隠す</think>steps を増やすと良いです\"}}]}\n\n",
+        "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"c\",\"function\":{\"name\":\"suggest_params\",\"arguments\":\"{\\\"summary\\\":\\\"増やす\\\",\"}}]}}]}\n\n",
+        "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"function\":{\"arguments\":\"\\\"changes\\\":{\\\"steps\\\":40,\\\"seed\\\":1}}\"}}]}}]}\n\n",
+        "data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"tool_calls\"}]}\n\n",
+        "data: [DONE]\n\n",
+    );
+
+    async fn use_external(svc: &Arc<AssistantService>, mock_url: &str) {
+        svc.update(AssistantPatch {
+            provider: Some(Provider::LocalExternal),
+            local_base_url: Some(format!("{mock_url}/v1")),
+            local_model: Some("qwen3.5:9b".into()),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    }
+
+    #[tokio::test]
+    async fn external_local_server_needs_no_key_or_consent_and_never_calls_anthropic() {
+        let (svc, rec, db, mock) =
+            setup(vec![Route::post("/v1/chat/completions", 200, OPENAI_SSE)]).await;
+        use_external(&svc, &mock.url).await;
+        // キーも同意も無い
+        let s = svc.status().await.unwrap();
+        assert!(!s.has_key && !s.consent);
+
+        let started = svc
+            .ask(None, "もっと細かく".into(), sample(ModelKind::Sd15))
+            .await
+            .unwrap();
+        wait_done(&rec).await;
+        let log = rec.all();
+        // 思考は出ない。回答と、検証済みの提案(seed は除外)が届く
+        assert!(
+            log.iter().any(|l| l == "delta:steps を増やすと良いです"),
+            "{log:?}"
+        );
+        assert!(
+            log.iter()
+                .all(|l| !l.contains("思考") && !l.contains("隠す"))
+        );
+        assert!(
+            log.iter().any(|l| l.starts_with("suggestion:0:")
+                && l.contains("\"steps\":40")
+                && !l.contains("seed")),
+            "{log:?}"
+        );
+        assert!(log.contains(&"done:false".to_string()));
+
+        let reqs = mock.requests.lock().unwrap().clone();
+        assert_eq!(reqs.len(), 1);
+        assert!(reqs[0].starts_with("POST /v1/chat/completions"));
+        assert!(reqs[0].contains("enable_thinking"));
+        assert!(reqs[0].contains("\"role\":\"system\""));
+        assert!(
+            reqs.iter().all(|r| !r.contains("/v1/messages")),
+            "Anthropic へは送らない"
+        );
+
+        // 回答は会話に保存される
+        let conv = db
+            .call({
+                let id = started.conversation_id.clone();
+                move |c| store::get_conversation(c, &id)
+            })
+            .await
+            .unwrap();
+        assert_eq!(conv.messages.len(), 2);
+        assert!(conv.messages[1].text.contains("steps を増やすと良いです"));
+        assert_eq!(conv.messages[1].suggestions.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn update_rejects_non_loopback_urls_and_bad_models() {
+        let (svc, _rec, _db, _mock) = setup(vec![]).await;
+        for bad in [
+            "http://192.168.1.10:11434/v1",
+            "http://example.com/v1",
+            "http://127.0.0.1.evil.test/v1",
+            "javascript:alert(1)",
+        ] {
+            let e = svc
+                .update(AssistantPatch {
+                    local_base_url: Some(bad.into()),
+                    ..Default::default()
+                })
+                .await
+                .unwrap_err();
+            assert_eq!(e.code(), "VALIDATION", "{bad}");
+        }
+        let e = svc
+            .update(AssistantPatch {
+                local_model: Some("   ".into()),
+                ..Default::default()
+            })
+            .await
+            .unwrap_err();
+        assert_eq!(e.code(), "VALIDATION");
+        // 保存値は変わらない
+        let s = svc.status().await.unwrap();
+        assert_eq!(
+            s.local_base_url,
+            crate::db::assistant::DEFAULT_LOCAL_BASE_URL
+        );
+        assert_eq!(s.provider, Provider::Anthropic);
+    }
+
+    #[tokio::test]
+    async fn local_check_reports_reachability_and_model() {
+        let (svc, _rec, _db, mock) = setup(vec![Route::get(
+            "/v1/models",
+            r#"{"data":[{"id":"qwen3.5:9b"},{"id":"other"}]}"#,
+        )])
+        .await;
+        use_external(&svc, &mock.url).await;
+        let c = svc.local_check(None, None).await.unwrap();
+        assert!(c.reachable && c.model_found);
+        assert_eq!(c.models, ["qwen3.5:9b", "other"]);
+        let c = svc.local_check(None, Some("missing".into())).await.unwrap();
+        assert!(c.reachable && !c.model_found);
+        // 閉じたポートは「届かない」(エラーにしない)
+        let c = svc
+            .local_check(Some("http://127.0.0.1:9/v1".into()), None)
+            .await
+            .unwrap();
+        assert!(!c.reachable && !c.model_found);
+        // ループバック以外はそもそも確認しない
+        assert_eq!(
+            svc.local_check(Some("http://example.com/v1".into()), None)
+                .await
+                .unwrap_err()
+                .code(),
+            "VALIDATION"
+        );
+    }
+
+    #[tokio::test]
+    async fn unreachable_external_server_reports_a_local_message() {
+        let (svc, rec, _db, _mock) = setup(vec![]).await;
+        svc.update(AssistantPatch {
+            provider: Some(Provider::LocalExternal),
+            local_base_url: Some("http://127.0.0.1:9/v1".into()),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+        svc.ask(None, "q".into(), sample(ModelKind::Sd15))
+            .await
+            .unwrap();
+        wait_done(&rec).await;
+        assert!(
+            rec.all()
+                .contains(&"error:ASSISTANT_UNREACHABLE".to_string())
+        );
+    }
+
+    struct FakeRuntime {
+        installed: bool,
+        endpoint: Option<LocalEndpoint>,
+        started: std::sync::atomic::AtomicU32,
+        finished: std::sync::atomic::AtomicU32,
+    }
+
+    impl FakeRuntime {
+        fn new(installed: bool, endpoint: Option<LocalEndpoint>) -> Arc<Self> {
+            Arc::new(Self {
+                installed,
+                endpoint,
+                started: Default::default(),
+                finished: Default::default(),
+            })
+        }
+        fn counts(&self) -> (u32, u32) {
+            use std::sync::atomic::Ordering::SeqCst;
+            (self.started.load(SeqCst), self.finished.load(SeqCst))
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl LocalRuntime for FakeRuntime {
+        fn installed(&self) -> bool {
+            self.installed
+        }
+        async fn ensure_ready(&self) -> AppResult<LocalEndpoint> {
+            self.endpoint
+                .clone()
+                .ok_or_else(|| AppError::assistant("LLM_START_FAILED", "起動できませんでした"))
+        }
+        fn use_started(&self) {
+            self.started
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        }
+        fn use_finished(&self) {
+            self.finished
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        }
+    }
+
+    async fn use_managed(svc: &Arc<AssistantService>) {
+        svc.update(AssistantPatch {
+            provider: Some(Provider::Local),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    }
+
+    #[tokio::test]
+    async fn managed_local_requires_installation_before_saving_anything() {
+        let (svc, _rec, db, mock) = setup(vec![]).await;
+        use_managed(&svc).await;
+        // ランタイム未接続・未導入のどちらも、会話を作らずに断る
+        let e = svc
+            .ask(None, "q".into(), sample(ModelKind::Sd15))
+            .await
+            .unwrap_err();
+        assert_eq!(e.code(), "LLM_NOT_INSTALLED");
+        svc.set_runtime(FakeRuntime::new(false, None));
+        let e = svc
+            .ask(None, "q".into(), sample(ModelKind::Sd15))
+            .await
+            .unwrap_err();
+        assert_eq!(e.code(), "LLM_NOT_INSTALLED");
+        assert!(svc.conversation_list().await.unwrap().is_empty());
+        assert!(mock.requests.lock().unwrap().is_empty());
+        let _ = db;
+    }
+
+    #[tokio::test]
+    async fn managed_local_streams_from_the_started_server_and_tracks_use() {
+        let (svc, rec, _db, mock) =
+            setup(vec![Route::post("/v1/chat/completions", 200, OPENAI_SSE)]).await;
+        let rt = FakeRuntime::new(
+            true,
+            Some(LocalEndpoint {
+                base_url: format!("{}/v1", mock.url),
+                model: "qwen3.5-9b".into(),
+            }),
+        );
+        svc.set_runtime(rt.clone());
+        use_managed(&svc).await;
+        svc.ask(None, "q".into(), sample(ModelKind::Sd15))
+            .await
+            .unwrap();
+        wait_done(&rec).await;
+        assert!(
+            rec.all().contains(&"done:false".to_string()),
+            "{:?}",
+            rec.all()
+        );
+        assert!(rec.all().iter().any(|l| l.starts_with("suggestion:0:")));
+        let reqs = mock.requests.lock().unwrap().clone();
+        assert!(reqs[0].contains("\"model\":\"qwen3.5-9b\""));
+        // 使用中の記録は対になる(アイドル停止を妨げ続けない)
+        for _ in 0..100 {
+            if rt.counts() == (1, 1) {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        assert_eq!(rt.counts(), (1, 1));
+    }
+
+    #[tokio::test]
+    async fn managed_local_start_failure_is_reported_and_use_is_released() {
+        let (svc, rec, _db, _mock) = setup(vec![]).await;
+        let rt = FakeRuntime::new(true, None);
+        svc.set_runtime(rt.clone());
+        use_managed(&svc).await;
+        svc.ask(None, "q".into(), sample(ModelKind::Sd15))
+            .await
+            .unwrap();
+        wait_done(&rec).await;
+        assert!(rec.all().contains(&"error:LLM_START_FAILED".to_string()));
+        assert_eq!(rt.counts(), (1, 1));
+        // 失敗しても次の相談を妨げない
+        assert!(svc.running.lock().unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn anthropic_still_requires_consent_and_key_after_switching_back() {
+        let (svc, _rec, _db, mock) = setup(vec![]).await;
+        use_external(&svc, &mock.url).await;
+        svc.update(AssistantPatch {
+            provider: Some(Provider::Anthropic),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+        let e = svc
+            .ask(None, "q".into(), sample(ModelKind::Sd15))
+            .await
+            .unwrap_err();
+        assert_eq!(e.code(), "ASSISTANT_NO_CONSENT");
+        assert!(mock.requests.lock().unwrap().is_empty());
     }
 }

@@ -9,6 +9,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { Textarea } from "@/components/ui/textarea";
 import { diffRows, listChanges, usableChanges } from "@/lib/generation/suggestions";
+import { canRelease, formatMemory, panelGate, sendsExternally } from "@/lib/llm/logic";
 import type { MessageKey } from "@/lib/i18n";
 import { useErrorMessage, useLanguage, useT } from "@/lib/i18n/use-t";
 import { switchTarget } from "@/lib/models/profile";
@@ -17,17 +18,21 @@ import { toAppError } from "@/lib/tauri/errors";
 import { type ChatMessage, useAssistantStore } from "@/stores/assistant-store";
 import { useEngineStore } from "@/stores/engine-store";
 import { useFormStore } from "@/stores/form-store";
+import { useLlmStore } from "@/stores/llm-store";
 import { useModelsStore } from "@/stores/models-store";
 
 /** AI に相談するパネル(docs/11-ai-assistant.md §2)。 */
 export function AssistantPanel({ open, onOpenChange }: { open: boolean; onOpenChange: (open: boolean) => void }) {
   const t = useT();
   const status = useAssistantStore((s) => s.status);
+  const llm = useLlmStore((s) => s.status);
+  const gate = panelGate(status, llm);
 
   useEffect(() => {
     if (open) {
       void useAssistantStore.getState().loadStatus();
       void useAssistantStore.getState().loadConversations();
+      void useLlmStore.getState().load();
     }
   }, [open]);
 
@@ -38,13 +43,15 @@ export function AssistantPanel({ open, onOpenChange }: { open: boolean; onOpenCh
           <SheetTitle>{t("assistant.title")}</SheetTitle>
           <SheetDescription>{t("assistant.desc")}</SheetDescription>
         </SheetHeader>
-        {status === null ? null : !status.hasKey ? (
+        {gate === "noKey" ? (
           <NoKey />
-        ) : !status.consent ? (
+        ) : gate === "consent" ? (
           <Consent />
-        ) : (
+        ) : gate === "notInstalled" ? (
+          <LocalNotInstalled />
+        ) : gate === "chat" ? (
           <Chat />
-        )}
+        ) : null}
       </SheetContent>
     </Sheet>
   );
@@ -61,6 +68,62 @@ function NoKey() {
           {t("assistant.noKey.link")}
         </Button>
       </div>
+    </div>
+  );
+}
+
+/** アプリ管理のローカル LLM が未導入のときの案内(docs/30 §6)。 */
+function LocalNotInstalled() {
+  const t = useT();
+  return (
+    <div className="flex flex-col gap-3 px-4">
+      <p className="font-medium">{t("assistant.local.notInstalled.title")}</p>
+      <p className="text-sm text-muted-foreground">{t("assistant.local.notInstalled.desc")}</p>
+      <div>
+        <Button render={<Link href="/settings?tab=assistant" />} nativeButton={false} variant="outline">
+          {t("assistant.noKey.link")}
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+/** ローカル LLM の状態(読み込み中の案内と、メモリの解放)。ローカルを使うときだけ出す。 */
+function LocalStatusBar() {
+  const t = useT();
+  const errorMessage = useErrorMessage();
+  const provider = useAssistantStore((s) => s.status?.provider);
+  const llm = useLlmStore((s) => s.status);
+  const busy = useLlmStore((s) => s.busy);
+  if (provider !== "local" || !llm) return null;
+
+  const label =
+    llm.state === "starting"
+      ? t("assistant.local.loading")
+      : llm.state === "ready"
+        ? t("assistant.local.ready").replace("{size}", formatMemory(llm.memoryHintMb ?? 0))
+        : llm.state === "error"
+          ? (llm.message ?? t("llm.state.error"))
+          : t("assistant.local.idle");
+
+  return (
+    <div className="flex items-center justify-between gap-2 rounded-md bg-muted px-3 py-1.5 text-xs">
+      <span role="status">{label}</span>
+      {canRelease(llm.state) && (
+        <Button
+          size="sm"
+          variant="outline"
+          disabled={busy}
+          onClick={() =>
+            void useLlmStore
+              .getState()
+              .stop()
+              .catch((e) => toast.error(errorMessage(toAppError(e))))
+          }
+        >
+          {t("llm.release")}
+        </Button>
+      )}
     </div>
   );
 }
@@ -115,6 +178,7 @@ function Chat() {
   const setText = (v: string) => useAssistantStore.getState().setDraft(v);
   const endRef = useRef<HTMLDivElement>(null);
   const running = requestId !== null;
+  const external = sendsExternally(useAssistantStore((s) => s.status));
 
   useEffect(() => {
     endRef.current?.scrollIntoView({ block: "end" });
@@ -136,6 +200,7 @@ function Chat() {
 
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-3 px-4 pb-4">
+      <LocalStatusBar />
       <div className="flex items-center gap-2">
         <Button
           size="sm"
@@ -152,7 +217,9 @@ function Chat() {
           onValueChange={(id) => id && void useAssistantStore.getState().openConversation(id)}
         >
           <SelectTrigger className="min-w-0 flex-1" aria-label={t("assistant.history")}>
-            <SelectValue placeholder={conversations.length === 0 ? t("assistant.history.none") : t("assistant.history")} />
+            <SelectValue
+              placeholder={conversations.length === 0 ? t("assistant.history.none") : t("assistant.history")}
+            />
           </SelectTrigger>
           <SelectContent>
             {conversations.map((c) => (
@@ -191,7 +258,7 @@ function Chat() {
           }}
         />
         <div className="flex items-center justify-between gap-2">
-          <p className="text-xs text-muted-foreground">{t("assistant.cost")}</p>
+          <p className="text-xs text-muted-foreground">{external ? t("assistant.cost") : t("assistant.localNote")}</p>
           {running ? (
             <Button variant="outline" onClick={() => void useAssistantStore.getState().cancel()}>
               {t("assistant.stop")}
@@ -224,9 +291,21 @@ function Message({ message }: { message: ChatMessage }) {
       {!mine &&
         message.suggestions.map((s, i) =>
           s.model ? (
-            <ModelSuggestionCard key={i} messageId={message.id} index={i} suggestion={s} disabled={message.pending === true} />
+            <ModelSuggestionCard
+              key={i}
+              messageId={message.id}
+              index={i}
+              suggestion={s}
+              disabled={message.pending === true}
+            />
           ) : (
-            <SuggestionCard key={i} messageId={message.id} index={i} suggestion={s} disabled={message.pending === true} />
+            <SuggestionCard
+              key={i}
+              messageId={message.id}
+              index={i}
+              suggestion={s}
+              disabled={message.pending === true}
+            />
           ),
         )}
     </div>

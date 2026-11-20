@@ -5,6 +5,7 @@ pub mod engine_process;
 pub mod images;
 pub mod inputs;
 pub mod jobs;
+pub mod llm;
 pub mod models;
 pub mod presets;
 pub mod settings;

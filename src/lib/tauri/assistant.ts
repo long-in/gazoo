@@ -8,6 +8,23 @@ export interface AssistantStatus {
   model: string;
   consent: boolean;
   autoDelete: boolean;
+  provider: AssistantProvider;
+  /** 外部サーバ(`local_external`)の接続先とモデル名。 */
+  localBaseUrl: string;
+  localModel: string;
+}
+
+/**
+ * 送信先(docs/11 §13、docs/30 §6)。`anthropic` = Claude API、`local` = アプリが管理するローカル LLM、
+ * `local_external` = ユーザーが起動した OpenAI 互換のローカルサーバ(Ollama 等)。
+ */
+export type AssistantProvider = "anthropic" | "local" | "local_external";
+
+/** 外部サーバへの接続の確認結果(docs/11 §13.4)。 */
+export interface LocalCheck {
+  reachable: boolean;
+  modelFound: boolean;
+  models: string[];
 }
 
 export const ASSISTANT_MODELS = ["claude-haiku-5-5", "claude-sonnet-5-5", "claude-opus-5-5"] as const;
@@ -81,8 +98,37 @@ export const assistantSetKey = (key: string) => invoke<{ verified: boolean }>("a
 
 export const assistantClearKey = () => invoke<void>("assistant_clear_key");
 
-export const assistantUpdate = (patch: { model?: string; consent?: boolean; autoDelete?: boolean }) =>
-  invoke<AssistantStatus>("assistant_update", { patch });
+export interface AssistantPatch {
+  model?: string;
+  consent?: boolean;
+  autoDelete?: boolean;
+  provider?: AssistantProvider;
+  localBaseUrl?: string;
+  localModel?: string;
+}
+
+export const assistantUpdate = (patch: AssistantPatch) => invoke<AssistantStatus>("assistant_update", { patch });
+
+/** 外部サーバへの接続の確認。省略した項目は保存値を使う。届かないときもエラーにはならない(`reachable = false`)。 */
+export const assistantLocalCheck = (baseUrl?: string, model?: string) =>
+  invoke<LocalCheck>("assistant_local_check", { baseUrl: baseUrl ?? null, model: model ?? null });
+
+/** システムプロンプトの編集(docs/11 §12)。 */
+export interface PromptState {
+  text: string;
+  defaultText: string;
+  customized: boolean;
+  modelGuide: string;
+}
+
+/** 保存できる最大文字数(Rust 側と同じ)。 */
+export const MAX_SYSTEM_PROMPT_CHARS = 30000;
+
+export const assistantPromptGet = () => invoke<PromptState>("assistant_prompt_get");
+
+export const assistantPromptSet = (text: string) => invoke<{ customized: boolean }>("assistant_prompt_set", { text });
+
+export const assistantPromptReset = () => invoke<{ text: string }>("assistant_prompt_reset");
 
 export const assistantAsk = (
   conversationId: string | null,
