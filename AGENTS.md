@@ -29,7 +29,7 @@
 
 - `package.json` の依存は **完全一致のバージョン**(`^` / `~` を付けない)。`.npmrc` の `save-exact=true` により `npm install <pkg>` も固定で入る。
 - `src-tauri/Cargo.toml` の直接依存は **`=x.y.z`** で固定する。
-- Rust ツールチェーンは `rust-toolchain.toml` で固定する。パッケージマネージャは **npm**(Node 22 LTS 以上に付属の npm 10 以上)とし、`package.json` の `engines` で要件を示す。pnpm / yarn は使わない(`package-lock.json` が複数種類になるため)。
+- Rust ツールチェーンは `rust-toolchain.toml` で固定する。パッケージマネージャは **npm**(Node 26 以上に付属の npm 10 以上)とし、`package.json` の `engines` で要件を示す。pnpm / yarn は使わない(`package-lock.json` が複数種類になるため)。
 - `package-lock.json` と `src-tauri/Cargo.lock` は必ずコミットする。ビルド・CI では `npm ci` と `cargo ... --locked` を使う。
 - バージョン更新は、依存更新を目的とした変更として個別に行う(`npm install <pkg>@<version>` / `cargo update -p <crate>` → 固定値を書き換え → lint・テスト・ビルドで検証)。
 - 組み合わせ制約がある依存(`rusqlite` と `rusqlite_migration`、TypeScript と typescript-eslint 等)は `docs/02-architecture.md` の更新方針に従う。
