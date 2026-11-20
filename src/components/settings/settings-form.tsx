@@ -25,11 +25,12 @@ import { useUiStore } from "@/stores/ui-store";
 import { AssistantSection } from "./assistant-section";
 import { EngineInstallSection } from "./engine-install-section";
 import { EngineProcessSection } from "./engine-process-section";
+import { OtherSection } from "./other-section";
 import { StorageSection } from "./storage-section";
 
 type LanguageChoice = Language | "auto";
 
-const TAB_IDS = ["engine", "storage", "assistant", "display"] as const;
+const TAB_IDS = ["engine", "storage", "assistant", "display", "other"] as const;
 type TabId = (typeof TAB_IDS)[number];
 
 const TAB_LABELS: Record<TabId, MessageKey> = {
@@ -37,6 +38,7 @@ const TAB_LABELS: Record<TabId, MessageKey> = {
   storage: "settings.tabs.storage",
   assistant: "settings.tabs.assistant",
   display: "settings.tabs.display",
+  other: "settings.tabs.other",
 };
 
 /** 検証エラーの field がどのタブの項目かを返す。 */
@@ -247,13 +249,20 @@ function SettingsFormInner({ initial }: { initial: Settings }) {
             </div>
           </section>
         </TabsContent>
+
+        {/* デバッグ・ログの操作は即時反映(下の [保存] の対象外) */}
+        <TabsContent value="other" keepMounted>
+          <OtherSection />
+        </TabsContent>
       </Tabs>
 
-      <div>
-        <Button onClick={save} disabled={saving}>
-          {t("settings.save")}
-        </Button>
-      </div>
+      {tab !== "other" && (
+        <div>
+          <Button onClick={save} disabled={saving}>
+            {t("settings.save")}
+          </Button>
+        </div>
+      )}
     </div>
   );
 }

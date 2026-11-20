@@ -116,7 +116,7 @@ pub trait GenerationEngine: Send + Sync {
 
 ### 3.8 ログ
 
-- `tracing` + `tracing-appender`。ログは `{app_log_dir}` にローテーション出力。プロンプト本文は INFO 以上のログに出さない(プライバシー)。
+- `tracing` + `tracing-appender`。ログは `{app_log_dir}` にローテーション出力。プロンプト本文は INFO 以上のログに出さない(プライバシー)。**v0.24: 設定の「デバッグ」を ON にしたときだけ DEBUG の詳細ログを出し、ログは 100MB で分割・合計 1GB 超で古い順に自動削除する(プロンプト本文は DEBUG でも出さない)。詳細は [31-debug-logging.md](31-debug-logging.md)。**
 
 ### 3.9 セキュリティ
 

@@ -6,6 +6,7 @@ import Link from "next/link";
 import { EngineStatusBadge } from "@/components/engine/engine-status-badge";
 import { Progress } from "@/components/ui/progress";
 import { useT } from "@/lib/i18n/use-t";
+import { useDebugStore } from "@/stores/debug-store";
 import { useJobStore } from "@/stores/job-store";
 
 /** ステータスバー(docs/29 §4): エンジンの接続状態・実行中のジョブ・一時停止中。 */
@@ -14,7 +15,24 @@ export function StatusBar() {
     <footer className="flex h-6 shrink-0 items-center gap-4 border-t bg-panel-header px-3 text-[11px]">
       <EngineStatusBadge />
       <JobStatus />
+      <DebugIndicator />
     </footer>
+  );
+}
+
+/** デバッグログの出力中(付けっぱなしに気づけるように。docs/31 §5)。クリックで設定 > その他へ。 */
+function DebugIndicator() {
+  const t = useT();
+  const enabled = useDebugStore((s) => s.status?.enabled === true);
+  if (!enabled) return null;
+  return (
+    <Link
+      href="/settings?tab=other"
+      title={t("statusbar.debug.title")}
+      className="ml-auto rounded bg-warning/20 px-1.5 font-medium text-warning hover:bg-warning/30"
+    >
+      {t("statusbar.debug")}
+    </Link>
   );
 }
 

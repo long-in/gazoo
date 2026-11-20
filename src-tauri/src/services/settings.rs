@@ -176,6 +176,17 @@ pub fn set_managed_engine(
     set_raw(conn, KEY_MANAGED_ENGINE, &serde_json::to_value(cfg)?)
 }
 
+// 調査用の詳細ログ(docs/31)。ログレベルの切り替えを伴うため、`Settings` には含めず専用コマンドで変更する。
+const KEY_DEBUG_ENABLED: &str = "debug.enabled";
+
+pub fn get_debug_enabled(conn: &Connection) -> AppResult<bool> {
+    Ok(parse(get_raw(conn, KEY_DEBUG_ENABLED)?).unwrap_or(false))
+}
+
+pub fn set_debug_enabled(conn: &Connection, enabled: bool) -> AppResult<()> {
+    set_raw(conn, KEY_DEBUG_ENABLED, &serde_json::json!(enabled))
+}
+
 fn validate_url(url: &str) -> AppResult<String> {
     let url = url.trim().trim_end_matches('/');
     let rest = url
@@ -267,6 +278,16 @@ mod tests {
         let db = Db::open_in_memory().unwrap();
         let s = db.call(|c| load(c)).await.unwrap();
         assert_eq!(s, Settings::default());
+    }
+
+    #[tokio::test]
+    async fn debug_flag_defaults_off_and_roundtrips() {
+        let db = Db::open_in_memory().unwrap();
+        assert!(!db.call(|c| get_debug_enabled(c)).await.unwrap());
+        db.call(|c| set_debug_enabled(c, true)).await.unwrap();
+        assert!(db.call(|c| get_debug_enabled(c)).await.unwrap());
+        db.call(|c| set_debug_enabled(c, false)).await.unwrap();
+        assert!(!db.call(|c| get_debug_enabled(c)).await.unwrap());
     }
 
     #[tokio::test]

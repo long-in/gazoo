@@ -415,3 +415,18 @@ GitHub Releases の下書きを公開する前に、すべての項目を確認�
 - [ ] 送信先を Anthropic に戻すと、従来どおりキー・同意が必要で動作する。
 - [ ] ローカル利用中に api.anthropic.com への通信が発生しない(ネットワーク監視で確認)。
 - [ ] macOS(Apple Silicon): 導入・起動・解放・終了時の後始末。
+
+## デバッグログ(docs/31)
+
+- [ ] 設定 > 「その他」タブが表示され、既定ではデバッグが OFF。ログの件数・サイズ・保存先が出る。[保存] ボタンは出ない。
+- [ ] ON にすると、再起動なしでステータスバーに「DEBUG」が出る(クリックで「その他」タブへ移る)。生成を 1 回行うと、ログ(`gazooo-YYYY-MM-DD.log`)に DEBUG 行(`engine health check ok`、`job started` など)が出る。OFF にすると DEBUG 行が止まり、バッジが消える。
+- [ ] アプリを再起動しても ON / OFF の状態が維持される。
+- [ ] ON のまま、ComfyUI を停止 → 数秒後に再開する。ログに `engine request failed`(`kind` と `path`)、`engine considered disconnected`(管理モードではプロセスの状態)、`engine reachable again` が出る。
+- [ ] 生成中に ComfyUI を強制終了する。ログに WebSocket の切断理由と `history polling failed`(連続回数)が出て、ジョブが失敗として記録される。
+- [ ] ログに、入力したプロンプトの本文・API キーが含まれていない。
+- [ ] [ログを保存…] で保存ダイアログが開き、ZIP が保存される。中身は `info.txt` と `logs/` 配下のログ一式(`comfyui.log` を含む)。`info.txt` に API キーが無い。キャンセルしても何も起きない。
+- [ ] [フォルダを開く] でログフォルダが開く。
+- [ ] [ログを削除…] で確認ダイアログが出て、削除後に件数・サイズが減る(書き込み中のファイルは空になる)。`comfyui.log` は残る。
+- [ ] ログフォルダに古い `gazooo-*.log`(合計 1GB 超になる量のダミー)を置いて起動すると、更新日時の古いものから削除され、合計が 1GB 以下になる。`comfyui.log` と書き込み中のファイルは残る。
+- [ ] 1 ファイルが 100MB を超えると `gazooo-YYYY-MM-DD.1.log` へ分かれる。
+- [ ] macOS(Apple Silicon): 上記のうち、ログの保存先(`~/Library/Logs/<identifier>/`)・ZIP の保存・フォルダを開く操作。

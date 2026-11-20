@@ -1,4 +1,5 @@
 pub mod assistant;
+pub mod debug_log;
 pub mod engine;
 pub mod engine_install;
 pub mod engine_process;

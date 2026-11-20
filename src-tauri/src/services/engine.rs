@@ -1,7 +1,7 @@
 //! エンジン接続の管理・監視(docs/04-ipc-api.md「接続状態の監視」)。
 
 use std::sync::{Arc, Mutex, RwLock};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use tauri::{AppHandle, Emitter, Manager};
 
@@ -67,12 +67,29 @@ impl EngineService {
     /// ヘルスチェック。接続できなくてもエラーにせず、切断状態として返す。
     pub async fn check(&self) -> AppResult<EngineStatus> {
         let engine = self.engine()?;
+        let started = Instant::now();
         Ok(match engine.health().await {
-            Ok(status) => status,
-            Err(AppError::EngineBadResponse(_)) => {
-                EngineStatus::disconnected(engine.url(), EngineFailure::BadResponse)
+            Ok(status) => {
+                tracing::debug!(
+                    elapsed_ms = started.elapsed().as_millis() as u64,
+                    "engine health check ok"
+                );
+                status
             }
-            Err(_) => EngineStatus::disconnected(engine.url(), EngineFailure::Unreachable),
+            Err(e) => {
+                tracing::debug!(
+                    elapsed_ms = started.elapsed().as_millis() as u64,
+                    code = e.code(),
+                    error = %e,
+                    "engine health check failed"
+                );
+                match e {
+                    AppError::EngineBadResponse(_) => {
+                        EngineStatus::disconnected(engine.url(), EngineFailure::BadResponse)
+                    }
+                    _ => EngineStatus::disconnected(engine.url(), EngineFailure::Unreachable),
+                }
+            }
         })
     }
 
@@ -113,9 +130,28 @@ fn same_state(a: &EngineStatus, b: &EngineStatus) -> bool {
 
 /// 一定間隔でエンジンの状態を監視するバックグラウンドタスク。
 pub async fn monitor(app: AppHandle) {
+    let mut failed_checks = 0u32;
     loop {
-        if let Some(svc) = app.try_state::<Arc<EngineService>>() {
-            let _ = svc.refresh(&app, false).await;
+        if let Some(svc) = app.try_state::<Arc<EngineService>>()
+            && let Ok(status) = svc.refresh(&app, false).await
+        {
+            if status.connected {
+                if failed_checks > 0 {
+                    tracing::debug!(failed_checks, "engine reachable again");
+                }
+                failed_checks = 0;
+            } else {
+                failed_checks += 1;
+                // 切断と判定したとき、アプリが起動した ComfyUI のプロセスが生きているかを残す(原因の切り分け用)
+                let proc = app
+                    .try_state::<Arc<crate::services::engine_process::EngineProcess>>()
+                    .map(|p| p.state());
+                tracing::debug!(
+                    consecutive_failures = failed_checks,
+                    process = ?proc,
+                    "engine considered disconnected"
+                );
+            }
         }
         tokio::time::sleep(POLL_INTERVAL).await;
     }

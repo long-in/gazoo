@@ -1,6 +1,6 @@
 //! 生成の投入・完了待ち・キャンセル(ComfyUI の `/prompt` `/history` `/view` `/ws`)。
 
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use futures_util::StreamExt;
 use serde_json::{Value, json};
@@ -8,9 +8,9 @@ use tokio::net::TcpStream;
 use tokio_tungstenite::tungstenite::Message;
 use tokio_tungstenite::{MaybeTlsStream, WebSocketStream};
 
-use super::ComfyUiClient;
 use super::parse::{self, HistoryState, ImageRef};
 use super::workflow;
+use super::{ComfyUiClient, error_chain, log_http_failure};
 use crate::domain::job::ProgressPhase;
 use crate::domain::params::GenerationParams;
 use crate::engine::{ImageData, Progress};
@@ -22,6 +22,7 @@ type WsStream = WebSocketStream<MaybeTlsStream<TcpStream>>;
 const MAX_CONSECUTIVE_POLL_FAILURES: u32 = 20;
 
 fn unreachable(e: reqwest::Error) -> AppError {
+    log_http_failure(&e);
     AppError::EngineUnreachable(e.without_url().to_string())
 }
 
@@ -110,7 +111,10 @@ impl ComfyUiClient {
         on_progress: &(dyn Fn(Progress) + Send + Sync),
     ) -> AppResult<Vec<ImageData>> {
         // 完了判定は履歴のポーリングで確実に行い、WebSocket は進捗のベストエフォート。
+        let started = Instant::now();
         let mut ws = self.connect_ws().await;
+        let mut ws_messages = 0u64;
+        let mut last_progress = Instant::now();
         let mut ticker = tokio::time::interval(self.poll_interval);
         ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
         let mut failures = 0u32;
@@ -119,7 +123,9 @@ impl ComfyUiClient {
             tokio::select! {
                 msg = next_ws_message(&mut ws) => match msg {
                     Some(Ok(Message::Text(text))) => {
+                        ws_messages += 1;
                         if let Some((step, total, node)) = parse::parse_ws_progress(text.as_str(), id) {
+                            last_progress = Instant::now();
                             let phase = if node.as_deref() == Some(workflow::FACE_DETAILER_NODE) {
                                 ProgressPhase::FaceDetail
                             } else {
@@ -133,13 +139,39 @@ impl ComfyUiClient {
                             });
                         }
                     }
-                    Some(Ok(_)) => {}
+                    Some(Ok(Message::Close(frame))) => {
+                        tracing::debug!(remote = id, ?frame, ws_messages, "websocket close frame received");
+                    }
+                    Some(Ok(_)) => ws_messages += 1,
                     // 切断・エラー: 以後はポーリングのみで続行する
-                    Some(Err(_)) | None => ws = None,
+                    Some(Err(e)) => {
+                        tracing::debug!(
+                            remote = id,
+                            error = %error_chain(&e),
+                            ws_messages,
+                            since_last_progress_ms = last_progress.elapsed().as_millis() as u64,
+                            elapsed_ms = started.elapsed().as_millis() as u64,
+                            "websocket error; falling back to polling"
+                        );
+                        ws = None;
+                    }
+                    None => {
+                        tracing::debug!(
+                            remote = id,
+                            ws_messages,
+                            since_last_progress_ms = last_progress.elapsed().as_millis() as u64,
+                            elapsed_ms = started.elapsed().as_millis() as u64,
+                            "websocket stream ended; falling back to polling"
+                        );
+                        ws = None;
+                    }
                 },
                 _ = ticker.tick() => {
                     match self.get_json(&format!("/history/{id}")).await {
                         Ok(v) => {
+                            if failures > 0 {
+                                tracing::debug!(remote = id, failures, "history polling recovered");
+                            }
                             failures = 0;
                             match parse::parse_history(&v.unwrap_or(Value::Null), id) {
                                 HistoryState::Pending => {}
@@ -152,13 +184,28 @@ impl ComfyUiClient {
                                             "画像が生成されませんでした".into(),
                                         ));
                                     }
+                                    tracing::debug!(
+                                        remote = id,
+                                        images = images.len(),
+                                        elapsed_ms = started.elapsed().as_millis() as u64,
+                                        "generation finished; fetching images"
+                                    );
                                     return self.fetch_images(&images).await;
                                 }
                             }
                         }
                         Err(e) => {
                             failures += 1;
+                            tracing::debug!(
+                                remote = id,
+                                failures,
+                                code = e.code(),
+                                error = %e,
+                                elapsed_ms = started.elapsed().as_millis() as u64,
+                                "history polling failed"
+                            );
                             if failures >= MAX_CONSECUTIVE_POLL_FAILURES {
+                                tracing::warn!(remote = id, failures, "giving up waiting: engine unreachable");
                                 return Err(e);
                             }
                         }
@@ -196,14 +243,28 @@ impl ComfyUiClient {
     async fn connect_ws(&self) -> Option<WsStream> {
         let host = self.base.strip_prefix("http://")?;
         let url = format!("ws://{host}/ws?clientId={}", self.client_id);
+        let started = Instant::now();
         match tokio::time::timeout(
             Duration::from_secs(3),
             tokio_tungstenite::connect_async(url),
         )
         .await
         {
-            Ok(Ok((ws, _))) => Some(ws),
-            _ => None,
+            Ok(Ok((ws, _))) => {
+                tracing::debug!(
+                    elapsed_ms = started.elapsed().as_millis() as u64,
+                    "websocket connected"
+                );
+                Some(ws)
+            }
+            Ok(Err(e)) => {
+                tracing::debug!(error = %error_chain(&e), "websocket connect failed; progress via polling only");
+                None
+            }
+            Err(_) => {
+                tracing::debug!("websocket connect timed out; progress via polling only");
+                None
+            }
         }
     }
 

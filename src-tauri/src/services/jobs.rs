@@ -339,6 +339,8 @@ impl JobService {
             }
         }
         self.emit_updated(&id).await;
+        let job_started = Instant::now();
+        tracing::debug!(job = %id, "job started");
 
         let cancel = Arc::new(Notify::new());
         if let Ok(mut a) = self.active.lock() {
@@ -366,6 +368,12 @@ impl JobService {
                 )
             }
         };
+        tracing::debug!(
+            job = %id,
+            status = ?status,
+            elapsed_ms = job_started.elapsed().as_millis() as u64,
+            "job finished"
+        );
         let finished = self
             .db
             .call({
@@ -426,6 +434,7 @@ impl JobService {
             }
         }
         let remote = engine.submit(&params, &uploaded).await?;
+        tracing::debug!(job = %row.id, remote = %remote, uploads = uploaded.len(), "prompt submitted");
         self.db
             .call({
                 let (id, remote) = (row.id.clone(), remote.clone());
@@ -463,6 +472,7 @@ impl JobService {
                 return Err(RunError::Cancelled);
             }
         };
+        tracing::debug!(job = %row.id, images = images.len(), "images received from engine");
         self.save_images(row, &params, images).await?;
         Ok(())
     }
