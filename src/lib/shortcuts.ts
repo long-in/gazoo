@@ -1,7 +1,7 @@
 /** キーボードショートカットの判定(docs/05-ui-design.md §3)。DOM に依存しない純粋関数。 */
 
-/** `Ctrl/Cmd + 1..6` で切り替える画面。サイドナビの並びと同じ。 */
-export const NAV_SHORTCUT_PATHS = ["/", "/gallery", "/queue", "/presets", "/models", "/settings"] as const;
+/** `Ctrl/Cmd + 1..5` で切り替える画面。サイドナビの並びと同じ。 */
+export const NAV_SHORTCUT_PATHS = ["/", "/gallery", "/presets", "/models", "/settings"] as const;
 
 export interface KeyLike {
   key: string;

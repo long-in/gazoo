@@ -12,7 +12,6 @@ import {
   Trash2,
   X,
 } from "lucide-react";
-import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
 
@@ -28,6 +27,7 @@ import { imageGet } from "@/lib/tauri/images";
 import type { ImageItem, Job, JobStatus } from "@/lib/tauri/jobs";
 import { useFormStore } from "@/stores/form-store";
 import { useJobStore } from "@/stores/job-store";
+import { useStripStore } from "@/stores/strip-store";
 
 const STATUS_VARIANT: Record<JobStatus, "default" | "secondary" | "destructive" | "outline"> = {
   queued: "secondary",
@@ -111,7 +111,6 @@ export function JobRow({
   queuedCount: number;
 }) {
   const t = useT();
-  const router = useRouter();
   const errorMessage = useErrorMessage();
   const progress = useJobStore((s) => s.progress[job.id]);
   const { cancel, reorder, retry, remove, enqueue } = useJobStore.getState();
@@ -136,7 +135,6 @@ export function JobRow({
   /** この設定を生成画面に読み込む(「この設定で生成」と同じ)。 */
   const load = () => {
     useFormStore.getState().loadParams({ ...params, seedRandomize: false });
-    router.push("/");
   };
   /** 同じ設定で、新しいシードでもう一度生成する。 */
   const again = () => run(() => enqueue({ ...params, seedRandomize: true }, 1), t("queue.again.done"));
@@ -148,7 +146,7 @@ export function JobRow({
   );
 
   return (
-    <li className="flex flex-col gap-2 rounded-xl border p-3">
+    <li className="flex flex-col gap-2 rounded-xl border p-2.5">
       <div className="flex items-start gap-3">
         <input
           type="checkbox"
@@ -157,24 +155,6 @@ export function JobRow({
           onChange={onToggle}
           aria-label={t("queue.select")}
         />
-        {thumbs.length > 0 && (
-          <div className="flex shrink-0 gap-1">
-            {thumbs.map((img) => (
-              <button
-                key={img.id}
-                type="button"
-                title={t("queue.openImage")}
-                onClick={() => router.push(`/gallery?id=${img.id}`)}
-                className="overflow-hidden rounded-md border bg-muted/30"
-              >
-                <img src={imageSrc(img.thumbPath)} alt={`seed ${img.seed}`} className="size-14 object-cover" loading="lazy" />
-              </button>
-            ))}
-            {job.imageIds.length > MAX_THUMBS && (
-              <span className="self-end text-xs text-muted-foreground">+{job.imageIds.length - MAX_THUMBS}</span>
-            )}
-          </div>
-        )}
         <div className="min-w-0 flex-1">
           <p className="line-clamp-2 text-sm">{params.prompt}</p>
           <p className="mt-1 text-xs text-muted-foreground">
@@ -185,6 +165,24 @@ export function JobRow({
         </div>
         <Badge variant={STATUS_VARIANT[job.status]}>{t(`status.${job.status}` as MessageKey)}</Badge>
       </div>
+      {thumbs.length > 0 && (
+        <div className="flex shrink-0 gap-1">
+          {thumbs.map((img) => (
+            <button
+              key={img.id}
+              type="button"
+              title={t("queue.openImage")}
+              onClick={() => useStripStore.getState().select(img.id)}
+              className="overflow-hidden rounded-md border bg-muted/30"
+            >
+              <img src={imageSrc(img.thumbPath)} alt={`seed ${img.seed}`} className="size-12 object-cover" loading="lazy" />
+            </button>
+          ))}
+          {job.imageIds.length > MAX_THUMBS && (
+            <span className="self-end text-xs text-muted-foreground">+{job.imageIds.length - MAX_THUMBS}</span>
+          )}
+        </div>
+      )}
 
       {job.status === "running" && <Progress value={percent} />}
       {job.error && <JobErrorNote code={job.error.code} message={job.error.message} />}
@@ -242,7 +240,7 @@ export function JobRow({
       </div>
 
       {open && (
-        <dl className="grid grid-cols-[7rem_1fr] gap-x-3 gap-y-1 rounded-lg bg-muted/40 p-3 text-xs">
+        <dl className="grid grid-cols-[4.5rem_1fr] gap-x-3 gap-y-1 rounded-lg bg-muted/40 p-3 text-xs">
           <dt className="text-muted-foreground">{t("generate.prompt")}</dt>
           <dd className="whitespace-pre-wrap break-words">{params.prompt}</dd>
           {params.negativePrompt && (

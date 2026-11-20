@@ -2,7 +2,6 @@
 
 import { save } from "@tauri-apps/plugin-dialog";
 import { Brush, Copy, Download, FolderOpen, ImagePlus, Sparkles, Star, Trash2, Wand2 } from "lucide-react";
-import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
 
@@ -15,32 +14,34 @@ import {
   SheetHeader,
   SheetTitle,
 } from "@/components/ui/sheet";
-import { supportsImg2img, supportsInpaint } from "@/lib/generation/defaults";
-import { supportsReference } from "@/lib/generation/reference";
+import { useImageActions } from "@/lib/gallery/use-image-as";
 import { useErrorMessage, useT } from "@/lib/i18n/use-t";
 import { toAppError } from "@/lib/tauri/errors";
 import { type ImageDetail, imageExport, imageGet, imageReveal } from "@/lib/tauri/images";
-import { inputImageFromGallery } from "@/lib/tauri/inputs";
-import { useEngineStore } from "@/stores/engine-store";
-import { useFormStore } from "@/stores/form-store";
 import { useGalleryStore } from "@/stores/gallery-store";
-import { useModelsStore } from "@/stores/models-store";
+import { useStripStore } from "@/stores/strip-store";
 
 import { DeleteConfirm } from "./delete-confirm";
 
 type State = { id: string; status: "loading" } | { id: string; status: "missing" } | { id: string; status: "ready"; detail: ImageDetail };
 
 /** ギャラリーの詳細パネル(`/gallery?id=` で開く)。 */
-export function ImageDetailSheet({ id, onClose }: { id: string | null; onClose: () => void }) {
+/** `stay` が true のとき(生成ページ上)は、「〜に使う」で画面を移動しない。 */
+export function ImageDetailSheet({ id, onClose, stay = false }: { id: string | null; onClose: () => void; stay?: boolean }) {
   const t = useT();
   const errorMessage = useErrorMessage();
-  const router = useRouter();
+  const actions = useImageActions(stay);
 
   const [state, setState] = useState<State | null>(null);
   const [confirmDelete, setConfirmDelete] = useState(false);
 
   const items = useGalleryStore((s) => s.items);
-  const setFavorite = useGalleryStore((s) => s.setFavorite);
+  const stripItems = useStripStore((s) => s.items);
+  const setGalleryFavorite = useGalleryStore((s) => s.setFavorite);
+  const setFavorite = async (id: string, value: boolean) => {
+    await setGalleryFavorite(id, value);
+    useStripStore.getState().applyFavorite(id, value);
+  };
   const remove = useGalleryStore((s) => s.remove);
 
   useEffect(() => {
@@ -57,7 +58,7 @@ export function ImageDetailSheet({ id, onClose }: { id: string | null; onClose: 
   // 一覧側でお気に入りを切り替えたとき等に表示を合わせる
   const current = state && state.id === id ? state : null;
   const detail = current?.status === "ready" ? current.detail : null;
-  const image = detail ? (items.find((i) => i.id === detail.image.id) ?? detail.image) : null;
+  const image = detail ? (items.find((i) => i.id === detail.image.id) ?? stripItems.find((i) => i.id === detail.image.id) ?? detail.image) : null;
   const params = detail?.job.params;
 
   const run = async (action: () => Promise<unknown>, okKey?: Parameters<typeof t>[0]) => {
@@ -83,105 +84,6 @@ export function ImageDetailSheet({ id, onClose }: { id: string | null; onClose: 
     if (dest) await run(() => imageExport(image.id, dest), "gallery.exported");
   }
 
-  function useSettings() {
-    if (!image || !params) return;
-    // バッチ内の各画像は同じシードを共有するため、画像のシードで再現する
-    useFormStore.getState().loadParams({ ...params, seed: image.seed });
-    router.push("/");
-  }
-
-  /** この画像を ControlNet の参照画像として生成画面に設定する。 */
-  async function setAsReference() {
-    if (!image) return;
-    try {
-      const input = await inputImageFromGallery(image.id);
-      const controlnets = useEngineStore.getState().models?.controlnets ?? [];
-      const enabled = useFormStore.getState().setReferenceImage(input.path, controlnets);
-      if (enabled) toast.success(t("gallery.referenceSet"));
-      else toast.info(t("gallery.referenceFlux"));
-      router.push("/");
-    } catch (e) {
-      toast.error(errorMessage(toAppError(e)));
-    }
-  }
-
-  /** この画像を Inpaint の参照画像として生成画面に設定する(マスクは生成画面で描く)。 */
-  async function setAsInpaint() {
-    if (!image) return;
-    try {
-      const input = await inputImageFromGallery(image.id);
-      const form = useFormStore.getState();
-      form.setInpaintImage(input.path, input.width, input.height);
-      if (supportsInpaint(form.params.model.kind)) {
-        form.setInpaintEnabled(true);
-        toast.success(t("gallery.inpaintSet"));
-      } else {
-        toast.info(t("gallery.inpaintFlux"));
-      }
-      router.push("/");
-    } catch (e) {
-      toast.error(errorMessage(toAppError(e)));
-    }
-  }
-
-  /** この画像を Qwen-Image 2.1 の参照画像に追加する(docs/24 §6.2)。種別が違うときは取り込むだけで、有効にはしない。 */
-  async function setAsQwenReference() {
-    if (!image) return;
-    try {
-      const input = await inputImageFromGallery(image.id);
-      const form = useFormStore.getState();
-      form.addReferenceImage(input.path, input.width, input.height);
-      if (supportsReference(form.params.model.kind)) {
-        form.setReferenceEnabled(true);
-        toast.success(t("gallery.qwenReferenceSet"));
-      } else {
-        toast.info(t("gallery.qwenReferenceOther"));
-      }
-      router.push("/");
-    } catch (e) {
-      toast.error(errorMessage(toAppError(e)));
-    }
-  }
-
-  /** この画像を img2img の元画像として生成画面に設定する。anime が true なら、アニメ系のモデルと推奨値も設定する。 */
-  async function setAsImg2img(anime: boolean) {
-    if (!image) return;
-    try {
-      const input = await inputImageFromGallery(image.id);
-      const form = useFormStore.getState();
-      if (anime) {
-        const models = useModelsStore.getState();
-        if (!models.view) await models.load();
-        const engine = useEngineStore.getState();
-        const { outcome, compositionLocked } = form.startAnime(
-          { path: input.path, width: input.width, height: input.height },
-          {
-            catalog: useModelsStore.getState().view?.catalog,
-            models: engine.models,
-            cannyAvailable: (engine.status?.features.controlnetPreprocessors ?? []).includes("canny"),
-          },
-        );
-        if (outcome === "noAnimeModel") {
-          toast.warning(t("generate.img2img.anime.noModel"));
-          router.push("/models?purpose=anime");
-          return;
-        }
-        toast.success(t(compositionLocked ? "generate.img2img.anime.done" : "generate.img2img.anime.doneNoLock"));
-      } else {
-        form.setImg2imgImage(input.path, input.width, input.height);
-        if (supportsImg2img(form.params.model.kind)) {
-          form.setImg2imgEnabled(true);
-          toast.success(t("gallery.img2imgSet"));
-        } else {
-          toast.info(t("gallery.img2imgFlux"));
-        }
-      }
-      router.push("/");
-    } catch (e) {
-      toast.error(errorMessage(toAppError(e)));
-    }
-  }
-
   return (
     <>
       <Sheet open={id !== null} onOpenChange={(open) => !open && onClose()}>
@@ -204,27 +106,27 @@ export function ImageDetailSheet({ id, onClose }: { id: string | null; onClose: 
               />
 
               <div className="flex flex-wrap gap-2">
-                <Button type="button" onClick={useSettings}>
+                <Button type="button" onClick={() => image && params && actions.loadSettings(image, params)}>
                   <Sparkles />
                   {t("gallery.useSettings")}
                 </Button>
-                <Button type="button" variant="outline" onClick={() => void setAsReference()}>
+                <Button type="button" variant="outline" onClick={() => void actions.setAsReference(image)}>
                   <ImagePlus />
                   {t("gallery.useAsReference")}
                 </Button>
-                <Button type="button" variant="outline" onClick={() => void setAsImg2img(true)}>
+                <Button type="button" variant="outline" onClick={() => void actions.setAsImg2img(image, true)}>
                   <Wand2 />
                   {t("gallery.useAsAnime")}
                 </Button>
-                <Button type="button" variant="outline" onClick={() => void setAsImg2img(false)}>
+                <Button type="button" variant="outline" onClick={() => void actions.setAsImg2img(image, false)}>
                   <ImagePlus />
                   {t("gallery.useAsImg2img")}
                 </Button>
-                <Button type="button" variant="outline" onClick={() => void setAsQwenReference()}>
+                <Button type="button" variant="outline" onClick={() => void actions.setAsQwenReference(image)}>
                   <ImagePlus />
                   {t("gallery.useAsQwenReference")}
                 </Button>
-                <Button type="button" variant="outline" onClick={() => void setAsInpaint()}>
+                <Button type="button" variant="outline" onClick={() => void actions.setAsInpaint(image)}>
                   <Brush />
                   {t("gallery.useAsInpaint")}
                 </Button>
