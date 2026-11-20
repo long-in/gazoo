@@ -35,7 +35,7 @@
 
 ### 必要なもの
 
-- Node.js 22 LTS 以上(npm 10 以上)
+- Node.js 26 以上(npm 10 以上)
 - Rust(`rust-toolchain.toml` で固定。rustup が自動で選びます)
 - Windows: Visual Studio Build Tools 2022(「C++ によるデスクトップ開発」)、WebView2(Windows 11 は標準搭載)
 - macOS: Xcode Command Line Tools

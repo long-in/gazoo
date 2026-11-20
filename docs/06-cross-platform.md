@@ -32,7 +32,7 @@ macOS Intel(x86_64)は MVP では非対象(ビルド自体は可能にしてお�
 ## 3. 開発環境
 
 ### 共通
-- Node.js 22 LTS 以上(npm 10 以上。`engines` で要件を明示)、Rust 1.99.1(`rust-toolchain.toml` で固定)
+- Node.js 26 以上(v0.18、設計: 26。レビュー待ち。従来は 22 LTS 以上。npm 10 以上。`engines` で要件を明示)、Rust 1.99.1(`rust-toolchain.toml` で固定)
 - 依存ライブラリは完全一致で固定し、ロックファイルをコミットする(AGENTS.md「依存バージョンの固定」)
 
 ### Windows
@@ -69,7 +69,7 @@ macOS Intel(x86_64)は MVP では非対象(ビルド自体は可能にしてお�
 
 - トリガー: `develop` への PR と push。同じ ref の古い実行は自動で中止する。権限は `contents: read` のみ。
 - **`check` ジョブ**(`windows-latest` と `macos-latest` の両方。`fail-fast: false`):
-  1. Node.js 22(`cache: npm`)と、`rust-toolchain.toml` のツールチェーンを導入(`rustup toolchain install`。rustup 1.28 以降は自動導入されないため明示する)。`Swatinem/rust-cache` で `src-tauri/target` をキャッシュ。
+  1. Node.js 26(v0.18。従来は 22。`cache: npm`)と、`rust-toolchain.toml` のツールチェーンを導入(`rustup toolchain install`。rustup 1.28 以降は自動導入されないため明示する)。`Swatinem/rust-cache` で `src-tauri/target` をキャッシュ。
   2. `npm ci` → `node tools/check-version.mjs`(バージョンの整合) → `npm run lint` → `npm run typecheck` → `npm test`
   3. `cargo fmt --check` / `cargo clippy --locked --all-targets -- -D warnings` / `cargo test --locked`
   4. ComfyUI 開発用スクリプトの構文検査(Windows: PowerShell の `Parser.ParseFile`、macOS: `bash -n`)。実行はしない(GPU・巨大な依存が必要なため)。
