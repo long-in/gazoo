@@ -6,7 +6,7 @@ mod parse;
 pub(crate) mod testutil;
 pub mod workflow;
 
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use async_trait::async_trait;
 use serde_json::Value;
@@ -50,6 +50,48 @@ const IMG2IMG_NODES: [&str; 4] = ["LoadImage", "ImageScale", "VAEEncode", "Repea
 /// Qwen-Image 2.1 のエンコーダ。参照画像つき生成の可否の判定に使う(docs/24 §4.2)。
 const NODE_QWEN_ENCODE: &str = "TextEncodeQwenImage21";
 
+/// これ以上かかった GET は、成功でも DEBUG ログに残す。
+const SLOW_REQUEST: Duration = Duration::from_secs(3);
+
+/// 失敗の種別(DEBUG ログ用)。
+pub(super) fn classify(e: &reqwest::Error) -> &'static str {
+    if e.is_timeout() {
+        "timeout"
+    } else if e.is_connect() {
+        "connect"
+    } else if e.is_decode() {
+        "decode"
+    } else if e.is_body() {
+        "body"
+    } else if e.is_request() {
+        "request"
+    } else {
+        "other"
+    }
+}
+
+/// エラーの原因の連鎖(`a: b: c`)。接続リセットなど、最上位の文言だけでは分からない理由を残す。
+pub(super) fn error_chain(e: &dyn std::error::Error) -> String {
+    let mut out = e.to_string();
+    let mut cur = e.source();
+    while let Some(s) = cur {
+        out.push_str(": ");
+        out.push_str(&s.to_string());
+        cur = s.source();
+    }
+    out
+}
+
+/// 通信の失敗を DEBUG に残す(パスと種別と原因の連鎖。ボディは出さない)。
+pub(super) fn log_http_failure(e: &reqwest::Error) {
+    tracing::debug!(
+        path = e.url().map(|u| u.path()).unwrap_or("?"),
+        kind = classify(e),
+        error = %error_chain(e),
+        "engine request failed"
+    );
+}
+
 pub struct ComfyUiClient {
     base: String,
     http: reqwest::Client,
@@ -87,23 +129,45 @@ impl ComfyUiClient {
 
     /// GET して JSON を返す。404 は `Ok(None)`(未導入ノードの問い合わせ用)。
     async fn get_json(&self, path: &str) -> AppResult<Option<Value>> {
+        let started = Instant::now();
         let resp = self
             .http
             .get(format!("{}{path}", self.base))
             .send()
             .await
-            .map_err(|e| AppError::EngineUnreachable(e.without_url().to_string()))?;
+            .map_err(|e| {
+                log_http_failure(&e);
+                tracing::debug!(
+                    elapsed_ms = started.elapsed().as_millis() as u64,
+                    "request elapsed until failure"
+                );
+                AppError::EngineUnreachable(e.without_url().to_string())
+            })?;
         let status = resp.status();
         if status == reqwest::StatusCode::NOT_FOUND {
             return Ok(None);
         }
         if !status.is_success() {
+            tracing::debug!(
+                path,
+                %status,
+                elapsed_ms = started.elapsed().as_millis() as u64,
+                "engine request: unexpected status"
+            );
             return Err(AppError::EngineBadResponse(format!("HTTP {status}")));
         }
-        resp.json::<Value>()
-            .await
-            .map(Some)
-            .map_err(|e| AppError::EngineBadResponse(e.without_url().to_string()))
+        let body = resp.json::<Value>().await.map(Some).map_err(|e| {
+            log_http_failure(&e);
+            AppError::EngineBadResponse(e.without_url().to_string())
+        });
+        if started.elapsed() >= SLOW_REQUEST {
+            tracing::debug!(
+                path,
+                elapsed_ms = started.elapsed().as_millis() as u64,
+                "engine request was slow"
+            );
+        }
+        body
     }
 
     /// `/object_info/<node>`。未導入のノードは `Null`。
@@ -275,6 +339,7 @@ mod tests {
     use super::testutil::{Route, spawn};
     use super::*;
     use tokio::net::TcpListener;
+    use tracing_subscriber::Layer;
 
     const STATS: &str =
         r#"{"system":{"comfyui_version":"0.3.50"},"devices":[{"name":"mps","vram_free":42}]}"#;
@@ -435,6 +500,54 @@ mod tests {
             .await
             .unwrap_err();
         assert_eq!(err.code(), "ENGINE_UNREACHABLE");
+    }
+
+    /// 接続できないとき、どのリクエストがどの種別で失敗したかが DEBUG ログに残る(docs/31 §3)。
+    #[tokio::test]
+    async fn failed_requests_are_logged_at_debug_with_kind_and_path() {
+        use std::io::Write;
+        use std::sync::{Arc, Mutex};
+        use tracing_subscriber::fmt::MakeWriter;
+        use tracing_subscriber::layer::SubscriberExt;
+
+        #[derive(Clone, Default)]
+        struct Buf(Arc<Mutex<Vec<u8>>>);
+        impl Write for Buf {
+            fn write(&mut self, b: &[u8]) -> std::io::Result<usize> {
+                self.0.lock().unwrap().extend_from_slice(b);
+                Ok(b.len())
+            }
+            fn flush(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
+        }
+        impl<'a> MakeWriter<'a> for Buf {
+            type Writer = Buf;
+            fn make_writer(&'a self) -> Buf {
+                self.clone()
+            }
+        }
+
+        let buf = Buf::default();
+        let sub = tracing_subscriber::registry().with(
+            tracing_subscriber::fmt::layer()
+                .with_writer(buf.clone())
+                .with_ansi(false)
+                .with_filter(tracing_subscriber::filter::LevelFilter::DEBUG),
+        );
+        let _guard = tracing::subscriber::set_default(sub);
+
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        drop(listener);
+        let _ = ComfyUiClient::new(&format!("http://{addr}"))
+            .unwrap()
+            .health()
+            .await;
+        let out = String::from_utf8(buf.0.lock().unwrap().clone()).unwrap();
+        assert!(out.contains("engine request failed"), "{out}");
+        assert!(out.contains("kind=\"connect\""), "{out}");
+        assert!(out.contains("/system_stats"), "{out}");
     }
 
     #[tokio::test]

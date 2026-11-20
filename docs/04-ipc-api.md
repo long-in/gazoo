@@ -289,3 +289,4 @@ type SettingsPatch = Partial<Settings>;
 
 - `assistant_status` に `provider` / `localBaseUrl` / `localModel`、`assistant_update` に同名の引数を追加し、新コマンド `assistant_local_check` を加える。`local` では `ASSISTANT_NO_KEY` / `ASSISTANT_NO_CONSENT` を返さない。詳細は [11-ai-assistant.md](11-ai-assistant.md) §13.6。
 - アプリ管理のローカル LLM 用に `llm_status` / `llm_install` / `llm_install_cancel` / `llm_remove` / `llm_start` / `llm_stop` / `llm_logs` / `llm_update_settings`、イベント `llm://state` / `llm://install-progress`、エラー `LLM_*` を追加する。`assistant.provider` に `local_external` を加える。詳細は [30-local-llm.md](30-local-llm.md) §8。
+- 調査用ログのため `debug_status` / `debug_set_enabled` / `debug_export_logs` / `debug_open_log_dir` / `debug_clear_logs` を追加する。`settings_update` は `debug.enabled` を受け付けない(専用コマンドで変更)。`Settings` には含めない(状態は `debug_status` で取得。31 §13)。詳細は [31-debug-logging.md](31-debug-logging.md) §6。

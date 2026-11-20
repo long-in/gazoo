@@ -61,13 +61,8 @@ pub fn run() {
             std::fs::create_dir_all(&data_dir)?;
             std::fs::create_dir_all(&log_dir)?;
 
-            let appender = tracing_appender::rolling::daily(&log_dir, "gazooo.log");
-            let (writer, guard) = tracing_appender::non_blocking(appender);
-            tracing_subscriber::fmt()
-                .with_writer(writer)
-                .with_ansi(false)
-                .with_max_level(tracing::Level::INFO)
-                .init();
+            // ログ(docs/31)。起動直後は INFO のみ。デバッグの設定は DB を開いた後に反映する
+            let (debug_log, guard) = services::debug_log::DebugLog::init(&log_dir)?;
             app.manage(LogGuard(guard));
 
             let db = Db::open(&data_dir.join("gazooo.db"))?;
@@ -80,6 +75,25 @@ pub fn run() {
             std::fs::create_dir_all(&images_dir)?;
             app.asset_protocol_scope()
                 .allow_directory(&images_dir, true)?;
+
+            // デバッグログの ON/OFF を復元し、ON の間は合計サイズを定期的に整理する(docs/31)
+            if tauri::async_runtime::block_on(
+                db.call(|c| services::settings::get_debug_enabled(c)),
+            )? {
+                debug_log.set_enabled(true);
+                let managed = tauri::async_runtime::block_on(
+                    db.call(|c| services::settings::get_managed_engine(c)),
+                )?
+                .enabled;
+                debug_log.log_environment(&services::debug_log::describe_environment(
+                    &app.package_info().version.to_string(),
+                    &settings.comfyui_url,
+                    managed,
+                    true,
+                ));
+            }
+            tauri::async_runtime::spawn(Arc::clone(&debug_log).run_pruner());
+            app.manage(debug_log);
 
             let engine = Arc::new(EngineService::new(&settings.comfyui_url)?);
             let jobs = JobService::new(
@@ -185,6 +199,11 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             commands::settings::settings_get,
             commands::settings::settings_update,
+            commands::debug::debug_status,
+            commands::debug::debug_set_enabled,
+            commands::debug::debug_export_logs,
+            commands::debug::debug_open_log_dir,
+            commands::debug::debug_clear_logs,
             commands::engine::engine_status,
             commands::engine::engine_list_models,
             commands::engine::engine_reconnect,

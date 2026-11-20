@@ -205,3 +205,7 @@ CREATE INDEX idx_assistant_msg_conv ON assistant_messages(conversation_id, creat
 
 - `0001_init.sql` で上記を作成。以降は前方互換のみ(ダウングレードは非対応)。
 - マイグレーション前に DB ファイルのバックアップ(`gazooo.db.bak-<version>`)を作成。
+
+### デバッグログの設定(v0.24、設計: 31 §2。承認済み・実装済み)
+
+`settings` に `debug.enabled`(boolean、既定 false)を追加する。スキーマ変更・マイグレーションはなし。`settings_update` では変更できず、`debug_set_enabled` で行う。

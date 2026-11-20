@@ -32,6 +32,7 @@ import { useEngineInstallStore } from "@/stores/engine-install-store";
 import { useEngineProcessStore } from "@/stores/engine-process-store";
 import { useEngineStore } from "@/stores/engine-store";
 import { useGalleryStore } from "@/stores/gallery-store";
+import { useDebugStore } from "@/stores/debug-store";
 import { useLlmStore } from "@/stores/llm-store";
 import { useStripStore } from "@/stores/strip-store";
 import { usePresetStore } from "@/stores/preset-store";
@@ -186,6 +187,14 @@ function LlmBootstrap() {
   return null;
 }
 
+/** デバッグログの状態(ステータスバーの表示用)を起動時に 1 回取得する。 */
+function DebugBootstrap() {
+  useEffect(() => {
+    void useDebugStore.getState().load();
+  }, []);
+  return null;
+}
+
 /** ComfyUI の起動管理の状態・ログの購読(画面を移動しても取りこぼさないよう、アプリ全体で 1 回だけ)。 */
 function EngineProcessBootstrap() {
   useEffect(() => {
@@ -262,6 +271,7 @@ export function Providers({ children }: { children: ReactNode }) {
         <PresetBootstrap />
         <AssistantBootstrap />
         <LlmBootstrap />
+        <DebugBootstrap />
         <ModelsBootstrap />
         <EngineProcessBootstrap />
         <EngineInstallBootstrap />
