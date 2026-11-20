@@ -32,6 +32,7 @@
 | 22 | [engine-default-paths.md](22-engine-default-paths.md) | インストール版でも ComfyUI の `main.py`・Python・base-directory の候補を初期値に入れる(内蔵の既定の場所の一覧。15 §3.1 の拡張)の設計(v0.14、M18) | 🟢 承認済み・実装済み(2026-11-20。07 Q-104〜107 は推奨どおり。Rust のテストまで確認) |
 | 23 | [engine-installer.md](23-engine-installer.md) | ComfyUI のアプリ内インストール(`app_data_dir/comfyui` に Python・ComfyUI・PyTorch・カスタムノードをすべて導入、導入後は管理モードを自動設定)の設計(v0.15、M19) | 🟢 承認済み・実装済み(2026-11-20。07 Q-108〜115 は推奨どおり。実機の Windows で基本 + GGUF の導入を検証。画面の目視確認・macOS・顔補正/ControlNet 前処理の導入は未実施) |
 | 24 | [qwen-reference-image.md](24-qwen-reference-image.md) | Qwen-Image 2.1 の参照画像入力(画像編集、F-19。`TextEncodeQwenImage21` の `images` / `vae`、`<imageN>` 指定、1〜4 枚)の設計(v0.16、M20) | 🟢 承認済み・実装済み(2026-11-20。07 Q-116〜123 は推奨どおり。01・04・05・17・19 の追記分を含む) |
+| 26 | [node-26-minimum.md](26-node-26-minimum.md) | Node.js の最低要件を 22 LTS から 26 以上に引き上げる(CI・`engines`・`@types/node`・Vitest のプール)設計(v0.18、M22) | 🟢 承認済み・実装済み(2026-11-20。07 Q-129〜132 は推奨どおり。CI での初回実行は未確認) |
 | — | [07 B7 / Q-52](07-open-questions.md) | アプリ名を `gazoo` から `gazooo` へ変更(識別子・DB・crate 名を含む全置換) | 🟢 承認済み・実装済み(2026-11-19。02・03・06・08〜13 とコード・設定・CI・README の名称を置換。旧印 `# managed by gazoo` は引き続き認識する) |
 
 ステータス凡例: 🟡 レビュー待ち / 🟢 承認済み / 🔴 要修正

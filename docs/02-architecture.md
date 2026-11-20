@@ -141,7 +141,7 @@ pub trait GenerationEngine: Send + Sync {
 - 依存更新方針(2026-11-18 時点の確定):
   - TypeScript は **`~6.0.3` に固定**。7.x は typescript-eslint が未対応(peer `<6.1.0`)で lint が壊れるため。typescript-eslint の対応後に再評価する。
   - ESLint は 10.x を使用。`eslint-config-next` 配下の一部プラグインが peer 警告を出すが、主要ルール(react-hooks / next / jsx-a11y / TS)の動作は確認済み。
-  - `@types/node` は Node 22 LTS(06 の最低要件)に合わせ **22.x のまま**(26.x にすると 22 に無い API を型が許してしまう)。
+  - `@types/node` は最低要件の Node に合わせる。(v0.18、設計: 26。レビュー待ち)最低要件を Node 26 にするため **26.x に更新する**。
   - `rusqlite` と `rusqlite_migration` は常にセットで更新する(上記)。
 - HTTP は `reqwest` 0.13(`rustls-no-provider`)+ `rustls`(`ring`)。TLS の暗号プロバイダは ring に固定する(06 参照)。
 - shadcn/ui の最新テンプレートは Radix ではなく Base UI(`@base-ui/react`)を使用。クラス結合は `cn` パッケージ(clsx + tailwind-merge 相当)。
