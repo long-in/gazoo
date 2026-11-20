@@ -14,6 +14,7 @@ import { useFormStore } from "@/stores/form-store";
 import { useJobStore } from "@/stores/job-store";
 import { useModelsStore } from "@/stores/models-store";
 
+import { ExtrasPanel } from "./extras-panel";
 import { MaskEditor } from "./mask-editor";
 import { ModelProfilePanel } from "./model-profile-panel";
 
@@ -24,6 +25,7 @@ import { ModelProfilePanel } from "./model-profile-panel";
 export function Workspace() {
   return (
     <div className="flex flex-col gap-4">
+      <ExtrasPanel />
       <ModelProfilePanel />
       <ReferenceWorkspace />
       <EstimatePanel />

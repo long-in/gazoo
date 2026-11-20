@@ -65,7 +65,12 @@ export function QueueCard({
       <span className="line-clamp-4 flex-1 text-[11px] leading-snug text-muted-foreground">
         {job.status === "failed" && job.error ? job.error.message : job.params.prompt}
       </span>
-      {job.status === "running" && <Progress value={percent} />}
+      {job.status === "running" && (
+        <>
+          <Progress value={percent} />
+          {percent !== null && <span className="text-[11px] font-medium tabular-nums">{percent}%</span>}
+        </>
+      )}
     </button>
   );
 }

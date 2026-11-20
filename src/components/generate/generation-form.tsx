@@ -36,21 +36,17 @@ import { referenceReady, supportsReference } from "@/lib/generation/reference";
 import type { MessageKey } from "@/lib/i18n";
 import { useErrorMessage, useT } from "@/lib/i18n/use-t";
 import { type CandidateBadge, candidateBadges } from "@/lib/models/profile";
-import { type AppError, toAppError } from "@/lib/tauri/errors";
+import { toAppError } from "@/lib/tauri/errors";
 import { MAX_ENQUEUE_COUNT, type ModelKind } from "@/lib/tauri/jobs";
 import { cn } from "@/lib/utils";
 import { useAssistantStore } from "@/stores/assistant-store";
 import { useEngineStore } from "@/stores/engine-store";
+import { fieldErrorOf, useFormErrorStore } from "@/stores/form-error-store";
 import { useFormStore } from "@/stores/form-store";
 import { useJobStore } from "@/stores/job-store";
 import { useModelsStore } from "@/stores/models-store";
 import { useSettingsStore } from "@/stores/settings-store";
 
-import { ControlnetSection } from "./controlnet-section";
-import { FaceDetailerSection } from "./face-detailer-section";
-import { Img2imgSection } from "./img2img-section";
-import { InpaintSection } from "./inpaint-section";
-import { ReferenceSection } from "./reference-section";
 import { Field, NumberInput, SliderNumber } from "./fields";
 
 const BUILTIN_VAE = "__builtin__";
@@ -116,7 +112,8 @@ export function GenerationForm() {
   const saved = useSettingsStore((s) => s.settings.generationDefaults);
 
   const [submitting, setSubmitting] = useState(false);
-  const [fieldError, setFieldError] = useState<AppError | null>(null);
+  const fieldError = useFormErrorStore((s) => s.error);
+  const setFieldError = useFormErrorStore.getState().setError;
   const [resetOpen, setResetOpen] = useState(false);
 
   // モデルの説明・絞り込みに使うカタログ。取得ページと同じものを読む(docs/18、20)
@@ -130,8 +127,7 @@ export function GenerationForm() {
   // Anima / Qwen-Image 2.1 / Krea 2 は、テキストエンコーダ 1 つと VAE を別に選ぶ(docs/17 §3)
   const split = isSplit(kind);
   const externalVae = needsExternalVae(kind);
-  const err = (field: string) =>
-    fieldError?.code === "VALIDATION" && fieldError.details?.field === field ? fieldError.message : null;
+  const err = fieldErrorOf(fieldError);
 
   // 設定(DB)から下書きを復元する(初回のみ)
   useEffect(() => {
@@ -499,20 +495,6 @@ export function GenerationForm() {
           {t("generate.seed.random")}
         </label>
       </Field>
-
-      {/* 拡張機能(画像から生成・Inpaint・ControlNet・顔補正)。畳んで、フォームの縦の長さを抑えられる(docs/20 §4.2) */}
-      <details open className="group flex flex-col gap-4 [&[open]>summary]:mb-4">
-        <summary className="cursor-pointer text-sm font-medium">{t("generate.extras")}</summary>
-        <ReferenceSection error={err} />
-
-        <Img2imgSection error={err} />
-
-        <InpaintSection error={err} />
-
-        <ControlnetSection error={err} />
-
-        <FaceDetailerSection error={err} />
-      </details>
 
       <details className="rounded-lg border p-3">
         <summary className="cursor-pointer text-sm font-medium">{t("generate.advanced")}</summary>
