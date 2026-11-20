@@ -32,6 +32,7 @@
 | 22 | [engine-default-paths.md](22-engine-default-paths.md) | インストール版でも ComfyUI の `main.py`・Python・base-directory の候補を初期値に入れる(内蔵の既定の場所の一覧。15 §3.1 の拡張)の設計(v0.14、M18) | 🟢 承認済み・実装済み(2026-11-20。07 Q-104〜107 は推奨どおり。Rust のテストまで確認) |
 | 23 | [engine-installer.md](23-engine-installer.md) | ComfyUI のアプリ内インストール(`app_data_dir/comfyui` に Python・ComfyUI・PyTorch・カスタムノードをすべて導入、導入後は管理モードを自動設定)の設計(v0.15、M19) | 🟢 承認済み・実装済み(2026-11-20。07 Q-108〜115 は推奨どおり。実機の Windows で基本 + GGUF の導入を検証。画面の目視確認・macOS・顔補正/ControlNet 前処理の導入は未実施) |
 | 24 | [qwen-reference-image.md](24-qwen-reference-image.md) | Qwen-Image 2.1 の参照画像入力(画像編集、F-19。`TextEncodeQwenImage21` の `images` / `vae`、`<imageN>` 指定、1〜4 枚)の設計(v0.16、M20) | 🟢 承認済み・実装済み(2026-11-20。07 Q-116〜123 は推奨どおり。01・04・05・17・19 の追記分を含む) |
+| 25 | [settings-tabs.md](25-settings-tabs.md) | 設定ページをカテゴリ別(エンジン / 保存先 / AI サポート / 表示)のタブ UI にする設計(v0.17、M21) | 🟢 承認済み・実装済み(2026-11-20。07 Q-124〜128 は推奨どおり。05 の追記分を含む) |
 | — | [07 B7 / Q-52](07-open-questions.md) | アプリ名を `gazoo` から `gazooo` へ変更(識別子・DB・crate 名を含む全置換) | 🟢 承認済み・実装済み(2026-11-19。02・03・06・08〜13 とコード・設定・CI・README の名称を置換。旧印 `# managed by gazoo` は引き続き認識する) |
 
 ステータス凡例: 🟡 レビュー待ち / 🟢 承認済み / 🔴 要修正
@@ -86,6 +87,7 @@
 | M18 | ComfyUI の既定パスの保持: 既知の場所の一覧から `main.py`・Python・base-directory の候補を初期値に入れる | 22 | ✅ 実装完了(Rust のテストまで確認) |
 | M19 | ComfyUI のアプリ内インストール: マニフェスト・取得と展開・導入手順・検証・削除・設定画面のウィザード | 23 | ✅ 実装完了(実機の Windows で基本 + GGUF の導入と再実行を検証。画面の目視確認・macOS は未実施) |
 | M20 | Qwen-Image 2.1 の参照画像入力: 実機での確認と設計の確定、パラメータ・検証・ワークフロー、参照画像セクション、AI サポートの追記 | F-19(24) | ✅ 実装完了(Rust 319・Vitest 209 のテスト、`cargo clippy -D warnings`、ESLint、静的エクスポートのビルドまで確認。実機の ComfyUI で参照 1 枚(87 秒)・2 枚(68 秒)の生成を検証(09 の検証ログ)。参照 3〜4 枚・`resolution` 1536・画面の目視確認・macOS は未実施) |
+| M21 | 設定ページのタブ化(エンジン / 保存先 / AI サポート / 表示、`?tab=`) | 25 | ✅ 実装完了(型チェック・ESLint・ビルドまで確認。画面の目視確認は未実施) |
 
 **v0.16(M20)の実装条件**: 24 と 07(Q-116〜123)、01・04・05・17・19 の追記分が 🟢(2026-11-20 承認)。
 
