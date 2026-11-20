@@ -20,6 +20,50 @@ const KEY_VERIFIED: &str = "assistant.key_verified";
 const KEY_MODEL: &str = "assistant.model";
 const KEY_CONSENT: &str = "assistant.consent";
 const KEY_AUTO_DELETE: &str = "assistant.auto_delete";
+const KEY_SYSTEM_PROMPT: &str = "assistant.system_prompt";
+const KEY_PROVIDER: &str = "assistant.provider";
+const KEY_LOCAL_BASE_URL: &str = "assistant.local_base_url";
+const KEY_LOCAL_MODEL: &str = "assistant.local_model";
+const KEY_LLM_IDLE: &str = "llm.idle_minutes";
+const KEY_LLM_RELEASE: &str = "llm.release_before_generation";
+
+/// 外部サーバ(Ollama 等)の既定の接続先とモデル名(docs/11 §13.1)。
+pub const DEFAULT_LOCAL_BASE_URL: &str = "http://127.0.0.1:11434/v1";
+pub const DEFAULT_LOCAL_MODEL: &str = "qwen3.5:9b";
+/// アイドルで自動停止するまでの既定の分数(docs/30 §5)。0 は自動停止なし。
+pub const DEFAULT_IDLE_MINUTES: u32 = 5;
+pub const IDLE_MINUTES_CHOICES: [u32; 5] = [0, 1, 5, 15, 30];
+
+/// AI サポートの送信先(docs/11 §13・docs/30 §6)。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum Provider {
+    #[default]
+    Anthropic,
+    /// アプリが導入・起動する llama.cpp(docs/30)。
+    Local,
+    /// ユーザーが起動した OpenAI 互換のローカルサーバ(Ollama 等)。
+    LocalExternal,
+}
+
+impl Provider {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Anthropic => "anthropic",
+            Self::Local => "local",
+            Self::LocalExternal => "local_external",
+        }
+    }
+
+    fn parse(s: &str) -> Option<Self> {
+        match s {
+            "anthropic" => Some(Self::Anthropic),
+            "local" => Some(Self::Local),
+            "local_external" => Some(Self::LocalExternal),
+            _ => None,
+        }
+    }
+}
 
 fn get(conn: &Connection, key: &str) -> AppResult<Option<Value>> {
     let raw: Option<String> = conn
@@ -50,6 +94,10 @@ pub struct AssistantStatus {
     pub model: String,
     pub consent: bool,
     pub auto_delete: bool,
+    pub provider: Provider,
+    /// 外部サーバ(`local_external`)の接続先とモデル名。
+    pub local_base_url: String,
+    pub local_model: String,
 }
 
 pub fn status(conn: &Connection) -> AppResult<AssistantStatus> {
@@ -66,7 +114,81 @@ pub fn status(conn: &Connection) -> AppResult<AssistantStatus> {
         auto_delete: get(conn, KEY_AUTO_DELETE)?
             .and_then(|v| v.as_bool())
             .unwrap_or(true),
+        provider: get(conn, KEY_PROVIDER)?
+            .and_then(|v| v.as_str().and_then(Provider::parse))
+            .unwrap_or_default(),
+        local_base_url: get(conn, KEY_LOCAL_BASE_URL)?
+            .and_then(|v| v.as_str().map(str::to_owned))
+            .filter(|s| !s.is_empty())
+            .unwrap_or_else(|| DEFAULT_LOCAL_BASE_URL.to_string()),
+        local_model: get(conn, KEY_LOCAL_MODEL)?
+            .and_then(|v| v.as_str().map(str::to_owned))
+            .filter(|s| !s.is_empty())
+            .unwrap_or_else(|| DEFAULT_LOCAL_MODEL.to_string()),
     })
+}
+
+pub fn set_provider(conn: &Connection, provider: Provider) -> AppResult<()> {
+    set(
+        conn,
+        KEY_PROVIDER,
+        &Value::String(provider.as_str().to_string()),
+    )
+}
+
+/// 検証済みの URL とモデル名を保存する(ループバックの確認は呼び出し側。docs/11 §13.1)。
+pub fn set_local_server(
+    conn: &Connection,
+    base_url: Option<&str>,
+    model: Option<&str>,
+) -> AppResult<()> {
+    if let Some(u) = base_url {
+        set(conn, KEY_LOCAL_BASE_URL, &Value::String(u.to_string()))?;
+    }
+    if let Some(m) = model {
+        set(conn, KEY_LOCAL_MODEL, &Value::String(m.to_string()))?;
+    }
+    Ok(())
+}
+
+/// ローカル LLM のメモリ管理の設定(docs/30 §5)。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct LlmSettings {
+    pub idle_minutes: u32,
+    pub release_before_generation: bool,
+}
+
+pub fn llm_settings(conn: &Connection) -> AppResult<LlmSettings> {
+    Ok(LlmSettings {
+        idle_minutes: get(conn, KEY_LLM_IDLE)?
+            .and_then(|v| v.as_u64())
+            .and_then(|n| u32::try_from(n).ok())
+            .filter(|n| IDLE_MINUTES_CHOICES.contains(n))
+            .unwrap_or(DEFAULT_IDLE_MINUTES),
+        release_before_generation: get(conn, KEY_LLM_RELEASE)?
+            .and_then(|v| v.as_bool())
+            .unwrap_or(true),
+    })
+}
+
+pub fn set_llm_settings(
+    conn: &Connection,
+    idle_minutes: Option<u32>,
+    release_before_generation: Option<bool>,
+) -> AppResult<()> {
+    if let Some(m) = idle_minutes {
+        if !IDLE_MINUTES_CHOICES.contains(&m) {
+            return Err(AppError::validation(
+                "idleMinutes",
+                "選べない時間です(0 / 1 / 5 / 15 / 30)",
+            ));
+        }
+        set(conn, KEY_LLM_IDLE, &Value::from(m))?;
+    }
+    if let Some(v) = release_before_generation {
+        set(conn, KEY_LLM_RELEASE, &Value::Bool(v))?;
+    }
+    Ok(())
 }
 
 pub fn api_key(conn: &Connection) -> AppResult<Option<String>> {
@@ -101,6 +223,22 @@ pub fn set_consent(conn: &Connection, consent: bool) -> AppResult<()> {
 
 pub fn set_auto_delete(conn: &Connection, on: bool) -> AppResult<()> {
     set(conn, KEY_AUTO_DELETE, &Value::Bool(on))
+}
+
+/// 保存されたカスタムのシステムプロンプト(未設定なら `None` = 初期値。docs/11 §12.2)。
+pub fn system_prompt(conn: &Connection) -> AppResult<Option<String>> {
+    Ok(get(conn, KEY_SYSTEM_PROMPT)?
+        .and_then(|v| v.as_str().map(str::to_owned))
+        .filter(|s| !s.trim().is_empty()))
+}
+
+pub fn set_system_prompt(conn: &Connection, text: &str) -> AppResult<()> {
+    set(conn, KEY_SYSTEM_PROMPT, &Value::String(text.to_string()))
+}
+
+pub fn clear_system_prompt(conn: &Connection) -> AppResult<()> {
+    conn.execute("DELETE FROM settings WHERE key = ?1", [KEY_SYSTEM_PROMPT])?;
+    Ok(())
 }
 
 // ---- 会話 ----
@@ -343,6 +481,9 @@ mod tests {
                 model: DEFAULT_MODEL.into(),
                 consent: false,
                 auto_delete: true,
+                provider: Provider::Anthropic,
+                local_base_url: DEFAULT_LOCAL_BASE_URL.into(),
+                local_model: DEFAULT_LOCAL_MODEL.into(),
             }
         );
         let s = db
@@ -468,5 +609,68 @@ mod tests {
             .unwrap();
         let texts: Vec<_> = rows.iter().map(|r| r.1.as_str()).collect();
         assert_eq!(texts, ["t2", "t3", "t4"]);
+    }
+
+    #[tokio::test]
+    async fn provider_and_local_server_settings_roundtrip() {
+        let db = Db::open_in_memory().unwrap();
+        let s = db
+            .call(|c| {
+                set_provider(c, Provider::Local)?;
+                set_local_server(c, Some("http://127.0.0.1:8080/v1"), Some("m"))?;
+                status(c)
+            })
+            .await
+            .unwrap();
+        assert_eq!(s.provider, Provider::Local);
+        assert_eq!(s.local_base_url, "http://127.0.0.1:8080/v1");
+        assert_eq!(s.local_model, "m");
+        // 状態の JSON は snake_case の値を返す
+        let v = serde_json::to_value(&s).unwrap();
+        assert_eq!(v["provider"], "local");
+        assert_eq!(v["localBaseUrl"], "http://127.0.0.1:8080/v1");
+        let s = db
+            .call(|c| {
+                set_provider(c, Provider::LocalExternal)?;
+                status(c)
+            })
+            .await
+            .unwrap();
+        assert_eq!(
+            serde_json::to_value(&s).unwrap()["provider"],
+            "local_external"
+        );
+    }
+
+    #[tokio::test]
+    async fn llm_settings_defaults_and_validation() {
+        let db = Db::open_in_memory().unwrap();
+        let d = db.call(|c| llm_settings(c)).await.unwrap();
+        assert_eq!(
+            d,
+            LlmSettings {
+                idle_minutes: 5,
+                release_before_generation: true
+            }
+        );
+        let s = db
+            .call(|c| {
+                set_llm_settings(c, Some(30), Some(false))?;
+                llm_settings(c)
+            })
+            .await
+            .unwrap();
+        assert_eq!(
+            s,
+            LlmSettings {
+                idle_minutes: 30,
+                release_before_generation: false
+            }
+        );
+        let err = db
+            .call(|c| set_llm_settings(c, Some(7), None))
+            .await
+            .unwrap_err();
+        assert_eq!(err.code(), "VALIDATION");
     }
 }

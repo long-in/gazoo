@@ -27,7 +27,8 @@ pub const CAPABILITIES: &str = r#"
 - キュー: 実行中・待機中のジョブの確認、並べ替え、キャンセル、再試行。
 - モデル(モデル画面): チェックポイント・ControlNet・検出モデル・Flux・Anima・Qwen-Image 2.1・Krea 2 を、バージョンを選んで取得できる(Anima などは「必要なファイルをまとめて取得」で、本体・テキストエンコーダ・VAE が揃う)。取得はユーザーが「ダウンロード」を押したときだけ行う。チェックポイントには、アニメ・イラスト特化の SDXL の NoobAI-XL と Animagine XL 4.0(どちらも成人向けにも対応。「用途」で絞り込める)がある。
 - アニメ系モデルの使い方: NoobAI-XL・Animagine XL 4.0 は自然な文章ではなく Danbooru タグ(1girl, solo, …)で書く。品質タグ(例: masterpiece, best quality)を入れ、ネガティブに lowres, bad anatomy, worst quality などを入れる。サイズは 832×1216 か 1024×1024、steps 28 前後、CFG 5 前後、サンプラーは euler_ancestral が目安。成人向けの表現はタグ(Animagine は rating: safe / sensitive / nsfw / explicit)で制御し、避けたいときはネガティブに nsfw を入れる。顔補正・ControlNet・Inpaint はそのまま使える。
-- AI に相談(このパネル): フォームの設定へのアドバイス。提案はユーザーが「適用」を押して初めてフォームに反映される。
+- AI に相談(このパネル): フォームの設定へのアドバイス。提案はユーザーが「適用」を押して初めてフォームに反映される。送信先は設定の「AI サポート」で選ぶ: Claude(Anthropic の API。内容は外部へ送られ、利用料がかかる)、ローカル LLM(Qwen3.5-9B。この PC の中だけで処理され、外部へは送られず、料金もかからない)、ローカル LLM の外部サーバ(Ollama など)。
+- ローカル LLM(設定の「AI サポート」で、モデルとランタイムをアプリが導入・起動・停止する): 使わない状態が続くと自動で停止してメモリ(RAM / VRAM)を解放し、次の相談で自動的に起動し直す(数秒〜十数秒かかる)。画像生成の開始前にも自動で解放できる。メモリ不足の相談には、「設定 > AI サポートの [メモリを解放]」や自動解放の設定も案内する(外部サーバのメモリはアプリでは管理できない)。
 
 # gazooo にまだ無い機能(「ある」と案内しない。必要なら ComfyUI を直接使う方法を勧める)
 - LoRA、生成中のプレビュー画像、元画像からのプロンプト自動生成、参照画像への色マークによる領域指定、アウトペイント(キャンバスの拡張)、複数の ControlNet、動画生成。
@@ -50,6 +51,7 @@ const MODEL_RULES: &str = r#"
 - メモリが足りなそうなときは、軽いモデルも添える。
 - 下のモデルガイドに無いモデルを、推測で勧めない。選択中のモデルがガイドに無い(カタログ外)ときは、特徴が分からないと答える。
 - 成人向けの内容は、ガイドで「成人向け対応」とあるモデルだけを勧める。利用者が適法な範囲で使うことが前提で、未成年・実在の人物に関わる依頼には協力しない。
+- 参照画像(img2img・ControlNet・Inpaint・参照画像つき生成)を使う成人向けの依頼は、参照画像が、成人の架空キャラクター(イラストや CG)であるとユーザーが説明したときに限って手伝う。画像は見えないので、実在の人物の写真や、未成年に見えるキャラクターの画像だと分かる(または疑われる)ときは、協力しない。
 "#;
 
 /// モデルガイド(docs/18 §6.1)。カタログのプロフィールから自動生成する(手書きで二重に持たない)。
@@ -121,13 +123,29 @@ fn guide_line(f: &Family) -> Option<String> {
     ))
 }
 
-/// システムプロンプト全体(基本の指示 + 機能カタログ + モデルの提案のルールとモデルガイド)。
-pub fn system_prompt() -> String {
-    let mut s = format!("{}\n{}", super::context::SYSTEM_PROMPT, CAPABILITIES);
-    if let Some(c) = catalog() {
+/// システムプロンプトの初期値(編集できる部分。基本の指示 + 機能カタログ + モデルの提案のルール。docs/11 §12.1)。
+pub fn default_prompt() -> String {
+    let mut s = format!(
+        "{}
+{}",
+        super::context::SYSTEM_PROMPT,
+        CAPABILITIES
+    );
+    if catalog().is_some() {
         s.push_str(MODEL_RULES);
-        s.push_str(&model_guide(c));
     }
+    s
+}
+
+/// 自動生成のモデルガイド(編集不可。常にシステムプロンプトの末尾に付く)。カタログが読めなければ空。
+pub fn model_guide_text() -> String {
+    catalog().map(model_guide).unwrap_or_default()
+}
+
+/// 送信するシステムプロンプト全体。`custom` が `None` なら初期値。モデルガイドは常に末尾に付ける。
+pub fn system_prompt(custom: Option<&str>) -> String {
+    let mut s = custom.map_or_else(default_prompt, str::to_owned);
+    s.push_str(&model_guide_text());
     s
 }
 
@@ -250,7 +268,7 @@ mod tests {
 
     #[test]
     fn system_prompt_includes_rules_and_guide() {
-        let p = system_prompt();
+        let p = system_prompt(None);
         assert!(p.contains("suggest_model"));
         assert!(p.contains("# モデルの提案のルール"));
         assert!(p.contains("# モデルガイド"));
@@ -282,10 +300,19 @@ mod tests {
     }
 
     #[test]
+    fn custom_prompt_replaces_the_editable_part_and_keeps_the_guide() {
+        let p = system_prompt(Some("カスタム指示"));
+        assert!(p.starts_with("カスタム指示"));
+        assert!(!p.contains("# 守ること"));
+        assert!(p.contains("# モデルガイド"));
+        assert!(system_prompt(None).starts_with(&default_prompt()));
+    }
+
+    #[test]
     fn system_prompt_stays_within_the_size_budget() {
-        let n = system_prompt().chars().count();
+        let n = default_prompt().chars().count();
         assert!(n <= MAX_PROMPT_CHARS, "{n} 文字");
-        assert!(system_prompt().contains("suggest_params"));
+        assert!(default_prompt().contains("suggest_params"));
     }
 
     #[test]

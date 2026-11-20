@@ -166,6 +166,7 @@ type SettingsPatch = Partial<Settings>;
 | `assistant_set_key` | `{ key }` | `{ verified }`(401 は保存せず `ASSISTANT_AUTH`) |
 | `assistant_clear_key` | – | – |
 | `assistant_update` | `{ model?; consent?; autoDelete? }` | `status` |
+| `assistant_prompt_get` / `_set` / `_reset`(v0.22) | – / `{ text }` / – | `{ text; defaultText; customized; modelGuide }` / `{ customized }` / `{ text }`(11 §12.5) |
 | `assistant_ask` | `{ conversationId: string \| null; text; params: GenerationParams }` | `{ requestId; conversationId; assistantMessageId }` |
 | `assistant_conversation_list` / `_get` / `_delete` | – / `{ id }` / `{ ids \| null }`(null = すべて) | 会話の一覧 / 取得 / 削除(最大 30 会話、11 §4.1) |
 | `assistant_suggestion_applied` | `{ messageId; index }` | 提案を適用済みとして記録 |
@@ -283,3 +284,8 @@ type SettingsPatch = Partial<Settings>;
 ## 追記(v0.12・承認済み): キュー管理
 
 - `job_remove { ids }`(終了済みジョブを履歴から外す)、`queue_pause` / `queue_resume` / `queue_state`、イベント `queue://state` を追加する。`job_enqueue` は、カタログで種別が分かるモデル・エンコーダ・VAE が選択した種別と合わないとき `VALIDATION`(`details.field` は `model` / `clip` / `vae`)で断る。詳細は [20-ui-refresh.md](20-ui-refresh.md) §2.4・§3.4。
+
+## 追記(v0.23・レビュー待ち): ローカル LLM
+
+- `assistant_status` に `provider` / `localBaseUrl` / `localModel`、`assistant_update` に同名の引数を追加し、新コマンド `assistant_local_check` を加える。`local` では `ASSISTANT_NO_KEY` / `ASSISTANT_NO_CONSENT` を返さない。詳細は [11-ai-assistant.md](11-ai-assistant.md) §13.6。
+- アプリ管理のローカル LLM 用に `llm_status` / `llm_install` / `llm_install_cancel` / `llm_remove` / `llm_start` / `llm_stop` / `llm_logs` / `llm_update_settings`、イベント `llm://state` / `llm://install-progress`、エラー `LLM_*` を追加する。`assistant.provider` に `local_external` を加える。詳細は [30-local-llm.md](30-local-llm.md) §8。

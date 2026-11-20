@@ -16,6 +16,8 @@ import {
   onEngineInstallState,
   onEngineProcState,
   onEngineStatus,
+  onLlmInstall,
+  onLlmState,
   onImageCreated,
   onImageDeleted,
   onJobProgress,
@@ -30,6 +32,7 @@ import { useEngineInstallStore } from "@/stores/engine-install-store";
 import { useEngineProcessStore } from "@/stores/engine-process-store";
 import { useEngineStore } from "@/stores/engine-store";
 import { useGalleryStore } from "@/stores/gallery-store";
+import { useLlmStore } from "@/stores/llm-store";
 import { useStripStore } from "@/stores/strip-store";
 import { usePresetStore } from "@/stores/preset-store";
 import { useJobStore } from "@/stores/job-store";
@@ -161,6 +164,28 @@ function AssistantBootstrap() {
   return null;
 }
 
+/** ローカル LLM の状態・導入の進捗の購読(画面を移動しても取りこぼさないよう、アプリ全体で 1 回だけ)。 */
+function LlmBootstrap() {
+  useEffect(() => {
+    let cancelled = false;
+    const unlisteners: (() => void)[] = [];
+    const st = () => useLlmStore.getState();
+    void Promise.all([
+      onLlmState((p) => st().applyState(p.state, p.message)),
+      onLlmInstall((s) => st().applyInstall(s)),
+    ]).then((fns) => {
+      if (cancelled) fns.forEach((fn) => fn());
+      else unlisteners.push(...fns);
+    });
+    void st().load();
+    return () => {
+      cancelled = true;
+      unlisteners.forEach((fn) => fn());
+    };
+  }, []);
+  return null;
+}
+
 /** ComfyUI の起動管理の状態・ログの購読(画面を移動しても取りこぼさないよう、アプリ全体で 1 回だけ)。 */
 function EngineProcessBootstrap() {
   useEffect(() => {
@@ -236,6 +261,7 @@ export function Providers({ children }: { children: ReactNode }) {
         <JobBootstrap />
         <PresetBootstrap />
         <AssistantBootstrap />
+        <LlmBootstrap />
         <ModelsBootstrap />
         <EngineProcessBootstrap />
         <EngineInstallBootstrap />

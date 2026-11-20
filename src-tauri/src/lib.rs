@@ -107,11 +107,24 @@ pub fn run() {
             app.manage(models);
             let storage = StorageService::new(db.clone(), paths.clone(), Arc::new(OsTrash));
             app.manage(Arc::new(PresetService::new(db.clone())));
-            app.manage(AssistantService::new(
+            let assistant = AssistantService::new(
                 db.clone(),
                 AnthropicClient::new()?,
                 Arc::new(TauriSink(app.handle().clone())),
-            ));
+            );
+            // ローカル LLM(docs/30)。導入・起動・メモリ解放をアプリが管理する
+            let llm = services::llm::LlmService::new(
+                db.clone(),
+                paths.data_dir.join("llm"),
+                services::llm::manifest::Manifest::embedded()?,
+                Arc::new(TauriSink(app.handle().clone())),
+                Some(log_dir.join("llm.log")),
+            );
+            assistant.set_runtime(llm.clone());
+            jobs.set_generation_hook(llm.clone());
+            tauri::async_runtime::spawn(Arc::clone(&llm).run_idle_monitor());
+            app.manage(assistant);
+            app.manage(llm);
             app.manage(storage);
             app.manage(engine);
             app.manage(Arc::clone(&jobs));
@@ -215,6 +228,18 @@ pub fn run() {
             commands::assistant::assistant_set_key,
             commands::assistant::assistant_clear_key,
             commands::assistant::assistant_update,
+            commands::assistant::assistant_local_check,
+            commands::llm::llm_status,
+            commands::llm::llm_install,
+            commands::llm::llm_install_cancel,
+            commands::llm::llm_remove,
+            commands::llm::llm_start,
+            commands::llm::llm_stop,
+            commands::llm::llm_logs,
+            commands::llm::llm_update_settings,
+            commands::assistant::assistant_prompt_get,
+            commands::assistant::assistant_prompt_set,
+            commands::assistant::assistant_prompt_reset,
             commands::assistant::assistant_ask,
             commands::assistant::assistant_cancel,
             commands::assistant::assistant_conversation_list,
@@ -234,6 +259,16 @@ pub fn run() {
         .expect("error while building tauri application")
         .run(|app, event| {
             // アプリが起動した ComfyUI は、終了時に確実に止める(異常終了時は Job Object / プロセスグループが止める)
+            if let tauri::RunEvent::Exit = event
+                && let Some(llm) = app.try_state::<Arc<services::llm::LlmService>>()
+            {
+                let llm = Arc::clone(&llm);
+                tauri::async_runtime::block_on(async move {
+                    let _ =
+                        tokio::time::timeout(std::time::Duration::from_secs(15), llm.shutdown())
+                            .await;
+                });
+            }
             if let tauri::RunEvent::Exit = event
                 && let Some(proc) = app.try_state::<Arc<EngineProcess>>()
             {

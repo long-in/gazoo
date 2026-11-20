@@ -100,6 +100,18 @@ impl crate::services::engine_install::InstallSink for TauriSink {
     }
 }
 
+impl crate::services::llm::LlmSink for TauriSink {
+    fn state(&self, state: crate::services::llm::LlmState, message: Option<&str>) {
+        let _ = self.0.emit(
+            "llm://state",
+            serde_json::json!({ "state": state, "message": message }),
+        );
+    }
+    fn install(&self, state: &crate::services::llm::InstallState) {
+        let _ = self.0.emit("llm://install-progress", state);
+    }
+}
+
 impl crate::services::engine_process::ProcSink for TauriSink {
     fn state(&self, state: &crate::services::engine_process::EngineProcState) {
         let _ = self.0.emit("engine://proc-state", state);

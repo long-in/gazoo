@@ -151,7 +151,7 @@ impl AnthropicClient {
 }
 
 /// `cancel` が true になるまで待つ(送信側が破棄されたら永遠に待つ)。
-async fn cancelled(rx: &mut watch::Receiver<bool>) {
+pub(super) async fn cancelled(rx: &mut watch::Receiver<bool>) {
     loop {
         if *rx.borrow() {
             return;

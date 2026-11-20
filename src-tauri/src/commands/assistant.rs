@@ -6,8 +6,9 @@ use tauri::State;
 use crate::db::assistant::{AssistantStatus, Conversation, ConversationSummary};
 use crate::domain::params::GenerationParams;
 use crate::error::AppResult;
+use crate::services::assistant::openai_compat::LocalCheck;
 use crate::services::assistant::{
-    AskStarted, AssistantPatch, AssistantService, capabilities, context::ModelContext,
+    AskStarted, AssistantPatch, AssistantService, PromptState, capabilities, context::ModelContext,
 };
 use crate::services::engine::EngineService;
 
@@ -43,6 +44,45 @@ pub async fn assistant_clear_key(svc: Svc<'_>) -> AppResult<()> {
 #[tauri::command]
 pub async fn assistant_update(svc: Svc<'_>, patch: AssistantPatch) -> AppResult<AssistantStatus> {
     svc.update(patch).await
+}
+
+#[derive(Serialize)]
+pub struct PromptSaved {
+    pub customized: bool,
+}
+
+#[derive(Serialize)]
+pub struct PromptReset {
+    pub text: String,
+}
+
+/// 外部サーバ(Ollama 等)への接続の確認(docs/11 §13.4)。省略した項目は保存値を使う。
+#[tauri::command]
+pub async fn assistant_local_check(
+    svc: Svc<'_>,
+    base_url: Option<String>,
+    model: Option<String>,
+) -> AppResult<LocalCheck> {
+    svc.local_check(base_url, model).await
+}
+
+#[tauri::command]
+pub async fn assistant_prompt_get(svc: Svc<'_>) -> AppResult<PromptState> {
+    svc.prompt_get().await
+}
+
+#[tauri::command]
+pub async fn assistant_prompt_set(svc: Svc<'_>, text: String) -> AppResult<PromptSaved> {
+    Ok(PromptSaved {
+        customized: svc.prompt_set(text).await?,
+    })
+}
+
+#[tauri::command]
+pub async fn assistant_prompt_reset(svc: Svc<'_>) -> AppResult<PromptReset> {
+    Ok(PromptReset {
+        text: svc.prompt_reset().await?,
+    })
 }
 
 #[tauri::command]

@@ -48,6 +48,12 @@ impl From<AppError> for RunError {
     }
 }
 
+/// 画像生成の開始前に呼ばれる(ローカル LLM のメモリ解放。docs/30 §5)。
+#[async_trait::async_trait]
+pub trait GenerationHook: Send + Sync {
+    async fn before_generation(&self);
+}
+
 pub struct JobService {
     db: Db,
     engine: Arc<EngineService>,
@@ -57,6 +63,7 @@ pub struct JobService {
     active: Mutex<Option<Active>>,
     /// 一時停止中は、次のジョブを始めない(実行中のものは完了まで続く。docs/20 §3.3)。アプリ起動中のみ保持。
     paused: AtomicBool,
+    hook: std::sync::OnceLock<Arc<dyn GenerationHook>>,
 }
 
 impl JobService {
@@ -74,7 +81,13 @@ impl JobService {
             wake: Notify::new(),
             active: Mutex::new(None),
             paused: AtomicBool::new(false),
+            hook: std::sync::OnceLock::new(),
         })
+    }
+
+    /// 生成の開始前に呼ぶ処理を設定する(起動時に 1 回)。
+    pub fn set_generation_hook(&self, hook: Arc<dyn GenerationHook>) {
+        let _ = self.hook.set(hook);
     }
 
     /// 起動時の復旧。前回の実行中ジョブを失敗扱いにし、待機中ジョブがあればワーカーを起こす。
@@ -333,6 +346,9 @@ impl JobService {
                 job_id: id.clone(),
                 cancel: Arc::clone(&cancel),
             });
+        }
+        if let Some(h) = self.hook.get() {
+            h.before_generation().await;
         }
         let outcome = self.run(&row, &cancel).await;
         if let Ok(mut a) = self.active.lock() {
@@ -845,6 +861,26 @@ mod tests {
             "完了時の進捗は必ず通知される"
         );
         assert_eq!(progress[0].job_id, id);
+    }
+
+    #[tokio::test]
+    async fn generation_hook_runs_before_each_job() {
+        struct Counter(std::sync::atomic::AtomicU32);
+        #[async_trait::async_trait]
+        impl GenerationHook for Counter {
+            async fn before_generation(&self) {
+                self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            }
+        }
+        let h = harness();
+        let hook = Arc::new(Counter(Default::default()));
+        h.svc.set_generation_hook(hook.clone());
+        tokio::spawn(h.svc.clone().run_worker());
+        let jobs = h.svc.enqueue(params("hello"), 2).await.unwrap();
+        for j in &jobs {
+            wait_for_status(&h, &j.id, JobStatus::Completed).await;
+        }
+        assert_eq!(hook.0.load(std::sync::atomic::Ordering::SeqCst), 2);
     }
 
     #[tokio::test]

@@ -44,6 +44,8 @@ export function GalleryGrid({
   const cell = width > 0 ? (width - GAP * (cols - 1)) / cols : MIN_CELL;
   const rowCount = Math.ceil(items.length / cols);
 
+  // useVirtualizer はメモ化できない関数を返す。React Compiler がこのコンポーネントを最適化対象から外すだけで、動作に影響はない
+  // eslint-disable-next-line react-hooks/incompatible-library
   const virtualizer = useVirtualizer({
     count: rowCount,
     getScrollElement: () => parentRef.current,
