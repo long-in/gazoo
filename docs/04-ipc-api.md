@@ -146,11 +146,14 @@ interface Settings {
   theme: "light" | "dark" | "system";
   language: "ja" | "en" | null;  // null = OS 追従
   generationDefaults: GenerationParams | null;
+  uiState: Record<string, unknown> | null;  // v0.21: パネルの開閉・幅・密度(29 §6)。null = 既定
 }
 // 未指定キーは変更しない。imagesDir / language に null を渡すと既定に戻す。
 // 検証エラー時は一切書き込まれず VALIDATION(details.field)を返す。
 type SettingsPatch = Partial<Settings>;
 ```
+
+`uiState`(画面の状態。03 の `ui.state`)はオブジェクトの JSON で、Rust 側はそのまま保存する(オブジェクト以外は `VALIDATION`、`null` で既定に戻る)。形式の検証はフロントエンド(`lib/ui-state.ts`)が行う。
 
 `generationDefaults`(生成フォームの下書き。03 の `generation.default_params`)は `GenerationParams | null` で、フォームの入力内容を自動保存・復元するために使う(null = 組み込みの既定値)。Rust 側は JSON としてそのまま保存し、`job_enqueue` の時点で検証する。
 **`settings_update` は `imagesDir` を受け付けない**(渡すと `VALIDATION`)。保存先の変更は、既存画像の扱いを伴うため専用コマンドで行う(下記)。

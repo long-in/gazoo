@@ -20,6 +20,7 @@ import { useErrorMessage, useT } from "@/lib/i18n/use-t";
 import { toAppError } from "@/lib/tauri/errors";
 import type { Language, Settings, Theme } from "@/lib/tauri/settings";
 import { useSettingsStore } from "@/stores/settings-store";
+import { useUiStore } from "@/stores/ui-store";
 
 import { AssistantSection } from "./assistant-section";
 import { EngineInstallSection } from "./engine-install-section";
@@ -77,6 +78,7 @@ function SettingsFormInner({ initial }: { initial: Settings }) {
   const t = useT();
   const errorMessage = useErrorMessage();
   const update = useSettingsStore((s) => s.update);
+  const density = useUiStore((s) => s.density);
 
   const [draft, setDraft] = useState<Settings>(initial);
   const [fieldError, setFieldError] = useState<{
@@ -117,7 +119,7 @@ function SettingsFormInner({ initial }: { initial: Settings }) {
 
   return (
     <div className="mx-auto flex max-w-2xl flex-col gap-8 p-8">
-      <h1 className="text-2xl font-semibold">{t("settings.title")}</h1>
+      <h1 className="sr-only">{t("settings.title")}</h1>
 
       <Tabs value={tab} onValueChange={(v) => selectTab(parseTab(v as string))}>
         <TabsList>
@@ -219,6 +221,26 @@ function SettingsFormInner({ initial }: { initial: Settings }) {
                     </SelectItem>
                     <SelectItem value="ja">日本語</SelectItem>
                     <SelectItem value="en">English</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="flex flex-col gap-2">
+                <Label>{t("settings.ui.density")}</Label>
+                {/* 画面の状態なので、[保存] を待たずにすぐ反映・自動保存する */}
+                <Select
+                  value={density}
+                  items={[
+                    { value: "compact", label: t("settings.ui.density.compact") },
+                    { value: "comfortable", label: t("settings.ui.density.comfortable") },
+                  ]}
+                  onValueChange={(v) => v && useUiStore.getState().setDensity(v as "compact" | "comfortable")}
+                >
+                  <SelectTrigger className="w-full">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="compact">{t("settings.ui.density.compact")}</SelectItem>
+                    <SelectItem value="comfortable">{t("settings.ui.density.comfortable")}</SelectItem>
                   </SelectContent>
                 </Select>
               </div>

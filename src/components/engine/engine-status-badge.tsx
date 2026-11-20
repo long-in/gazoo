@@ -11,7 +11,7 @@ import { cn } from "@/lib/utils";
 import { useEngineProcessStore } from "@/stores/engine-process-store";
 import { useEngineStore } from "@/stores/engine-store";
 
-/** サイドナビ下部の ComfyUI 接続状態表示(docs/05-ui-design.md §2)。起動管理が有効なら、起動の状態も示す(docs/15 §9)。 */
+/** ステータスバーの ComfyUI 接続状態表示(docs/29 §4)。起動管理が有効なら、起動の状態も示す(docs/15 §9)。 */
 export function EngineStatusBadge() {
   const t = useT();
   const errorMessage = useErrorMessage();
@@ -46,18 +46,18 @@ export function EngineStatusBadge() {
   }
 
   return (
-    <div className="mt-auto flex items-center gap-2 rounded-lg border bg-background/50 px-2 py-1.5">
+    <div className="flex items-center gap-1.5">
       <span
         aria-hidden
         className={cn(
           "size-2 shrink-0 rounded-full",
           !status && "bg-muted-foreground/50",
-          status?.connected && "bg-emerald-500",
+          status?.connected && "bg-success",
           status && !status.connected && "bg-destructive",
-          (proc?.status === "starting" || proc?.status === "stopping") && managed && "animate-pulse bg-amber-500",
+          (proc?.status === "starting" || proc?.status === "stopping") && managed && "animate-pulse bg-warning",
         )}
       />
-      <span className="min-w-0 flex-1 truncate text-xs" role="status" title={status?.url}>
+      <span className="min-w-0 truncate" role="status" title={status?.url}>
         {label}
       </span>
       {canStart && (

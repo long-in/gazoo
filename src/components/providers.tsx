@@ -35,13 +35,16 @@ import { usePresetStore } from "@/stores/preset-store";
 import { useJobStore } from "@/stores/job-store";
 import { useModelsStore } from "@/stores/models-store";
 import { useSettingsStore } from "@/stores/settings-store";
+import { useUiStore } from "@/stores/ui-store";
 
 /** DB 上の設定(正)をテーマ・言語・lang 属性へ反映する。 */
 function SettingsBootstrap() {
   const load = useSettingsStore((s) => s.load);
   const theme = useSettingsStore((s) => s.settings.theme);
+  const loaded = useSettingsStore((s) => s.loaded);
   const language = useLanguage();
   const { setTheme } = useTheme();
+  const density = useUiStore((s) => s.density);
 
   useEffect(() => {
     void load();
@@ -54,6 +57,15 @@ function SettingsBootstrap() {
   useEffect(() => {
     document.documentElement.lang = language;
   }, [language]);
+
+  // 画面の状態(パネルの開閉・幅・密度)を設定から 1 回だけ取り込む(docs/29 §6)
+  useEffect(() => {
+    if (loaded && !useUiStore.getState().hydrated) useUiStore.getState().hydrate(useSettingsStore.getState().settings.uiState);
+  }, [loaded]);
+
+  useEffect(() => {
+    document.documentElement.dataset.density = density;
+  }, [density]);
 
   return null;
 }
@@ -217,7 +229,7 @@ function ModelsBootstrap() {
 
 export function Providers({ children }: { children: ReactNode }) {
   return (
-    <ThemeProvider attribute="class" defaultTheme="system" enableSystem>
+    <ThemeProvider attribute="class" defaultTheme="dark" enableSystem>
       <TooltipProvider>
         <SettingsBootstrap />
         <EngineBootstrap />

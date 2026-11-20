@@ -27,7 +27,7 @@ beforeEach(() => {
   imageList.mockReset();
   useStripStore.setState({
     items: [], nextCursor: null, loading: false, loaded: false, error: null,
-    query: "", favoritesOnly: false, collapsed: false, selectedId: null,
+    query: "", favoritesOnly: false, collapsed: false, selectedId: null, selectedJobId: null, filter: "all",
   });
 });
 
@@ -70,6 +70,15 @@ describe("strip-store", () => {
     useStripStore.setState({ favoritesOnly: true });
     useStripStore.getState().applyFavorite("b", false);
     expect(useStripStore.getState().items.map((i) => i.id)).toEqual(["a"]);
+  });
+
+  it("画像とキューのカードは同時に選べない", () => {
+    useStripStore.getState().toggleSelect("a");
+    useStripStore.getState().toggleSelectJob("j1");
+    expect(useStripStore.getState().selectedId).toBeNull();
+    expect(useStripStore.getState().selectedJobId).toBe("j1");
+    useStripStore.getState().select("b");
+    expect(useStripStore.getState().selectedJobId).toBeNull();
   });
 
   it("同じ画像をもう一度選ぶと選択を解除する", () => {

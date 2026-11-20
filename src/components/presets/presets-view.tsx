@@ -60,7 +60,7 @@ export function PresetsView() {
 
   return (
     <div className="mx-auto flex max-w-3xl flex-col gap-6 p-8">
-      <h1 className="text-2xl font-semibold">{t("preset.title")}</h1>
+      <h1 className="sr-only">{t("preset.title")}</h1>
 
       {loaded && presets.length === 0 ? (
         <p className="rounded-xl border border-dashed p-10 text-center text-sm text-muted-foreground">{t("preset.empty")}</p>
