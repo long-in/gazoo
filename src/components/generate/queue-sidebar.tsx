@@ -1,12 +1,13 @@
 "use client";
 
-import { Pause, Play, Search } from "lucide-react";
+import { MoreHorizontal, Pause, Play, Search } from "lucide-react";
 import { useMemo, useState } from "react";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { Input } from "@/components/ui/input";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import type { MessageKey } from "@/lib/i18n";
 import { useErrorMessage, useT } from "@/lib/i18n/use-t";
 import { countByTab, filterJobs, isActiveJob, QUEUE_TABS, type QueueTab } from "@/lib/queue";
@@ -14,16 +15,16 @@ import { toAppError } from "@/lib/tauri/errors";
 import { cn } from "@/lib/utils";
 import { useJobStore } from "@/stores/job-store";
 
-import { JobRow } from "./job-row";
-import { RunningSummary } from "./running-summary";
+import { JobRow } from "@/components/queue/job-row";
+import { RunningSummary } from "@/components/queue/running-summary";
 
 type Confirm = "cancelQueued" | "retryFailed" | "removeSelected" | "clear" | null;
 
 /**
- * キュー画面(docs/20 §3)。フィルタ・検索・サムネイル・詳細・一括操作・一時停止。
- * 実行中の進捗は、ここと画面共通のヘッダで確認する(生成画面には出さない)。
+ * キュー(生成ページの右サイド。docs/27 §4)。フィルタ・検索・サムネイル・詳細・一括操作・一時停止。
+ * キューページ(`/queue`)は廃止し、20 §3 の機能はすべてここに置く。
  */
-export function QueueView() {
+export function QueueSidebar() {
   const t = useT();
   const errorMessage = useErrorMessage();
   const jobs = useJobStore((s) => s.jobs);
@@ -103,17 +104,36 @@ export function QueueView() {
   const ct = confirm ? confirmText[confirm] : null;
 
   return (
-    <div className="mx-auto flex max-w-4xl flex-col gap-5 p-8">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <h1 className="text-2xl font-semibold">{t("queue.title")}</h1>
-        <Button
-          type="button"
-          variant={paused ? "default" : "outline"}
-          onClick={() => void run(() => setPaused(!paused))}
-        >
-          {paused ? <Play /> : <Pause />}
-          {paused ? t("queue.resume") : t("queue.pause")}
-        </Button>
+    <div className="flex flex-col gap-3 p-3">
+      <div className="flex items-center justify-between gap-2">
+        <h2 className="text-base font-semibold">{t("queue.title")}</h2>
+        <div className="flex items-center gap-1">
+          <Button
+            type="button"
+            size="sm"
+            variant={paused ? "default" : "outline"}
+            onClick={() => void run(() => setPaused(!paused))}
+          >
+            {paused ? <Play /> : <Pause />}
+            {paused ? t("queue.resume") : t("queue.pause")}
+          </Button>
+          <Popover>
+            <PopoverTrigger render={<Button type="button" size="icon-sm" variant="outline" aria-label={t("queue.menu")} title={t("queue.menu")}/>}>
+                <MoreHorizontal />
+              </PopoverTrigger>
+            <PopoverContent align="end" className="flex w-56 flex-col gap-1 p-2">
+              <Button type="button" size="sm" variant="ghost" className="justify-start" disabled={queued.length === 0} onClick={() => setConfirm("cancelQueued")}>
+                {t("queue.cancelQueued")}
+              </Button>
+              <Button type="button" size="sm" variant="ghost" className="justify-start" disabled={failed.length === 0} onClick={() => setConfirm("retryFailed")}>
+                {t("queue.retryFailed")}
+              </Button>
+              <Button type="button" size="sm" variant="ghost" className="justify-start" disabled={counts.all - counts.active === 0} onClick={() => setConfirm("clear")}>
+                {t("queue.clear")}
+              </Button>
+            </PopoverContent>
+          </Popover>
+        </div>
       </div>
 
       {paused && (
@@ -124,7 +144,7 @@ export function QueueView() {
 
       <RunningSummary counts={counts} />
 
-      <div className="flex flex-wrap items-center gap-2">
+      <div className="flex flex-col gap-2">
         <div role="tablist" aria-label={t("queue.title")} className="flex flex-wrap gap-1">
           {QUEUE_TABS.map((k) => (
             <Button
@@ -141,7 +161,7 @@ export function QueueView() {
             </Button>
           ))}
         </div>
-        <div className="relative ml-auto w-full max-w-xs">
+        <div className="relative w-full">
           <Search className="pointer-events-none absolute left-2 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
           <Input
             value={query}
@@ -205,23 +225,6 @@ export function QueueView() {
             </Button>
           </>
         )}
-        <span className="ml-auto flex flex-wrap gap-2">
-          <Button type="button" size="sm" variant="outline" disabled={queued.length === 0} onClick={() => setConfirm("cancelQueued")}>
-            {t("queue.cancelQueued")}
-          </Button>
-          <Button type="button" size="sm" variant="outline" disabled={failed.length === 0} onClick={() => setConfirm("retryFailed")}>
-            {t("queue.retryFailed")}
-          </Button>
-          <Button
-            type="button"
-            size="sm"
-            variant="outline"
-            disabled={counts.all - counts.active === 0}
-            onClick={() => setConfirm("clear")}
-          >
-            {t("queue.clear")}
-          </Button>
-        </span>
       </div>
 
       {visible.length === 0 ? (

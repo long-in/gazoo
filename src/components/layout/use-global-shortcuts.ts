@@ -13,7 +13,7 @@ const dialogIsOpen = () => document.querySelector('[role="dialog"], [role="alert
 
 /**
  * アプリ全体のショートカット(docs/05-ui-design.md §3)。
- * - `Ctrl/Cmd + 1..6`: 画面切替
+ * - `Ctrl/Cmd + 1..5`: 画面切替
  * - `Esc`: 生成画面で、ダイアログが無いとき実行中のジョブを取り消す
  * (`Ctrl/Cmd + Enter` での生成は、フォームが自身で処理する)
  */

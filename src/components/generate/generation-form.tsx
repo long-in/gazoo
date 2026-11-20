@@ -2,7 +2,6 @@
 
 import { Dices } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 
 import { ModelsLink } from "@/components/models/models-link";
@@ -105,7 +104,6 @@ const asOptions = (names: string[]) => names.map((n) => ({ value: n, label: n })
 
 export function GenerationForm() {
   const t = useT();
-  const router = useRouter();
   const errorMessage = useErrorMessage();
 
   const { params, count, hydrated } = useFormStore();
@@ -216,9 +214,7 @@ export function GenerationForm() {
     setFieldError(null);
     try {
       await enqueue(params, count);
-      toast.success(t("generate.enqueued"), {
-        action: { label: t("nav.queue"), onClick: () => router.push("/queue") },
-      });
+      toast.success(t("generate.enqueued"));
     } catch (e) {
       const appError = toAppError(e);
       setFieldError(appError);

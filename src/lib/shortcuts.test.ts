@@ -12,12 +12,13 @@ const key = (k: string, over: Partial<KeyLike> = {}): KeyLike => ({
 });
 
 describe("navTargetFor", () => {
-  it("Ctrl/⌘ + 1..6 で画面を切り替える(OS ごとの修飾キー)", () => {
+  it("Ctrl/⌘ + 1..5 で画面を切り替える(OS ごとの修飾キー)", () => {
     expect(navTargetFor(key("1", { ctrlKey: true }), false)).toBe("/");
     expect(navTargetFor(key("2", { ctrlKey: true }), false)).toBe("/gallery");
-    expect(navTargetFor(key("5", { ctrlKey: true }), false)).toBe("/models");
-    expect(navTargetFor(key("6", { ctrlKey: true }), false)).toBe("/settings");
-    expect(navTargetFor(key("3", { metaKey: true }), true)).toBe("/queue");
+    expect(navTargetFor(key("4", { ctrlKey: true }), false)).toBe("/models");
+    expect(navTargetFor(key("5", { ctrlKey: true }), false)).toBe("/settings");
+    expect(navTargetFor(key("3", { metaKey: true }), true)).toBe("/presets");
+    expect(navTargetFor(key("6", { ctrlKey: true }), false)).toBeNull();
   });
 
   it("別 OS の修飾キーや、余計な修飾キーが付くものは無視する", () => {

@@ -30,6 +30,7 @@ import { useEngineInstallStore } from "@/stores/engine-install-store";
 import { useEngineProcessStore } from "@/stores/engine-process-store";
 import { useEngineStore } from "@/stores/engine-store";
 import { useGalleryStore } from "@/stores/gallery-store";
+import { useStripStore } from "@/stores/strip-store";
 import { usePresetStore } from "@/stores/preset-store";
 import { useJobStore } from "@/stores/job-store";
 import { useModelsStore } from "@/stores/models-store";
@@ -101,8 +102,14 @@ function JobBootstrap() {
       onJobProgress(applyProgress),
       onQueueState(({ paused }) => useJobStore.getState().applyQueueState(paused)),
       // 生成画像: ギャラリーに反映する
-      onImageCreated((image) => useGalleryStore.getState().applyCreated(image)),
-      onImageDeleted(({ ids }) => useGalleryStore.getState().applyDeleted(ids)),
+      onImageCreated((image) => {
+        useGalleryStore.getState().applyCreated(image);
+        useStripStore.getState().applyCreated(image);
+      }),
+      onImageDeleted(({ ids }) => {
+        useGalleryStore.getState().applyDeleted(ids);
+        useStripStore.getState().applyDeleted(ids);
+      }),
     ]).then((fns) => {
       if (cancelled) fns.forEach((fn) => fn());
       else unlisteners.push(...fns);
