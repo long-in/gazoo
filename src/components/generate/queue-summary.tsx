@@ -46,6 +46,7 @@ export function QueueSummary() {
             )}
           </span>
           <Progress value={percent} className="w-32" />
+          {percent !== null && <span className="font-medium tabular-nums">{percent}%</span>}
           <span className="text-muted-foreground">
             {t("queue.elapsed")} {formatDuration(timing.elapsedMs)}
             {timing.remainingMs !== null && ` · ${t("queue.remaining")} ${formatDuration(timing.remainingMs)}`}

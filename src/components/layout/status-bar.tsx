@@ -50,6 +50,7 @@ function JobStatus() {
             )}
           </span>
           <Progress value={percent} className="w-24" />
+          {percent !== null && <span className="font-medium tabular-nums">{percent}%</span>}
         </>
       )}
       {waiting > 0 && (

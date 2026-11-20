@@ -8,6 +8,7 @@
 - 帯は `generate/library-strip.tsx`(旧 `gallery-strip.tsx`)。キューのカードは `queue-card.tsx`、サマリは `queue-summary.tsx`、ジョブの詳細は `job-detail-sheet.tsx`。`queue-sidebar.tsx`・`queue/job-row.tsx`・`queue/running-summary.tsx` は削除した(計算は `lib/queue.ts` のまま)。
 - 帯の選択は `strip-store` の `selectedId`(画像)と `selectedJobId`(カード)で、同時には選べない。フィルタ(`all` / `queue` / `images`)も同ストア。
 - 「もう一度生成」は、画像・失敗/キャンセルのカードの両方に置いた(新しいシードで 1 件投入)。
+- (2026-11-20 追加の調整)生成フォームの「拡張機能」(参照画像・画像から生成・Inpaint・ControlNet・顔補正)を、右側のワークスペースの先頭へ移した(`extras-panel.tsx`)。投入時の入力エラーは `stores/form-error-store.ts` で、フォームと拡張機能のパネルの両方に出す。
 - 履歴クリア(`job_clear_finished`)の操作は、[⋯] から外した(「失敗・キャンセルをすべて削除」で代替)。
 
 ## 1. 目的
