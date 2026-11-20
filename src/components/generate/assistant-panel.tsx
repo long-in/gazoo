@@ -57,7 +57,7 @@ function NoKey() {
       <p className="font-medium">{t("assistant.noKey.title")}</p>
       <p className="text-sm text-muted-foreground">{t("assistant.noKey.desc")}</p>
       <div>
-        <Button render={<Link href="/settings" />} nativeButton={false} variant="outline">
+        <Button render={<Link href="/settings?tab=assistant" />} nativeButton={false} variant="outline">
           {t("assistant.noKey.link")}
         </Button>
       </div>

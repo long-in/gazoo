@@ -1,5 +1,6 @@
 "use client";
 
+import { useRouter, useSearchParams } from "next/navigation";
 import { useState } from "react";
 import { toast } from "sonner";
 
@@ -13,6 +14,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { type MessageKey } from "@/lib/i18n";
 import { useErrorMessage, useT } from "@/lib/i18n/use-t";
 import { toAppError } from "@/lib/tauri/errors";
@@ -25,6 +27,27 @@ import { EngineProcessSection } from "./engine-process-section";
 import { StorageSection } from "./storage-section";
 
 type LanguageChoice = Language | "auto";
+
+const TAB_IDS = ["engine", "storage", "assistant", "display"] as const;
+type TabId = (typeof TAB_IDS)[number];
+
+const TAB_LABELS: Record<TabId, MessageKey> = {
+  engine: "settings.tabs.engine",
+  storage: "settings.tabs.storage",
+  assistant: "settings.tabs.assistant",
+  display: "settings.tabs.display",
+};
+
+/** 検証エラーの field がどのタブの項目かを返す。 */
+const FIELD_TAB: Record<string, TabId> = {
+  comfyuiUrl: "engine",
+  theme: "display",
+  language: "display",
+};
+
+function parseTab(value: string | null): TabId {
+  return TAB_IDS.find((id) => id === value) ?? "engine";
+}
 
 const THEMES: { value: Theme; labelKey: MessageKey }[] = [
   { value: "system", labelKey: "settings.ui.theme.system" },
@@ -56,8 +79,18 @@ function SettingsFormInner({ initial }: { initial: Settings }) {
   const update = useSettingsStore((s) => s.update);
 
   const [draft, setDraft] = useState<Settings>(initial);
-  const [fieldError, setFieldError] = useState<{ field?: string; message: string } | null>(null);
+  const [fieldError, setFieldError] = useState<{
+    field?: string;
+    message: string;
+  } | null>(null);
   const [saving, setSaving] = useState(false);
+
+  const router = useRouter();
+  const params = useSearchParams();
+  const tab = parseTab(params.get("tab"));
+  function selectTab(next: TabId) {
+    router.replace(`/settings?tab=${next}`);
+  }
 
   const languageChoice: LanguageChoice = draft.language ?? "auto";
 
@@ -73,7 +106,9 @@ function SettingsFormInner({ initial }: { initial: Settings }) {
       toast.success(t("settings.saved"));
     } catch (e) {
       const err = toAppError(e);
-      setFieldError({ field: err.details?.field, message: errorMessage(err) });
+      const field = err.details?.field;
+      setFieldError({ field, message: errorMessage(err) });
+      if (field && FIELD_TAB[field]) selectTab(FIELD_TAB[field]);
       toast.error(errorMessage(err));
     } finally {
       setSaving(false);
@@ -84,82 +119,113 @@ function SettingsFormInner({ initial }: { initial: Settings }) {
     <div className="mx-auto flex max-w-2xl flex-col gap-8 p-8">
       <h1 className="text-2xl font-semibold">{t("settings.title")}</h1>
 
-      <section className="flex flex-col gap-3">
-        <h2 className="text-lg font-medium">{t("settings.engine.title")}</h2>
-        <Label htmlFor="comfyui-url">{t("settings.engine.url")}</Label>
-        <Input
-          id="comfyui-url"
-          value={draft.comfyuiUrl}
-          aria-invalid={fieldError?.field === "comfyuiUrl"}
-          onChange={(e) => setDraft((d) => ({ ...d, comfyuiUrl: e.target.value }))}
-        />
-        <p className="text-xs text-muted-foreground">{t("settings.engine.urlHint")}</p>
-        {fieldError?.field === "comfyuiUrl" && (
-          <p role="alert" className="text-sm text-destructive">
-            {fieldError.message}
-          </p>
-        )}
-      </section>
+      <Tabs value={tab} onValueChange={(v) => selectTab(parseTab(v as string))}>
+        <TabsList>
+          {TAB_IDS.map((id) => (
+            <TabsTrigger key={id} value={id}>
+              {t(TAB_LABELS[id])}
+            </TabsTrigger>
+          ))}
+        </TabsList>
 
-      <EngineInstallSection />
-
-      <EngineProcessSection />
-
-      <StorageSection />
-
-      <AssistantSection />
-
-      <section className="flex flex-col gap-3">
-        <h2 className="text-lg font-medium">{t("settings.ui.title")}</h2>
-        <div className="grid grid-cols-2 gap-4">
-          <div className="flex flex-col gap-2">
-            <Label>{t("settings.ui.theme")}</Label>
-            <Select
-              value={draft.theme}
-              items={THEMES.map((x) => ({ value: x.value, label: t(x.labelKey) }))}
-              onValueChange={(v) => v && setDraft((d) => ({ ...d, theme: v as Theme }))}
-            >
-              <SelectTrigger className="w-full">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {THEMES.map((x) => (
-                  <SelectItem key={x.value} value={x.value}>
-                    {t(x.labelKey)}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-          <div className="flex flex-col gap-2">
-            <Label>{t("settings.ui.language")}</Label>
-            <Select
-              value={languageChoice}
-              items={[
-                { value: "auto", label: t("settings.ui.language.auto") },
-                { value: "ja", label: "日本語" },
-                { value: "en", label: "English" },
-              ]}
-              onValueChange={(v) =>
-                v &&
-                setDraft((d) => ({
-                  ...d,
-                  language: v === "auto" ? null : (v as Language),
-                }))
+        <TabsContent value="engine" keepMounted>
+          <section className="flex flex-col gap-3">
+            <h2 className="text-lg font-medium">
+              {t("settings.engine.title")}
+            </h2>
+            <Label htmlFor="comfyui-url">{t("settings.engine.url")}</Label>
+            <Input
+              id="comfyui-url"
+              value={draft.comfyuiUrl}
+              aria-invalid={fieldError?.field === "comfyuiUrl"}
+              onChange={(e) =>
+                setDraft((d) => ({ ...d, comfyuiUrl: e.target.value }))
               }
-            >
-              <SelectTrigger className="w-full">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="auto">{t("settings.ui.language.auto")}</SelectItem>
-                <SelectItem value="ja">日本語</SelectItem>
-                <SelectItem value="en">English</SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
-        </div>
-      </section>
+            />
+            <p className="text-xs text-muted-foreground">
+              {t("settings.engine.urlHint")}
+            </p>
+            {fieldError?.field === "comfyuiUrl" && (
+              <p role="alert" className="text-sm text-destructive">
+                {fieldError.message}
+              </p>
+            )}
+          </section>
+
+          <EngineInstallSection />
+
+          <EngineProcessSection />
+        </TabsContent>
+
+        <TabsContent value="storage" keepMounted>
+          <StorageSection />
+        </TabsContent>
+
+        <TabsContent value="assistant" keepMounted>
+          <AssistantSection />
+        </TabsContent>
+
+        <TabsContent value="display" keepMounted>
+          <section className="flex flex-col gap-3">
+            <h2 className="text-lg font-medium">{t("settings.ui.title")}</h2>
+            <div className="grid grid-cols-2 gap-4">
+              <div className="flex flex-col gap-2">
+                <Label>{t("settings.ui.theme")}</Label>
+                <Select
+                  value={draft.theme}
+                  items={THEMES.map((x) => ({
+                    value: x.value,
+                    label: t(x.labelKey),
+                  }))}
+                  onValueChange={(v) =>
+                    v && setDraft((d) => ({ ...d, theme: v as Theme }))
+                  }
+                >
+                  <SelectTrigger className="w-full">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {THEMES.map((x) => (
+                      <SelectItem key={x.value} value={x.value}>
+                        {t(x.labelKey)}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="flex flex-col gap-2">
+                <Label>{t("settings.ui.language")}</Label>
+                <Select
+                  value={languageChoice}
+                  items={[
+                    { value: "auto", label: t("settings.ui.language.auto") },
+                    { value: "ja", label: "日本語" },
+                    { value: "en", label: "English" },
+                  ]}
+                  onValueChange={(v) =>
+                    v &&
+                    setDraft((d) => ({
+                      ...d,
+                      language: v === "auto" ? null : (v as Language),
+                    }))
+                  }
+                >
+                  <SelectTrigger className="w-full">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="auto">
+                      {t("settings.ui.language.auto")}
+                    </SelectItem>
+                    <SelectItem value="ja">日本語</SelectItem>
+                    <SelectItem value="en">English</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+          </section>
+        </TabsContent>
+      </Tabs>
 
       <div>
         <Button onClick={save} disabled={saving}>
