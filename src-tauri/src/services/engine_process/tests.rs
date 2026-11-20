@@ -57,13 +57,18 @@ fn exits_with_3() -> LaunchSpec {
     }
 }
 
-/// 空いているポートを 1 つ得る。
+/// テスト用のポートの割り当て元。OS の一時ポート(49152 番台など)より下の範囲を、テスト同士で重複しないように使う。
+/// (`bind(":0")` で得て手放したポートは、並列に走る別のテストが同じポートを得て待ち受けることがあり、不安定になる)
+static NEXT_PORT: std::sync::atomic::AtomicU16 = std::sync::atomic::AtomicU16::new(20_000);
+
+/// 空いているポートを 1 つ得る(このテストプロセス内では、同じ値を二度返さない)。
 fn free_port() -> u16 {
-    std::net::TcpListener::bind("127.0.0.1:0")
-        .unwrap()
-        .local_addr()
-        .unwrap()
-        .port()
+    loop {
+        let port = NEXT_PORT.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        if std::net::TcpListener::bind(("127.0.0.1", port)).is_ok() {
+            return port;
+        }
+    }
 }
 
 async fn wait_status(svc: &EngineProcess, want: ProcStatus) {
@@ -138,8 +143,8 @@ async fn start_timeout_terminates_the_child() {
 
 #[tokio::test]
 async fn refuses_to_start_when_the_port_is_taken_without_touching_the_owner() {
-    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-    let port = listener.local_addr().unwrap().port();
+    let port = free_port();
+    let listener = std::net::TcpListener::bind(("127.0.0.1", port)).unwrap();
     let (svc, _) = service(probe_always(true), Duration::from_secs(5));
 
     let err = svc.start_spec(long_running(), port).await.unwrap_err();

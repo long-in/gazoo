@@ -11,6 +11,7 @@ pub const DEFAULT_COMFYUI_URL: &str = "http://127.0.0.1:8188";
 const KEY_COMFYUI_URL: &str = "engine.comfyui.url";
 const KEY_IMAGES_DIR: &str = "storage.images_dir";
 const KEY_THEME: &str = "ui.theme";
+const KEY_UI_STATE: &str = "ui.state";
 const KEY_LANGUAGE: &str = "ui.language";
 const KEY_GENERATION_DEFAULTS: &str = "generation.default_params";
 
@@ -18,8 +19,8 @@ const KEY_GENERATION_DEFAULTS: &str = "generation.default_params";
 #[serde(rename_all = "lowercase")]
 pub enum Theme {
     Light,
-    Dark,
     #[default]
+    Dark,
     System,
 }
 
@@ -42,6 +43,8 @@ pub struct Settings {
     /// 生成フォームの下書き(`GenerationParams` の JSON)。`None` は組み込みの既定値。
     /// 形式の検証は `job_enqueue` で行うため、ここではオブジェクトであることだけを確認する。
     pub generation_defaults: Option<serde_json::Value>,
+    /// 画面の状態(パネルの開閉・幅・表示の密度。docs/29 §6)の JSON。`None` は既定。オブジェクトであることだけを確認する。
+    pub ui_state: Option<serde_json::Value>,
 }
 
 impl Default for Settings {
@@ -52,6 +55,7 @@ impl Default for Settings {
             theme: Theme::default(),
             language: None,
             generation_defaults: None,
+            ui_state: None,
         }
     }
 }
@@ -68,6 +72,8 @@ pub struct SettingsPatch {
     pub language: Option<Option<Language>>,
     #[serde(default, deserialize_with = "double_option")]
     pub generation_defaults: Option<Option<serde_json::Value>>,
+    #[serde(default, deserialize_with = "double_option")]
+    pub ui_state: Option<Option<serde_json::Value>>,
 }
 
 fn double_option<'de, T, D>(d: D) -> Result<Option<Option<T>>, D::Error>
@@ -120,6 +126,7 @@ pub fn load(conn: &Connection) -> AppResult<Settings> {
         theme: parse(get_raw(conn, KEY_THEME)?).unwrap_or(d.theme),
         language: parse(get_raw(conn, KEY_LANGUAGE)?),
         generation_defaults: get_raw(conn, KEY_GENERATION_DEFAULTS)?.filter(|v| v.is_object()),
+        ui_state: get_raw(conn, KEY_UI_STATE)?.filter(|v| v.is_object()),
     })
 }
 
@@ -210,6 +217,15 @@ pub fn update(conn: &mut Connection, patch: SettingsPatch) -> AppResult<Settings
         ));
     }
 
+    if let Some(Some(v)) = &patch.ui_state
+        && !v.is_object()
+    {
+        return Err(AppError::validation(
+            "uiState",
+            "画面の状態の形式が正しくありません",
+        ));
+    }
+
     let tx = conn.transaction()?;
     if let Some(url) = url {
         set_raw(&tx, KEY_COMFYUI_URL, &serde_json::json!(url))?;
@@ -230,6 +246,11 @@ pub fn update(conn: &mut Connection, patch: SettingsPatch) -> AppResult<Settings
     match patch.generation_defaults {
         Some(Some(v)) => set_raw(&tx, KEY_GENERATION_DEFAULTS, &v)?,
         Some(None) => delete_raw(&tx, KEY_GENERATION_DEFAULTS)?,
+        None => {}
+    }
+    match patch.ui_state {
+        Some(Some(v)) => set_raw(&tx, KEY_UI_STATE, &v)?,
+        Some(None) => delete_raw(&tx, KEY_UI_STATE)?,
         None => {}
     }
     tx.commit()?;
@@ -271,11 +292,15 @@ mod tests {
     async fn rejects_invalid_url_without_writing() {
         let db = Db::open_in_memory().unwrap();
         let patch: SettingsPatch =
-            serde_json::from_str(r#"{"comfyuiUrl":"ftp://x","theme":"dark"}"#).unwrap();
+            serde_json::from_str(r#"{"comfyuiUrl":"ftp://x","theme":"light"}"#).unwrap();
         let err = db.call(move |c| update(c, patch)).await.unwrap_err();
         assert_eq!(err.code(), "VALIDATION");
         let s = db.call(|c| load(c)).await.unwrap();
-        assert_eq!(s.theme, Theme::System, "検証エラー時は一切書き込まれない");
+        assert_eq!(
+            s.theme,
+            Theme::default(),
+            "検証エラー時は一切書き込まれない"
+        );
     }
 
     #[tokio::test]
@@ -296,7 +321,7 @@ mod tests {
             })
             .await
             .unwrap();
-        assert_eq!(s.theme, Theme::System);
+        assert_eq!(s.theme, Theme::default());
     }
 
     #[tokio::test]
@@ -320,5 +345,28 @@ mod tests {
         let clear: SettingsPatch = serde_json::from_str(r#"{"generationDefaults":null}"#).unwrap();
         let s = db.call(move |c| update(c, clear)).await.unwrap();
         assert!(s.generation_defaults.is_none());
+    }
+
+    #[tokio::test]
+    async fn ui_state_roundtrip_and_clear() {
+        let db = Db::open_in_memory().unwrap();
+        let patch: SettingsPatch =
+            serde_json::from_str(r#"{"uiState":{"density":"compact","panels":{"a":false}}}"#)
+                .unwrap();
+        let s = db.call(move |c| update(c, patch)).await.unwrap();
+        assert_eq!(s.ui_state.unwrap()["density"], "compact");
+
+        // 他の項目の更新では変わらない
+        let patch: SettingsPatch = serde_json::from_str(r#"{"theme":"light"}"#).unwrap();
+        let s = db.call(move |c| update(c, patch)).await.unwrap();
+        assert!(s.ui_state.is_some());
+
+        // オブジェクト以外は拒否、null で既定に戻る
+        let bad: SettingsPatch = serde_json::from_str(r#"{"uiState":"x"}"#).unwrap();
+        let err = db.call(move |c| update(c, bad)).await.unwrap_err();
+        assert_eq!(err.code(), "VALIDATION");
+        let clear: SettingsPatch = serde_json::from_str(r#"{"uiState":null}"#).unwrap();
+        let s = db.call(move |c| update(c, clear)).await.unwrap();
+        assert!(s.ui_state.is_none());
     }
 }

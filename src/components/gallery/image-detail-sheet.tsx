@@ -16,6 +16,7 @@ import {
 } from "@/components/ui/sheet";
 import { useImageActions } from "@/lib/gallery/use-image-as";
 import { useErrorMessage, useT } from "@/lib/i18n/use-t";
+import { durationMs, formatDuration } from "@/lib/queue";
 import { toAppError } from "@/lib/tauri/errors";
 import { type ImageDetail, imageExport, imageGet, imageReveal } from "@/lib/tauri/images";
 import { useGalleryStore } from "@/stores/gallery-store";
@@ -229,6 +230,12 @@ export function ImageDetailSheet({ id, onClose, stay = false }: { id: string | n
                     <Copy />
                   </Button>
                 </dd>
+                {detail && durationMs(detail.job) !== null && (
+                  <>
+                    <dt className="text-muted-foreground">{t("queue.detail.took")}</dt>
+                    <dd>{formatDuration(durationMs(detail.job) ?? 0)}</dd>
+                  </>
+                )}
                 <dt className="text-muted-foreground">{t("gallery.params.created")}</dt>
                 <dd>{new Date(image.createdAt).toLocaleString()}</dd>
               </dl>

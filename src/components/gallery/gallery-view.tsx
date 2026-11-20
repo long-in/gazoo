@@ -67,7 +67,7 @@ export function GalleryView() {
   return (
     <div className="flex h-full min-h-0 flex-col gap-4 p-6">
       <div className="flex flex-wrap items-center gap-3">
-        <h1 className="mr-2 text-2xl font-semibold">{t("gallery.title")}</h1>
+        <h1 className="sr-only">{t("gallery.title")}</h1>
         <div className="relative min-w-56 flex-1 sm:max-w-sm">
           <Search aria-hidden className="pointer-events-none absolute left-2.5 top-2.5 size-4 text-muted-foreground" />
           <Input

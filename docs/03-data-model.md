@@ -120,7 +120,8 @@ CREATE TABLE settings (
 |---|---|---|
 | `engine.comfyui.url` | string | `http://127.0.0.1:8188` |
 | `storage.images_dir` | string \| null | null(= `{app_data}/images`) |
-| `ui.theme` | `"light"\|"dark"\|"system"` | `system` |
+| `ui.theme` | `"light"\|"dark"\|"system"` | `dark`(v0.21 で `system` から変更。保存済みの値は変わらない) |
+| `ui.state` | object | なし(v0.21。パネルの開閉・幅・表示の密度。29 §6) |
 | `ui.language` | `"ja"\|"en"` | OS ロケール |
 | `generation.default_params` | GenerationRequest | 組み込み既定 |
 

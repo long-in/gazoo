@@ -6,8 +6,11 @@ import type { ImageItem } from "@/lib/tauri/jobs";
 
 const PAGE_SIZE = 40;
 
+/** 帯の表示の絞り込み(docs/28 §3.4)。 */
+export type StripFilter = "all" | "queue" | "images";
+
 /**
- * 生成ページのギャラリー帯(docs/27 §3)のストア。`/gallery` のストアとは独立(フィルタを共有しない)。
+ * 生成ページの帯(キューのカード + 画像。docs/27 §3・28)のストア。`/gallery` のストアとは独立(フィルタを共有しない)。
  * 読み込みは同じ `image_list`。
  */
 interface StripState {
@@ -21,6 +24,9 @@ interface StripState {
   collapsed: boolean;
   /** 選択中の画像(1 枚)。帯に無い画像(キューのサムネイルから選んだ等)でもよい。 */
   selectedId: string | null;
+  /** 選択中のキューのカード(ジョブ)。`selectedId` とは同時に選ばない。 */
+  selectedJobId: string | null;
+  filter: StripFilter;
 
   reload: () => Promise<void>;
   loadMore: () => Promise<void>;
@@ -30,6 +36,9 @@ interface StripState {
   /** 同じ画像をもう一度選ぶと解除する。 */
   toggleSelect: (id: string) => void;
   select: (id: string | null) => void;
+  toggleSelectJob: (id: string) => void;
+  selectJob: (id: string | null) => void;
+  setFilter: (filter: StripFilter) => void;
 
   applyCreated: (image: ImageItem) => void;
   applyDeleted: (ids: string[]) => void;
@@ -49,6 +58,8 @@ export const useStripStore = create<StripState>((set, get) => ({
   favoritesOnly: false,
   collapsed: false,
   selectedId: null,
+  selectedJobId: null,
+  filter: "all",
 
   reload: async () => {
     const gen = ++generation;
@@ -89,8 +100,11 @@ export const useStripStore = create<StripState>((set, get) => ({
   setQuery: (query) => set({ query }),
   setFavoritesOnly: (favoritesOnly) => set({ favoritesOnly }),
   setCollapsed: (collapsed) => set({ collapsed }),
-  toggleSelect: (id) => set((s) => ({ selectedId: s.selectedId === id ? null : id })),
-  select: (selectedId) => set({ selectedId }),
+  toggleSelect: (id) => set((s) => ({ selectedId: s.selectedId === id ? null : id, selectedJobId: null })),
+  select: (selectedId) => set({ selectedId, selectedJobId: null }),
+  toggleSelectJob: (id) => set((s) => ({ selectedJobId: s.selectedJobId === id ? null : id, selectedId: null })),
+  selectJob: (selectedJobId) => set({ selectedJobId, selectedId: null }),
+  setFilter: (filter) => set({ filter }),
 
   // フィルタ中は、新しい画像が条件に合うか判定できないため追加しない(解除時の再読み込みで現れる)
   applyCreated: (image) =>
