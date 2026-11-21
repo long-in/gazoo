@@ -1,6 +1,7 @@
 //! ComfyUI の起動管理のコマンド(docs/15 §7、docs/04-ipc-api.md「ComfyUI の起動管理」)。
 
 use std::sync::Arc;
+use std::time::Duration;
 
 use serde::Serialize;
 use tauri::{AppHandle, Manager, State};
@@ -23,9 +24,10 @@ type Proc<'a> = State<'a, Arc<EngineProcess>>;
 pub struct ManagedView {
     pub config: ManagedEngineConfig,
     pub state: EngineProcState,
-    /// 起動中の ComfyUI から求めた、パスの入力候補。
-    pub suggestions: Suggestions,
 }
+
+/// 起動中の ComfyUI への問い合わせの上限(docs/32 Q-183)。
+const LAUNCH_ARGS_TIMEOUT: Duration = Duration::from_millis(1500);
 
 async fn load_config(db: &Db) -> AppResult<ManagedEngineConfig> {
     db.call(|c| settings::get_managed_engine(c)).await
@@ -44,50 +46,45 @@ fn known_dirs(app: &AppHandle, installer: &EngineInstaller) -> KnownDirs {
     }
 }
 
-async fn view(
+/// 設定と状態だけを返す(DB のみ。探索はしない。docs/32)。
+async fn view(db: &Db, proc: &EngineProcess) -> AppResult<ManagedView> {
+    Ok(ManagedView {
+        config: load_config(db).await?,
+        state: proc.state(),
+    })
+}
+
+/// 入力候補を求める。優先順位(docs/22 §2): 起動中の ComfyUI → 既知の場所の一覧(アプリが導入したものが最優先)→ 実行ファイル周辺(開発用)。
+async fn suggestions(
     app: &AppHandle,
     installer: &EngineInstaller,
-    db: &Db,
     engine: &EngineService,
-    proc: &EngineProcess,
-) -> AppResult<ManagedView> {
-    let mut config = load_config(db).await?;
+) -> AppResult<Suggestions> {
     let engine = engine.engine()?;
     let from_running = if is_local_engine(&engine.url()) {
-        engine
-            .launch_args()
-            .await
-            .map(|argv| suggest(&argv))
-            .unwrap_or_default()
+        // 応答しない ComfyUI で待たされないよう、短く打ち切る(失敗・超過は「候補なし」)
+        match tokio::time::timeout(LAUNCH_ARGS_TIMEOUT, engine.launch_args()).await {
+            Ok(Ok(argv)) => suggest(&argv),
+            _ => Suggestions::default(),
+        }
     } else {
         Suggestions::default()
     };
-    // 優先順位(docs/22 §2): 起動中の ComfyUI → 既知の場所の一覧(アプリが導入したものが最優先)→ 実行ファイル周辺(開発用)
-    let suggestions = if from_running.main_py.is_some() {
-        from_running
-    } else {
-        let known = detect_known(&known_dirs(app, installer));
+    if from_running.main_py.is_some() {
+        return Ok(from_running);
+    }
+    let dirs = known_dirs(app, installer);
+    // ファイルの存在確認は同期 I/O なので、非同期ランタイムを塞がないようにする
+    tokio::task::spawn_blocking(move || {
+        let known = detect_known(&dirs);
         if known.main_py.is_some() {
             known
         } else {
             detect(&search_starts())
         }
-    };
-    // 未設定の項目は、見つかった候補を初期値として入れる(docs/15 §9。保存はユーザーの操作で行う)
-    if config.main_py.is_empty() {
-        config.main_py = suggestions.main_py.clone().unwrap_or_default();
-    }
-    if config.python.is_empty() {
-        config.python = suggestions.python.clone().unwrap_or_default();
-    }
-    if config.base_directory.is_none() {
-        config.base_directory = suggestions.base_directory.clone();
-    }
-    Ok(ManagedView {
-        config,
-        state: proc.state(),
-        suggestions,
     })
+    .await
+    .map_err(|e| AppError::internal(e.to_string()))
 }
 
 /// 既定の探索の起点(実行ファイルの場所と、カレントディレクトリ)。
@@ -103,20 +100,23 @@ fn search_starts() -> Vec<std::path::PathBuf> {
 }
 
 #[tauri::command]
-pub async fn engine_managed_get(
+pub async fn engine_managed_get(db: State<'_, Db>, proc: Proc<'_>) -> AppResult<ManagedView> {
+    view(&db, &proc).await
+}
+
+/// 入力候補の取得(docs/32)。`engine_managed_get` とは別に呼ぶ。
+#[tauri::command]
+pub async fn engine_managed_suggest(
     app: AppHandle,
     installer: State<'_, Arc<EngineInstaller>>,
-    db: State<'_, Db>,
     engine: State<'_, Arc<EngineService>>,
-    proc: Proc<'_>,
-) -> AppResult<ManagedView> {
-    view(&app, &installer, &db, &engine, &proc).await
+) -> AppResult<Suggestions> {
+    suggestions(&app, &installer, &engine).await
 }
 
 #[tauri::command]
 pub async fn engine_managed_set(
     app: AppHandle,
-    installer: State<'_, Arc<EngineInstaller>>,
     db: State<'_, Db>,
     engine: State<'_, Arc<EngineService>>,
     proc: Proc<'_>,
@@ -149,7 +149,7 @@ pub async fn engine_managed_set(
             }
         });
     }
-    view(&app, &installer, &db, &engine, &proc).await
+    view(&db, &proc).await
 }
 
 #[tauri::command]
