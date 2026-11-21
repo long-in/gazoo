@@ -144,6 +144,12 @@ export const useJobStore = create<JobState>((set, get) => ({
   retry: async (id) => {
     const job = await jobRetry(id);
     get().applyUpdated(job);
+    // 再試行は元の失敗カードを残さない(docs/28 §8.2)。外せなくても再試行自体は成功扱い
+    try {
+      await get().remove([id]);
+    } catch {
+      /* 元のカードが残るだけ */
+    }
     return job;
   },
 

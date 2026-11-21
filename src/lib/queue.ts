@@ -94,17 +94,3 @@ export function estimateMsPerImage(jobs: Job[], params: GenerationParams): numbe
     .map((x) => x.d / x.n);
   return samples.length === 0 ? null : median(samples);
 }
-
-/** 履歴から、プロンプトの一覧(新しい順・重複と空を除く。`jobs` は新しい順を前提にしない)。 */
-export function promptHistory(jobs: Job[], limit = 30): { prompt: string; negativePrompt: string }[] {
-  const seen = new Set<string>();
-  const out: { prompt: string; negativePrompt: string }[] = [];
-  for (const j of [...jobs].sort((a, b) => b.createdAt - a.createdAt)) {
-    const prompt = j.params.prompt.trim();
-    if (prompt === "" || seen.has(prompt)) continue;
-    seen.add(prompt);
-    out.push({ prompt, negativePrompt: j.params.negativePrompt });
-    if (out.length >= limit) break;
-  }
-  return out;
-}
