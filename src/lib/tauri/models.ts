@@ -34,7 +34,7 @@ export interface ModelProfile {
   style: ModelStyle[];
   bestFor: { ja: string[]; en: string[] };
   weakAt: { ja: string[]; en: string[] };
-  promptStyle: { kind: "tags" | "natural" | "both"; hint: Localized };
+  promptStyle: { kind: "tags" | "natural" | "both"; language?: "en" | "multilingual"; hint: Localized };
   recommended: {
     steps: number;
     cfg: number;

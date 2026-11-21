@@ -210,15 +210,20 @@ fn build_body(model: &str, req: &MessageRequest<'_>) -> Value {
             .iter()
             .map(|(role, text)| json!({ "role": role, "content": text })),
     );
-    json!({
+    let tools = convert_tools(&req.tools);
+    let mut body = json!({
         "model": model,
         "messages": messages,
-        "tools": convert_tools(&req.tools),
         "stream": true,
         "max_tokens": MAX_TOKENS,
         // Qwen3.5 の思考を無効化する(対応しないサーバは無視する。docs/11 §13.3)
         "chat_template_kwargs": { "enable_thinking": false },
-    })
+    });
+    // ツール無しの呼び出し(翻訳。docs/34)では `tools` を送らない
+    if tools.as_array().is_none_or(|t| !t.is_empty()) {
+        body["tools"] = tools;
+    }
+    body
 }
 
 fn network_error(e: &reqwest::Error, base: &str) -> AppError {

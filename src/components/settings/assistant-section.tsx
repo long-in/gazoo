@@ -25,15 +25,15 @@ import {
 import { toAppError } from "@/lib/tauri/errors";
 import { useAssistantStore } from "@/stores/assistant-store";
 
-const MODEL_LABEL: Record<(typeof ASSISTANT_MODELS)[number], MessageKey> = {
+export const MODEL_LABEL: Record<(typeof ASSISTANT_MODELS)[number], MessageKey> = {
   "claude-haiku-5-5": "settings.assistant.model.haiku",
   "claude-sonnet-5-5": "settings.assistant.model.sonnet",
   "claude-opus-5-5": "settings.assistant.model.opus",
 };
 
-const PROVIDERS: AssistantProvider[] = ["anthropic", "local", "local_external"];
+export const PROVIDERS: AssistantProvider[] = ["anthropic", "local", "local_external"];
 
-const PROVIDER_LABEL: Record<AssistantProvider, MessageKey> = {
+export const PROVIDER_LABEL: Record<AssistantProvider, MessageKey> = {
   anthropic: "settings.assistant.provider.anthropic",
   local: "settings.assistant.provider.local",
   local_external: "settings.assistant.provider.external",

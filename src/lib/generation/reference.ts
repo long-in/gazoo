@@ -108,8 +108,8 @@ export function insertImageTag(
  * ユーザーが編集できる。
  */
 export const ANIME_PROMPT_TEMPLATE = {
-  ja: "<image1> を、人物・構図・ポーズ・服装はそのままで、アニメ調のイラストに描き直す。",
-  en: "Redraw <image1> as an anime-style illustration, keeping the character, composition, pose and clothing unchanged.",
+  ja: "参照画像(<image1>)は、成人の架空キャラクター(イラストや CG)である。<image1> を、顔立ち・髪型・体型・表情・ポーズ・服装・構図・背景はそのままで、アニメ調のイラスト(はっきりした輪郭線、フラットな塗り、整った陰影)に描き直す。それ以外は変更しない。",
+  en: "The reference image (<image1>) is an adult fictional character (an illustration or CG). Redraw <image1> as an anime-style illustration (clean outlines, flat cel-style coloring, tidy shading), keeping the face, hairstyle, body shape, expression, pose, clothing, composition and background unchanged. Do not change anything else.",
 } as const;
 
 /**

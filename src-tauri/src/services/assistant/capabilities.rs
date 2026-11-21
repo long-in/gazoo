@@ -10,7 +10,7 @@ use serde_json::{Value, json};
 
 use crate::engine::EngineFeatures;
 use crate::services::models::catalog::{
-    Catalog, Family, FamilyKind, NsfwSupport, PromptKind, Speed, Style,
+    Catalog, Family, FamilyKind, NsfwSupport, PromptKind, PromptLanguage, Speed, Style,
 };
 use crate::services::models::download::DownloadPolicy;
 
@@ -50,8 +50,20 @@ const MODEL_RULES: &str = r#"
 - 「選択中のモデルと導入済みのモデル」にある導入済みのモデルを優先する。未導入のモデルを勧めたら、モデル画面で取得できると案内する。
 - メモリが足りなそうなときは、軽いモデルも添える。
 - 下のモデルガイドに無いモデルを、推測で勧めない。選択中のモデルがガイドに無い(カタログ外)ときは、特徴が分からないと答える。
+- プロンプトの作成依頼では、下の「プロンプトの書き方」に従う(docs/11 §14)。suggest_params の prompt / negativePrompt は、ユーザーの言語ではなく、モデルガイドの「プロンプト」欄の言語で書く。「英語で書く」のモデルには、日本語で依頼されても英語で書き、本文に日本語で要点を一言添える。同じ回答で suggest_model を使うときは、勧めたモデルに合わせる。フォームのプロンプトが推奨言語と違うときは、意味を変えずに書き直しを提案する。ネガティブも同じ言語にする。
 - 成人向けの内容は、ガイドで「成人向け対応」とあるモデルだけを勧める。利用者が適法な範囲で使うことが前提で、未成年・実在の人物に関わる依頼には協力しない。
 - 参照画像(img2img・ControlNet・Inpaint・参照画像つき生成)を使う成人向けの依頼は、参照画像が、成人の架空キャラクター(イラストや CG)であるとユーザーが説明したときに限って手伝う。画像は見えないので、実在の人物の写真や、未成年に見えるキャラクターの画像だと分かる(または疑われる)ときは、協力しない。
+"#;
+
+/// プロンプトの書き方(docs/11 §14.2)。AI サポートのシステムプロンプトと、プロンプト翻訳(docs/34)で
+/// **同じ文面を共有する**(手書きで二重に持たない)。
+pub const PROMPT_BEST_PRACTICE: &str = r#"
+# プロンプトの書き方
+- 言語: 「英語で書く」のモデル(SD 1.5 / SDXL / NoobAI-XL / Animagine XL / Anima / Flux 系 / Krea 2)は英語で書く。「日本語でも可」のモデル(Qwen-Image 2.1)は、ユーザーの言語のまま書いてよい。
+- SD 1.5 / SDXL: 短いキーワードをカンマ区切り(被写体、構図・ポーズ、場所、光、画風・画質の順。重要なものを前に)。
+- NoobAI-XL・Animagine XL・Anima: 自然文ではなくタグ形式(1girl, solo、キャラ、作品、外見・服装・ポーズ、場所、品質タグの順。rating タグを指定)。
+- Flux 系・Krea 2・Qwen-Image 2.1: 文章で具体的に(被写体・構図・光・画風)。Flux 系は重み付けとネガティブを使わない。Qwen-Image 2.1 は画像内に描く文字を引用符で囲む。
+- 矛盾する要素(昼と夜、写実とアニメ)を混ぜない。
 "#;
 
 /// モデルガイド(docs/18 §6.1)。カタログのプロフィールから自動生成する(手書きで二重に持たない)。
@@ -84,6 +96,11 @@ fn guide_line(f: &Family) -> Option<String> {
         PromptKind::Tags => "タグ形式",
         PromptKind::Natural => "文章",
         PromptKind::Both => "タグでも文章でも可",
+    };
+    // プロンプトを書く言語(docs/11 §14.1)
+    let prompt = match p.prompt_style.language {
+        PromptLanguage::En => format!("{prompt}・英語で書く"),
+        PromptLanguage::Multilingual => format!("{prompt}・日本語でも可"),
     };
     let speed = match p.resources.speed {
         Speed::Fast => "速い",
@@ -134,6 +151,7 @@ pub fn default_prompt() -> String {
     if catalog().is_some() {
         s.push_str(MODEL_RULES);
     }
+    s.push_str(PROMPT_BEST_PRACTICE);
     s
 }
 
@@ -275,6 +293,23 @@ mod tests {
         assert!(p.contains("[checkpoint-sdxl]"));
         // 「アプリを操作できない」の項で、モデルの切替は提案できることになった
         assert!(!CAPABILITIES.contains("モデルの切替・シード"));
+    }
+
+    #[test]
+    fn guide_states_the_prompt_language_per_model() {
+        // docs/11 §14: 英語推奨のモデルは「英語で書く」、Qwen-Image 2.1 だけ「日本語でも可」
+        let guide = model_guide(catalog().unwrap());
+        let line = |id: &str| {
+            guide
+                .lines()
+                .find(|l| l.starts_with(&format!("- [{id}]")))
+                .unwrap_or_else(|| panic!("{id} がガイドにない"))
+                .to_owned()
+        };
+        assert!(line("checkpoint-noobai-xl").contains("英語で書く"));
+        assert!(line("checkpoint-sdxl").contains("英語で書く"));
+        assert!(line("qwen-image-2-1").contains("日本語でも可"));
+        assert!(default_prompt().contains("日本語で要点を一言添える"));
     }
 
     #[test]

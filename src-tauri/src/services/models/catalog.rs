@@ -210,7 +210,19 @@ pub struct LocalizedList {
 #[serde(rename_all = "camelCase")]
 pub struct PromptStyle {
     pub kind: PromptKind,
+    /// プロンプトの推奨言語(docs/11 §14)。未指定は英語(安全側)。
+    #[serde(default)]
+    pub language: PromptLanguage,
     pub hint: Localized,
+}
+
+/// プロンプトに使う言語。`En` は英語推奨(日本語は効きにくい)、`Multilingual` は日本語でもよい。
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum PromptLanguage {
+    #[default]
+    En,
+    Multilingual,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

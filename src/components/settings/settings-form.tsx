@@ -23,6 +23,7 @@ import { useSettingsStore } from "@/stores/settings-store";
 import { useUiStore } from "@/stores/ui-store";
 
 import { AssistantSection } from "./assistant-section";
+import { TranslateSection } from "./translate-section";
 import { EngineInstallSection } from "./engine-install-section";
 import { EngineProcessSection } from "./engine-process-section";
 import { OtherSection } from "./other-section";
@@ -166,7 +167,10 @@ function SettingsFormInner({ initial }: { initial: Settings }) {
         </TabsContent>
 
         <TabsContent value="assistant" keepMounted>
-          <AssistantSection />
+          <div className="flex flex-col gap-8">
+            <AssistantSection />
+            <TranslateSection />
+          </div>
         </TabsContent>
 
         <TabsContent value="display" keepMounted>

@@ -8,7 +8,8 @@ use crate::domain::params::GenerationParams;
 use crate::error::AppResult;
 use crate::services::assistant::openai_compat::LocalCheck;
 use crate::services::assistant::{
-    AskStarted, AssistantPatch, AssistantService, PromptState, capabilities, context::ModelContext,
+    AskStarted, AssistantPatch, AssistantService, PromptState, TranslatePatch, TranslateStatus,
+    capabilities, context::ModelContext, translate::TranslateTarget,
 };
 use crate::services::engine::EngineService;
 
@@ -134,4 +135,39 @@ pub async fn assistant_suggestion_applied(
     index: usize,
 ) -> AppResult<()> {
     svc.suggestion_applied(message_id, index).await
+}
+
+#[derive(Serialize)]
+pub struct TranslateResult {
+    /// 中断されたときは `None`。
+    pub text: Option<String>,
+}
+
+#[tauri::command]
+pub async fn translate_status(svc: Svc<'_>) -> AppResult<TranslateStatus> {
+    svc.translate_status().await
+}
+
+#[tauri::command]
+pub async fn translate_update(svc: Svc<'_>, patch: TranslatePatch) -> AppResult<TranslateStatus> {
+    svc.translate_update(patch).await?;
+    svc.translate_status().await
+}
+
+/// 日本語の入力を、選択中のモデルに合ったプロンプトへ翻訳・校正する(docs/34)。
+#[tauri::command]
+pub async fn translate_run(
+    svc: Svc<'_>,
+    request_id: String,
+    text: String,
+    target: TranslateTarget,
+) -> AppResult<TranslateResult> {
+    Ok(TranslateResult {
+        text: svc.translate(request_id, text, target).await?,
+    })
+}
+
+#[tauri::command]
+pub fn translate_cancel(svc: Svc<'_>, request_id: String) {
+    svc.translate_cancel(&request_id);
 }

@@ -1437,6 +1437,7 @@
         },
         "promptStyle": {
           "kind": "natural",
+          "language": "multilingual",
           "hint": {
             "ja": "文章で具体的に書く(被写体・構図・光・画風。例: A quiet street at dusk, soft rain, cinematic lighting)",
             "en": "Write concrete sentences (subject, composition, light, style; e.g. A quiet street at dusk, soft rain, cinematic lighting)"
