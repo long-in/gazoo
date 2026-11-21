@@ -5,11 +5,10 @@ import { useEffect, useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { imageSrc } from "@/lib/image-src";
 import type { MessageKey } from "@/lib/i18n";
-import { useLanguage, useT } from "@/lib/i18n/use-t";
+import { useT } from "@/lib/i18n/use-t";
 import { profileFor } from "@/lib/models/profile";
-import { estimateMsPerImage, formatDuration, promptHistory } from "@/lib/queue";
+import { estimateMsPerImage, formatDuration } from "@/lib/queue";
 import { type InputImage, inputImageGet } from "@/lib/tauri/inputs";
-import { cn } from "@/lib/utils";
 import { useFormStore } from "@/stores/form-store";
 import { useJobStore } from "@/stores/job-store";
 import { useModelsStore } from "@/stores/models-store";
@@ -19,7 +18,7 @@ import { MaskEditor } from "./mask-editor";
 import { ModelProfilePanel } from "./model-profile-panel";
 
 /**
- * 生成画面の右側のワークスペース(docs/20 §4.2)。モデルの説明・参照画像・この設定の目安・プロンプト履歴。
+ * 生成画面の右側のワークスペース(docs/20 §4.2)。モデルの説明・参照画像・この設定の目安・。
  * 実行状況と生成結果は、画面共通のヘッダとキュー画面・ギャラリーで見る。
  */
 export function Workspace() {
@@ -29,7 +28,6 @@ export function Workspace() {
       <ModelProfilePanel />
       <ReferenceWorkspace />
       <EstimatePanel />
-      <PromptHistoryPanel />
     </div>
   );
 }
@@ -206,54 +204,6 @@ function EstimatePanel() {
           <span className="text-muted-foreground">{t("workspace.estimate.noHistory")}</span>
         )}
       </p>
-    </section>
-  );
-}
-
-/** 過去に投入したプロンプト(ジョブの履歴から)。クリックで入力欄へ入れる(docs/20 Q-99)。 */
-function PromptHistoryPanel() {
-  const t = useT();
-  useLanguage();
-  const jobs = useJobStore((s) => s.jobs);
-  const items = useMemo(() => promptHistory(jobs, 20), [jobs]);
-  const { patch } = useFormStore.getState();
-
-  return (
-    <section className="rounded-lg border p-3" aria-labelledby="hist-title">
-      <h2 id="hist-title" className="text-sm font-medium">
-        {t("workspace.history.title")}
-      </h2>
-      {items.length === 0 ? (
-        <p className="mt-1.5 text-xs text-muted-foreground">{t("workspace.history.empty")}</p>
-      ) : (
-        <ul className="mt-2 flex max-h-72 flex-col gap-1.5 overflow-y-auto">
-          {items.map((h) => (
-            <li key={h.prompt} className={cn("flex items-start gap-2 rounded-md border p-2")}>
-              <p className="line-clamp-2 min-w-0 flex-1 text-xs">{h.prompt}</p>
-              <div className="flex shrink-0 gap-1">
-                <Button
-                  type="button"
-                  size="xs"
-                  variant="outline"
-                  onClick={() => {
-                    const cur = useFormStore.getState().params.prompt.trim();
-                    patch({ prompt: cur === "" ? h.prompt : `${cur}, ${h.prompt}` });
-                  }}
-                >
-                  {t("workspace.history.append")}
-                </Button>
-                <Button
-                  type="button"
-                  size="xs"
-                  onClick={() => patch({ prompt: h.prompt, negativePrompt: h.negativePrompt })}
-                >
-                  {t("workspace.history.replace")}
-                </Button>
-              </div>
-            </li>
-          ))}
-        </ul>
-      )}
     </section>
   );
 }

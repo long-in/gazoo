@@ -57,6 +57,7 @@ describe("job-store", () => {
 const api = vi.hoisted(() => ({
   jobList: vi.fn(),
   jobRemove: vi.fn(),
+  jobRetry: vi.fn(),
   queuePause: vi.fn(),
   queueResume: vi.fn(),
   queueState: vi.fn(),
@@ -109,5 +110,20 @@ describe("job-store(キュー管理。docs/20 §3)", () => {
     api.jobRemove.mockRejectedValueOnce({ code: "VALIDATION", message: "x" });
     await expect(useJobStore.getState().remove(["b"])).rejects.toBeDefined();
     expect(useJobStore.getState().jobs.map((j) => j.id)).toEqual(["b"]);
+  });
+
+  it("再試行は新しいジョブを投入し、元の失敗カードを外す。投入に失敗したら外さない(docs/28 §8.2)", async () => {
+    useJobStore.setState({ jobs: [job("f", { status: "failed" })] });
+    api.jobRetry.mockResolvedValueOnce(job("n", { position: 1 }));
+    api.jobRemove.mockResolvedValueOnce(1);
+    await useJobStore.getState().retry("f");
+    expect(api.jobRemove).toHaveBeenCalledWith(["f"]);
+    expect(useJobStore.getState().jobs.map((j) => j.id)).toEqual(["n"]);
+
+    useJobStore.setState({ jobs: [job("g", { status: "failed" })] });
+    api.jobRetry.mockRejectedValueOnce({ code: "X", message: "x" });
+    await expect(useJobStore.getState().retry("g")).rejects.toBeDefined();
+    expect(api.jobRemove).toHaveBeenCalledTimes(1);
+    expect(useJobStore.getState().jobs.map((j) => j.id)).toEqual(["g"]);
   });
 });

@@ -9,7 +9,6 @@ import {
   estimateMsPerImage,
   filterJobs,
   formatDuration,
-  promptHistory,
   runningTiming,
 } from "./queue";
 
@@ -92,19 +91,5 @@ describe("目安時間(過去の実績)", () => {
     // 40, 60, 100, 30 秒 → 中央値 50 秒
     expect(estimateMsPerImage(jobs, p)).toBe(50_000);
     expect(estimateMsPerImage([], p)).toBeNull();
-  });
-});
-
-describe("プロンプト履歴", () => {
-  it("新しい順・重複と空を除く・件数の上限", () => {
-    const jobs = [
-      job("a", { createdAt: 1 }, { prompt: "first" }),
-      job("b", { createdAt: 3 }, { prompt: " newest ", negativePrompt: "n" }),
-      job("c", { createdAt: 2 }, { prompt: "newest" }),
-      job("d", { createdAt: 4 }, { prompt: "   " }),
-    ];
-    expect(promptHistory(jobs).map((h) => h.prompt)).toEqual(["newest", "first"]);
-    expect(promptHistory(jobs)[0].negativePrompt).toBe("n");
-    expect(promptHistory(jobs, 1)).toHaveLength(1);
   });
 });
