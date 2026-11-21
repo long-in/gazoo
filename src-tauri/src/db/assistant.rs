@@ -11,6 +11,8 @@ use crate::error::{AppError, AppResult};
 use crate::util::now_ms;
 
 pub const DEFAULT_MODEL: &str = "claude-sonnet-5-5";
+/// プロンプト翻訳の既定の Claude モデル(軽い処理のため Haiku。docs/34 §4)。
+pub const DEFAULT_TRANSLATE_MODEL: &str = "claude-haiku-5-5";
 pub const MODELS: [&str; 3] = ["claude-haiku-5-5", "claude-sonnet-5-5", "claude-opus-5-5"];
 /// 自動削除が有効なときに残す会話の最大数(Q-31)。
 pub const MAX_CONVERSATIONS: i64 = 30;
@@ -24,6 +26,8 @@ const KEY_SYSTEM_PROMPT: &str = "assistant.system_prompt";
 const KEY_PROVIDER: &str = "assistant.provider";
 const KEY_LOCAL_BASE_URL: &str = "assistant.local_base_url";
 const KEY_LOCAL_MODEL: &str = "assistant.local_model";
+const KEY_TRANSLATE_PROVIDER: &str = "translate.provider";
+const KEY_TRANSLATE_MODEL: &str = "translate.model";
 const KEY_LLM_IDLE: &str = "llm.idle_minutes";
 const KEY_LLM_RELEASE: &str = "llm.release_before_generation";
 
@@ -126,6 +130,33 @@ pub fn status(conn: &Connection) -> AppResult<AssistantStatus> {
             .filter(|s| !s.is_empty())
             .unwrap_or_else(|| DEFAULT_LOCAL_MODEL.to_string()),
     })
+}
+
+/// プロンプト翻訳の送信先とモデル(AI サポートとは別設定。docs/34 §4.1)。
+pub fn translate_settings(conn: &Connection) -> AppResult<(Provider, String)> {
+    let provider = get(conn, KEY_TRANSLATE_PROVIDER)?
+        .and_then(|v| v.as_str().and_then(Provider::parse))
+        .unwrap_or_default();
+    let model = get(conn, KEY_TRANSLATE_MODEL)?
+        .and_then(|v| v.as_str().map(str::to_owned))
+        .filter(|m| MODELS.contains(&m.as_str()))
+        .unwrap_or_else(|| DEFAULT_TRANSLATE_MODEL.to_string());
+    Ok((provider, model))
+}
+
+pub fn set_translate_provider(conn: &Connection, provider: Provider) -> AppResult<()> {
+    set(
+        conn,
+        KEY_TRANSLATE_PROVIDER,
+        &Value::String(provider.as_str().to_string()),
+    )
+}
+
+pub fn set_translate_model(conn: &Connection, model: &str) -> AppResult<()> {
+    if !MODELS.contains(&model) {
+        return Err(AppError::validation("model", "選べないモデルです"));
+    }
+    set(conn, KEY_TRANSLATE_MODEL, &Value::String(model.to_string()))
 }
 
 pub fn set_provider(conn: &Connection, provider: Provider) -> AppResult<()> {
@@ -609,6 +640,30 @@ mod tests {
             .unwrap();
         let texts: Vec<_> = rows.iter().map(|r| r.1.as_str()).collect();
         assert_eq!(texts, ["t2", "t3", "t4"]);
+    }
+
+    #[tokio::test]
+    async fn translate_settings_default_to_haiku_and_are_independent_of_the_assistant() {
+        let db = Db::open_in_memory().unwrap();
+        let (p, m) = db.call(|c| translate_settings(c)).await.unwrap();
+        assert_eq!((p, m.as_str()), (Provider::Anthropic, "claude-haiku-5-5"));
+
+        db.call(|c| {
+            set_translate_provider(c, Provider::Local)?;
+            set_translate_model(c, "claude-opus-5-5")
+        })
+        .await
+        .unwrap();
+        let (p, m) = db.call(|c| translate_settings(c)).await.unwrap();
+        assert_eq!((p, m.as_str()), (Provider::Local, "claude-opus-5-5"));
+
+        // AI サポート側は変わらない
+        let s = db.call(|c| status(c)).await.unwrap();
+        assert_eq!(s.provider, Provider::Anthropic);
+        assert_eq!(s.model, DEFAULT_MODEL);
+
+        // 選べないモデルは拒否
+        assert!(db.call(|c| set_translate_model(c, "gpt-4")).await.is_err());
     }
 
     #[tokio::test]

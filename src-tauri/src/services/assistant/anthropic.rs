@@ -92,7 +92,7 @@ impl AnthropicClient {
             .iter()
             .map(|(role, text)| json!({ "role": role, "content": text }))
             .collect();
-        let body = json!({
+        let mut body = json!({
             "model": req.model,
             "max_tokens": MAX_TOKENS,
             // 固定文なのでキャッシュする(相談ごとの入力コストを抑える。docs/13 §4.3)
@@ -102,9 +102,12 @@ impl AnthropicClient {
                 "cache_control": { "type": "ephemeral" }
             }],
             "messages": messages,
-            "tools": req.tools,
             "stream": true,
         });
+        // ツール無しの呼び出し(翻訳。docs/34)では `tools` を送らない
+        if req.tools.as_array().is_none_or(|t| !t.is_empty()) {
+            body["tools"] = req.tools.clone();
+        }
 
         let resp = tokio::select! {
             _ = cancelled(cancel) => return Ok(StreamEnd::Cancelled),

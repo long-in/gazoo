@@ -39,6 +39,7 @@ import { type CandidateBadge, candidateBadges } from "@/lib/models/profile";
 import { toAppError } from "@/lib/tauri/errors";
 import { MAX_ENQUEUE_COUNT, type ModelKind } from "@/lib/tauri/jobs";
 import { cn } from "@/lib/utils";
+import { TranslateBox } from "@/components/generate/translate-box";
 import { useAssistantStore } from "@/stores/assistant-store";
 import { useEngineStore } from "@/stores/engine-store";
 import { fieldErrorOf, useFormErrorStore } from "@/stores/form-error-store";
@@ -257,6 +258,8 @@ export function GenerationForm() {
           {t("assistant.open")}
         </Button>
       </div>
+
+      <TranslateBox params={params} />
 
       <Field
         label={t("generate.prompt")}

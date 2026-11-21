@@ -16,6 +16,7 @@ pub mod anthropic;
 pub mod capabilities;
 pub mod context;
 pub mod openai_compat;
+pub mod translate;
 
 use anthropic::{AnthropicClient, MessageRequest, StreamEnd, StreamEvent};
 use openai_compat::{LocalCheck, OpenAiClient};
@@ -61,6 +62,73 @@ enum Target {
     Managed,
 }
 
+/// プロンプト翻訳の設定と状態(docs/34 §5)。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TranslateStatus {
+    pub provider: Provider,
+    pub model: String,
+    pub ready: bool,
+    /// 実行できない理由(`no_key` / `no_consent` / `local_not_ready`)。
+    pub reason: Option<&'static str>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TranslatePatch {
+    pub provider: Option<Provider>,
+    pub model: Option<String>,
+}
+
+/// 翻訳の送信先を、設定と共有の前提(キー・同意・ローカル LLM。docs/34 §4)から決める。
+/// 実行できないときは、(理由の識別子, エラー)を返す。
+fn translate_target(
+    c: &rusqlite::Connection,
+    provider: Provider,
+    model: &str,
+    local_installed: bool,
+) -> Result<Target, (&'static str, AppError)> {
+    let status = store::status(c).map_err(|e| ("error", e))?;
+    match provider {
+        Provider::Anthropic => {
+            if !status.consent {
+                return Err((
+                    "no_consent",
+                    AppError::assistant(
+                        "ASSISTANT_NO_CONSENT",
+                        "AI サポートの利用に同意してください(設定の「AI サポート」)",
+                    ),
+                ));
+            }
+            let key = store::api_key(c).map_err(|e| ("error", e))?.ok_or((
+                "no_key",
+                AppError::assistant("ASSISTANT_NO_KEY", "API キーが登録されていません"),
+            ))?;
+            Ok(Target::Anthropic {
+                key,
+                model: model.to_string(),
+            })
+        }
+        Provider::LocalExternal => Ok(Target::External {
+            base: openai_compat::validate_base_url(&status.local_base_url)
+                .map_err(|e| ("error", e))?,
+            model: status.local_model,
+        }),
+        Provider::Local => {
+            if !local_installed {
+                return Err((
+                    "local_not_ready",
+                    AppError::assistant(
+                        "LLM_NOT_INSTALLED",
+                        "ローカル LLM が導入されていません。設定の「AI サポート」から導入してください",
+                    ),
+                ));
+            }
+            Ok(Target::Managed)
+        }
+    }
+}
+
 /// 編集欄に出す内容(docs/11 §12.5)。
 #[derive(Debug, Clone, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -104,6 +172,8 @@ pub struct AssistantService {
     running: Mutex<Option<Running>>,
     /// アプリ管理のローカル LLM(起動後に設定する)。
     runtime: std::sync::OnceLock<Arc<dyn LocalRuntime>>,
+    /// 実行中のプロンプト翻訳(相談とは独立。docs/34)。
+    translating: Mutex<Option<Running>>,
 }
 
 impl AssistantService {
@@ -115,6 +185,7 @@ impl AssistantService {
             sink,
             running: Mutex::new(None),
             runtime: std::sync::OnceLock::new(),
+            translating: Mutex::new(None),
         })
     }
 
@@ -400,67 +471,16 @@ impl AssistantService {
                     }
                 }
             };
-            let result = match &target {
-                Target::Anthropic { key, model } => {
-                    let req = MessageRequest {
-                        model,
-                        system: &system,
-                        messages: &messages,
-                        tools,
-                    };
-                    me.client
-                        .stream(key, &req, &mut cancel_rx, &mut on_event)
-                        .await
-                }
-                Target::External { base, model } => {
-                    let req = MessageRequest {
-                        model,
-                        system: &system,
-                        messages: &messages,
-                        tools,
-                    };
-                    me.openai
-                        .stream(base, model, &req, &mut cancel_rx, &mut on_event)
-                        .await
-                }
-                Target::Managed => match me.runtime.get() {
-                    None => Err(AppError::assistant(
-                        "LLM_NOT_INSTALLED",
-                        "ローカル LLM が利用できません",
-                    )),
-                    Some(rt) => {
-                        // 回答の生成中はアイドル停止の対象にしない(起動の待ち時間も含める)
-                        rt.use_started();
-                        let started = tokio::select! {
-                            _ = anthropic::cancelled(&mut cancel_rx) => None,
-                            r = rt.ensure_ready() => Some(r),
-                        };
-                        let result = match started {
-                            None => Ok(StreamEnd::Cancelled),
-                            Some(Err(e)) => Err(e),
-                            Some(Ok(ep)) => {
-                                let req = MessageRequest {
-                                    model: &ep.model,
-                                    system: &system,
-                                    messages: &messages,
-                                    tools,
-                                };
-                                me.openai
-                                    .stream(
-                                        &ep.base_url,
-                                        &ep.model,
-                                        &req,
-                                        &mut cancel_rx,
-                                        &mut on_event,
-                                    )
-                                    .await
-                            }
-                        };
-                        rt.use_finished();
-                        result
-                    }
-                },
-            };
+            let result = me
+                .dispatch(
+                    &target,
+                    &system,
+                    &messages,
+                    tools,
+                    &mut cancel_rx,
+                    &mut on_event,
+                )
+                .await;
 
             // 途中までの内容も含め、あれば保存する
             if !answer.trim().is_empty() || !suggestions.is_empty() {
@@ -490,6 +510,203 @@ impl AssistantService {
             me.release();
         });
         Ok(started)
+    }
+
+    /// 送信先へメッセージを送り、ストリームを `on_event` へ流す(相談・翻訳で共通)。
+    async fn dispatch(
+        &self,
+        target: &Target,
+        system: &str,
+        messages: &[(String, String)],
+        tools: serde_json::Value,
+        cancel_rx: &mut watch::Receiver<bool>,
+        on_event: impl FnMut(StreamEvent),
+    ) -> AppResult<StreamEnd> {
+        match target {
+            Target::Anthropic { key, model } => {
+                let req = MessageRequest {
+                    model,
+                    system,
+                    messages,
+                    tools,
+                };
+                self.client.stream(key, &req, cancel_rx, on_event).await
+            }
+            Target::External { base, model } => {
+                let req = MessageRequest {
+                    model,
+                    system,
+                    messages,
+                    tools,
+                };
+                self.openai
+                    .stream(base, model, &req, cancel_rx, on_event)
+                    .await
+            }
+            Target::Managed => match self.runtime.get() {
+                None => Err(AppError::assistant(
+                    "LLM_NOT_INSTALLED",
+                    "ローカル LLM が利用できません",
+                )),
+                Some(rt) => {
+                    // 回答の生成中はアイドル停止の対象にしない(起動の待ち時間も含める)
+                    rt.use_started();
+                    let started = tokio::select! {
+                        _ = anthropic::cancelled(cancel_rx) => None,
+                        r = rt.ensure_ready() => Some(r),
+                    };
+                    let result = match started {
+                        None => Ok(StreamEnd::Cancelled),
+                        Some(Err(e)) => Err(e),
+                        Some(Ok(ep)) => {
+                            let req = MessageRequest {
+                                model: &ep.model,
+                                system,
+                                messages,
+                                tools,
+                            };
+                            self.openai
+                                .stream(&ep.base_url, &ep.model, &req, cancel_rx, on_event)
+                                .await
+                        }
+                    };
+                    rt.use_finished();
+                    result
+                }
+            },
+        }
+    }
+
+    /// プロンプト翻訳の設定と、今すぐ実行できるか(docs/34 §5)。
+    pub async fn translate_status(&self) -> AppResult<TranslateStatus> {
+        let local_installed = self.runtime.get().is_some_and(|r| r.installed());
+        self.db
+            .call(move |c| {
+                let (provider, model) = store::translate_settings(c)?;
+                let reason = translate_target(c, provider, &model, local_installed).err();
+                Ok(TranslateStatus {
+                    provider,
+                    model,
+                    ready: reason.is_none(),
+                    reason: reason.map(|r| r.0),
+                })
+            })
+            .await
+    }
+
+    /// プロバイダ・モデルを更新する(AI サポートの設定は変えない)。
+    pub async fn translate_update(&self, patch: TranslatePatch) -> AppResult<()> {
+        self.db
+            .call(move |c| {
+                if let Some(p) = patch.provider {
+                    store::set_translate_provider(c, p)?;
+                }
+                if let Some(m) = &patch.model {
+                    store::set_translate_model(c, m)?;
+                }
+                Ok(())
+            })
+            .await
+    }
+
+    pub fn translate_cancel(&self, request_id: &str) {
+        if let Ok(g) = self.translating.lock()
+            && let Some(r) = g.as_ref()
+            && r.request_id == request_id
+        {
+            let _ = r.cancel.send(true);
+        }
+    }
+
+    /// 日本語の入力を、`target` のモデルに合ったプロンプトへ翻訳・校正する(docs/34)。
+    /// 中断されたら `None`。会話には保存しない。ログに本文は出さない。
+    pub async fn translate(
+        &self,
+        request_id: String,
+        text: String,
+        target: translate::TranslateTarget,
+    ) -> AppResult<Option<String>> {
+        let text = text.trim().to_string();
+        let len = text.chars().count();
+        if len == 0 || len > translate::MAX_INPUT_CHARS {
+            return Err(AppError::validation(
+                "text",
+                format!(
+                    "入力は 1〜{} 文字で入力してください",
+                    translate::MAX_INPUT_CHARS
+                ),
+            ));
+        }
+        let (cancel_tx, mut cancel_rx) = watch::channel(false);
+        {
+            let mut g = self
+                .translating
+                .lock()
+                .map_err(|_| AppError::internal("lock poisoned"))?;
+            if g.is_some() {
+                return Err(AppError::assistant(
+                    "ASSISTANT_BUSY",
+                    "別の翻訳が実行中です。完了するか停止してください",
+                ));
+            }
+            *g = Some(Running {
+                request_id,
+                cancel: cancel_tx,
+            });
+        }
+        let result = self.translate_inner(&text, &target, &mut cancel_rx).await;
+        if let Ok(mut g) = self.translating.lock() {
+            *g = None;
+        }
+        if let Err(e) = &result {
+            tracing::warn!(code = e.code(), "prompt translate failed");
+        }
+        result
+    }
+
+    async fn translate_inner(
+        &self,
+        text: &str,
+        target: &translate::TranslateTarget,
+        cancel_rx: &mut watch::Receiver<bool>,
+    ) -> AppResult<Option<String>> {
+        let local_installed = self.runtime.get().is_some_and(|r| r.installed());
+        let dest = self
+            .db
+            .call(move |c| {
+                let (provider, model) = store::translate_settings(c)?;
+                translate_target(c, provider, &model, local_installed).map_err(|r| r.1)
+            })
+            .await?;
+        let system = translate::system_prompt();
+        let user = translate::user_message(capabilities::catalog(), target, text);
+        let messages = vec![("user".to_string(), user)];
+        let mut out = String::new();
+        let end = self
+            .dispatch(
+                &dest,
+                &system,
+                &messages,
+                serde_json::json!([]),
+                cancel_rx,
+                |ev| {
+                    if let StreamEvent::Text(t) = ev {
+                        out.push_str(&t);
+                    }
+                },
+            )
+            .await?;
+        if end == StreamEnd::Cancelled {
+            return Ok(None);
+        }
+        let cleaned = translate::clean_output(&out);
+        if cleaned.is_empty() {
+            return Err(AppError::assistant(
+                "ASSISTANT_API_ERROR",
+                "翻訳結果が空でした。入力を変えて、もう一度試してください",
+            ));
+        }
+        Ok(Some(cleaned))
     }
 
     fn release(&self) {
