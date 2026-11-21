@@ -3,10 +3,12 @@ import { create } from "zustand";
 import { toAppError } from "@/lib/tauri/errors";
 import {
   type EngineProcState,
+  type EngineSuggestions,
   type ManagedEngineConfig,
   type ManagedView,
   engineManagedGet,
   engineManagedSet,
+  engineManagedSuggest,
   engineProcessLogs,
   engineProcessRestart,
   engineProcessStart,
@@ -20,11 +22,14 @@ interface EngineProcessStoreState {
   view: ManagedView | null;
   /** 起動管理の状態(イベントで更新)。 */
   state: EngineProcState | null;
+  /** 入力候補。`null` は探索中(docs/32)。失敗・見つからないときは `{}`。 */
+  suggestions: EngineSuggestions | null;
   logs: string[];
   /** 起動・停止・再起動の操作中。 */
   busy: boolean;
 
   load: () => Promise<void>;
+  loadSuggestions: () => Promise<void>;
   loadLogs: () => Promise<void>;
   applyState: (s: EngineProcState) => void;
   appendLog: (line: string) => void;
@@ -50,6 +55,7 @@ export const useEngineProcessStore = create<EngineProcessStoreState>((set, get) 
   return {
     view: null,
     state: null,
+    suggestions: null,
     logs: [],
     busy: false,
 
@@ -60,6 +66,15 @@ export const useEngineProcessStore = create<EngineProcessStoreState>((set, get) 
       } catch (e) {
         // 起動管理の取得失敗は、他の画面を妨げない(設定画面で再取得できる)
         console.warn("engine_managed_get failed", toAppError(e));
+      }
+    },
+
+    loadSuggestions: async () => {
+      try {
+        set({ suggestions: await engineManagedSuggest() });
+      } catch {
+        // 候補の探索失敗は「候補なし」として扱う(他の画面を妨げない)
+        set({ suggestions: {} });
       }
     },
 

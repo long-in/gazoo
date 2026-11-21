@@ -14,6 +14,7 @@ import type { MessageKey } from "@/lib/i18n";
 import { useErrorMessage, useT } from "@/lib/i18n/use-t";
 import {
   type ManagedEngineConfig,
+  applySuggestions,
   isTransient,
   pickFile,
   pickFolder,
@@ -41,21 +42,36 @@ export function EngineProcessSection() {
   const state = useEngineProcessStore((s) => s.state);
   const logs = useEngineProcessStore((s) => s.logs);
   const busy = useEngineProcessStore((s) => s.busy);
+  const loadedSuggestions = useEngineProcessStore((s) => s.suggestions);
 
   // 編集中の値(未編集なら保存済みの設定をそのまま使う)
   const [edits, setEdits] = useState<ManagedEngineConfig | null>(null);
+  // ユーザーが触れた項目(候補の自動入力で上書きしない。docs/32 Q-182)
+  const [touched, setTouched] = useState<ReadonlySet<keyof ManagedEngineConfig>>(new Set());
   const [fieldError, setFieldError] = useState<{ field?: string; message: string } | null>(null);
 
   useEffect(() => {
+    // 設定は即時に表示し、候補は遅れて届いたら反映する(docs/32)
     void useEngineProcessStore.getState().load();
+    void useEngineProcessStore.getState().loadSuggestions();
     void useEngineProcessStore.getState().loadLogs();
   }, []);
 
+  const suggestions = loadedSuggestions ?? {};
+  const searching = loadedSuggestions === null;
   const saved = view?.config;
-  const draft = edits ?? saved ?? DEFAULT_CONFIG;
+  // 保存済みの設定の空欄を候補で補ったもの(「未保存」の比較の基準。保存はユーザーの操作で行う)
+  const effective = saved ? applySuggestions(saved, suggestions) : undefined;
+  const draft: ManagedEngineConfig = edits
+    ? {
+        ...edits,
+        ...(effective && !touched.has("mainPy") ? { mainPy: effective.mainPy } : {}),
+        ...(effective && !touched.has("python") ? { python: effective.python } : {}),
+        ...(effective && !touched.has("baseDirectory") ? { baseDirectory: effective.baseDirectory } : {}),
+      }
+    : (effective ?? DEFAULT_CONFIG);
 
-  const dirty = saved !== undefined && JSON.stringify(saved) !== JSON.stringify(draft);
-  const suggestions = view?.suggestions ?? {};
+  const dirty = effective !== undefined && JSON.stringify(effective) !== JSON.stringify(draft);
   const hasSuggestions = Boolean(suggestions.mainPy || suggestions.python || suggestions.baseDirectory);
   const status = state?.status ?? "stopped";
   const transient = isTransient(status);
@@ -63,6 +79,7 @@ export function EngineProcessSection() {
 
   function set<K extends keyof ManagedEngineConfig>(key: K, value: ManagedEngineConfig[K]) {
     setFieldError(null);
+    setTouched((t) => new Set(t).add(key));
     setEdits({ ...draft, [key]: value });
   }
 
@@ -77,6 +94,7 @@ export function EngineProcessSection() {
 
   function fillSuggestions() {
     setFieldError(null);
+    setTouched((t) => new Set(t).add("mainPy").add("python").add("baseDirectory"));
     setEdits({
       ...draft,
       mainPy: draft.mainPy || suggestions.mainPy || "",
@@ -93,6 +111,7 @@ export function EngineProcessSection() {
       });
       setFieldError(null);
       setEdits(null);
+      setTouched(new Set());
       toast.success(t("engine.proc.saved"));
     } catch (e) {
       const err = toAppError(e);
@@ -158,6 +177,7 @@ export function EngineProcessSection() {
 
       {draft.enabled && (
         <div className="flex flex-col gap-3 rounded-lg border p-3">
+          {searching && <p className="text-xs text-muted-foreground">{t("engine.proc.searching")}</p>}
           {hasSuggestions && (
             <div>
               <Button type="button" variant="outline" size="sm" onClick={fillSuggestions}>

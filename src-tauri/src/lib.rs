@@ -209,6 +209,7 @@ pub fn run() {
             commands::engine::engine_reconnect,
             commands::engine_process::engine_managed_get,
             commands::engine_process::engine_managed_set,
+            commands::engine_process::engine_managed_suggest,
             commands::engine_process::engine_process_start,
             commands::engine_process::engine_process_stop,
             commands::engine_process::engine_process_restart,

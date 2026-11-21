@@ -33,10 +33,23 @@ export interface EngineSuggestions {
 export interface ManagedView {
   config: ManagedEngineConfig;
   state: EngineProcState;
-  suggestions: EngineSuggestions;
 }
 
+/** 設定と状態(即時。候補は含まない。docs/32)。 */
 export const engineManagedGet = () => invoke<ManagedView>("engine_managed_get");
+
+/** 入力候補(探索に時間がかかることがあるため、`engineManagedGet` とは別に呼ぶ)。 */
+export const engineManagedSuggest = () => invoke<EngineSuggestions>("engine_managed_suggest");
+
+/** 空の項目だけに候補を入れる(入力済みの項目は上書きしない。docs/32 Q-182)。 */
+export function applySuggestions(config: ManagedEngineConfig, s: EngineSuggestions): ManagedEngineConfig {
+  return {
+    ...config,
+    mainPy: config.mainPy || s.mainPy || "",
+    python: config.python || s.python || "",
+    baseDirectory: config.baseDirectory || s.baseDirectory || null,
+  };
+}
 
 export const engineManagedSet = (config: ManagedEngineConfig) =>
   invoke<ManagedView>("engine_managed_set", { config });

@@ -652,6 +652,7 @@ export const ja = {
   "engine.proc.enable": "アプリで ComfyUI を管理する",
   "engine.proc.fill": "候補を入れる",
   "engine.proc.fillHint": "起動中の ComfyUI の情報から、空欄のパスを補います。内容を確認して保存してください。",
+  "engine.proc.searching": "候補を探しています…",
   "engine.proc.mainPy": "ComfyUI の main.py",
   "engine.proc.python": "Python(venv の python)",
   "engine.proc.pythonHint": "ComfyUI の依存を入れた Python です(例: comfyui/venv/Scripts/python.exe)。",

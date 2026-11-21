@@ -214,6 +214,7 @@ type SettingsPatch = Partial<Settings>;
 
 - 型は 15 が正。イベント `engine://proc-state` / `engine://log`。エラー: `ENGINE_PORT_IN_USE` / `ENGINE_LAUNCH_FAILED` / `ENGINE_START_TIMEOUT` / `ENGINE_BUSY` / `ENGINE_NOT_MANAGED`。
 - (v0.14・設計: 22)`engine_managed_get` の `suggestions` に、任意の `source`(`running` / `app` / `manual` / `portable` / `desktop` / `dev`。候補の出どころ)が加わる。起動中の ComfyUI がないときは、アプリ内蔵の既知の場所の一覧(アプリが導入したものが最優先)から候補を求める。
+- (v0.25・設計: 32。レビュー待ち)表示の高速化のため、`engine_managed_get` / `engine_managed_set` は `{ config; state }` を即時に返し(**`suggestions` を返さない**。探索をしない)、候補は新設の `engine_managed_suggest`(引数なし・戻り値 `Suggestions`)で別に取得する。未設定項目への初期値入れは、フロントが候補の到着後に行う。起動中の ComfyUI への問い合わせは全体 1.5 秒で打ち切る。
 
 ### ComfyUI のインストール(v0.15、設計: 23。承認済み)
 

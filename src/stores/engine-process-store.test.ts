@@ -1,14 +1,16 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import type { EngineProcState, ManagedView } from "@/lib/tauri/engine-process";
+import type { EngineProcState, EngineSuggestions, ManagedView } from "@/lib/tauri/engine-process";
 
 const get = vi.fn<() => Promise<ManagedView>>();
+const suggest = vi.fn<() => Promise<EngineSuggestions>>();
 const restart = vi.fn<(force?: boolean) => Promise<EngineProcState>>();
 const start = vi.fn<() => Promise<EngineProcState>>();
 
 vi.mock("@/lib/tauri/engine-process", () => ({
   engineManagedGet: () => get(),
   engineManagedSet: vi.fn(),
+  engineManagedSuggest: () => suggest(),
   engineProcessStart: () => start(),
   engineProcessStop: vi.fn(),
   engineProcessRestart: (force?: boolean) => restart(force),
@@ -21,12 +23,11 @@ const running: EngineProcState = { status: "running", managedByApp: true, pid: 1
 const view: ManagedView = {
   config: { enabled: true, mainPy: "m", python: "p", baseDirectory: null, port: 8188, autoStart: false },
   state: { status: "stopped", managedByApp: false },
-  suggestions: {},
 };
 
 beforeEach(() => {
   vi.clearAllMocks();
-  useEngineProcessStore.setState({ view: null, state: null, logs: [], busy: false });
+  useEngineProcessStore.setState({ view: null, state: null, suggestions: null, logs: [], busy: false });
 });
 
 describe("engine process store", () => {
@@ -35,6 +36,17 @@ describe("engine process store", () => {
     await useEngineProcessStore.getState().load();
     expect(useEngineProcessStore.getState().state?.status).toBe("stopped");
     expect(useEngineProcessStore.getState().view?.config.port).toBe(8188);
+  });
+
+  it("loads suggestions separately and treats a failure as none", async () => {
+    suggest.mockResolvedValueOnce({ mainPy: "C:\c\main.py" });
+    await useEngineProcessStore.getState().loadSuggestions();
+    expect(useEngineProcessStore.getState().suggestions).toEqual({ mainPy: "C:\c\main.py" });
+
+    useEngineProcessStore.setState({ suggestions: null });
+    suggest.mockRejectedValueOnce({ code: "INTERNAL", message: "x" });
+    await useEngineProcessStore.getState().loadSuggestions();
+    expect(useEngineProcessStore.getState().suggestions).toEqual({});
   });
 
   it("applies the result of start and clears busy", async () => {

@@ -616,6 +616,7 @@ export const en: Record<MessageKey, string> = {
   "engine.proc.enable": "Let the app manage ComfyUI",
   "engine.proc.fill": "Fill in suggestions",
   "engine.proc.fillHint": "Fills empty paths from the running ComfyUI. Review them, then save.",
+  "engine.proc.searching": "Looking for ComfyUI…",
   "engine.proc.mainPy": "ComfyUI main.py",
   "engine.proc.python": "Python (the venv's python)",
   "engine.proc.pythonHint": "The Python that has ComfyUI's dependencies (e.g. comfyui/venv/Scripts/python.exe).",
